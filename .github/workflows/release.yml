@@ -241,6 +241,7 @@ jobs:
             'artifacts/publish/THIRD-PARTY-NOTICES.md',
             'artifacts/publish/THIRD-PARTY-INVENTORY.md',
             'artifacts/publish/THIRD-PARTY-LICENSES.txt',
+            'artifacts/publish/LICENSES/Apache-2.0.txt',
             'artifacts/publish/LICENSES/Inno-Setup-license.txt',
             'artifacts/publish/LICENSES/dotnet-runtime-MIT.txt',
             'artifacts/publish/LICENSES/dotnet-runtime-ThirdPartyNotices.txt',

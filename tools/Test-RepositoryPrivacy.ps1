@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$EventPath = $env:GITHUB_EVENT_PATH,
-    [switch]$RequireSafeLocalConfig
+    [switch]$RequireSafeLocalConfig,
+    [switch]$ScanAllLocalBranches
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,7 +52,8 @@ if ($RequireSafeLocalConfig) {
     }
 }
 
-$metadataLines = @(Invoke-GitLines @('log', '--all', '--format=%H%x09%ae%x09%ce'))
+$revision = if ($ScanAllLocalBranches) { '--branches' } else { 'HEAD' }
+$metadataLines = @(Invoke-GitLines @('log', $revision, '--format=%H%x09%ae%x09%ce'))
 foreach ($line in $metadataLines) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     $fields = $line -split "`t", 3
@@ -68,7 +70,7 @@ foreach ($line in $metadataLines) {
     }
 }
 
-$commits = @(Invoke-GitLines @('rev-list', '--all'))
+$commits = @(Invoke-GitLines @('rev-list', $revision))
 foreach ($commit in $commits) {
     if ([string]::IsNullOrWhiteSpace($commit)) { continue }
     $shortCommit = $commit.Substring(0, [Math]::Min(12, $commit.Length))

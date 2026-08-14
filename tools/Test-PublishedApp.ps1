@@ -639,6 +639,7 @@ $required = @(
     'THIRD-PARTY-NOTICES.md',
     'THIRD-PARTY-INVENTORY.md',
     'THIRD-PARTY-LICENSES.txt',
+    'LICENSES\Apache-2.0.txt',
     'LICENSES\Inno-Setup-license.txt',
     'LICENSES\dotnet-runtime-MIT.txt',
     'LICENSES\dotnet-runtime-ThirdPartyNotices.txt',

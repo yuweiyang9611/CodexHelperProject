@@ -205,7 +205,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '@
-$apacheReferencePath = Join-Path $nodeModules 'typescript\LICENSE.txt'
+$apacheReferencePath = Join-Path $projectRootPath 'LICENSES\Apache-2.0.txt'
 $apacheText = if (Test-Path $apacheReferencePath -PathType Leaf) {
     Get-Content -LiteralPath $apacheReferencePath -Raw -Encoding utf8
 } else { '' }

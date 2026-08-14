@@ -5,9 +5,9 @@ repo_root=$(git rev-parse --show-toplevel)
 checker="$repo_root/tools/Test-RepositoryPrivacy.ps1"
 
 if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -File "$checker" -RequireSafeLocalConfig
+  pwsh -NoProfile -File "$checker" -RequireSafeLocalConfig -ScanAllLocalBranches
 elif command -v powershell.exe >/dev/null 2>&1; then
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$checker" -RequireSafeLocalConfig
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$checker" -RequireSafeLocalConfig -ScanAllLocalBranches
 else
   echo "Privacy guard requires PowerShell 7 or Windows PowerShell." >&2
   exit 1
