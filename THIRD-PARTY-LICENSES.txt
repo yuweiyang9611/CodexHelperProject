@@ -540,7 +540,7 @@ END OF TERMS AND CONDITIONS
 
 ==============================================================================
 Components:
-- npm: postcss 8.5.23 [LICENSE]
+- npm: postcss 8.5.26 [LICENSE]
 
 The MIT License (MIT)
 
@@ -803,7 +803,7 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- npm: nanoid 3.3.16 [LICENSE]
+- npm: nanoid 3.3.18 [LICENSE]
 
 The MIT License (MIT)
 
