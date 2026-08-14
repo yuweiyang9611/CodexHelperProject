@@ -97,7 +97,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Components:
 - npm: @babel/helper-string-parser 7.29.7 [LICENSE]
 - npm: @babel/helper-validator-identifier 7.29.7 [LICENSE]
-- npm: @babel/types 7.29.7 [LICENSE]
+- npm: @babel/types 7.29.8 [LICENSE]
 
 MIT License
 
@@ -148,16 +148,16 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- npm: @vue/compiler-core 3.5.40 [LICENSE]
-- npm: @vue/compiler-dom 3.5.40 [LICENSE]
-- npm: @vue/compiler-sfc 3.5.40 [LICENSE]
-- npm: @vue/compiler-ssr 3.5.40 [LICENSE]
-- npm: @vue/reactivity 3.5.40 [LICENSE]
-- npm: @vue/runtime-core 3.5.40 [LICENSE]
-- npm: @vue/runtime-dom 3.5.40 [LICENSE]
-- npm: @vue/server-renderer 3.5.40 [LICENSE]
-- npm: @vue/shared 3.5.40 [LICENSE]
-- npm: vue 3.5.40 [LICENSE]
+- npm: @vue/compiler-core 3.5.41 [LICENSE]
+- npm: @vue/compiler-dom 3.5.41 [LICENSE]
+- npm: @vue/compiler-sfc 3.5.41 [LICENSE]
+- npm: @vue/compiler-ssr 3.5.41 [LICENSE]
+- npm: @vue/reactivity 3.5.41 [LICENSE]
+- npm: @vue/runtime-core 3.5.41 [LICENSE]
+- npm: @vue/runtime-dom 3.5.41 [LICENSE]
+- npm: @vue/server-renderer 3.5.41 [LICENSE]
+- npm: @vue/shared 3.5.41 [LICENSE]
+- npm: vue 3.5.41 [LICENSE]
 
 The MIT License (MIT)
 
@@ -195,7 +195,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ==============================================================================
 Components:
-- npm: @babel/parser 7.29.7 [LICENSE]
+- npm: @babel/parser 7.29.8 [LICENSE]
 
 Copyright (C) 2012-2014 by various contributors (see AUTHORS)
 
