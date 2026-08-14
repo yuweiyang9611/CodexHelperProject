@@ -1,0 +1,14 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./tsconfig.unit.tsbuildinfo",
+    "types": ["node", "vitest/globals"],
+    "allowImportingTsExtensions": true,
+    "allowArbitraryExtensions": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["vitest.config.ts", "tests/unit/**/*.ts", "src/**/*.ts", "src/**/*.vue"]
+}

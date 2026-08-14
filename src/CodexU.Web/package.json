@@ -1,0 +1,36 @@
+{
+  "name": "codexu-web",
+  "private": true,
+  "version": "0.5.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "prepreview": "npm run build",
+    "preview": "vite preview",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test tests/e2e/visual.spec.ts --update-snapshots=all",
+    "test:a11y": "playwright test tests/e2e/accessibility.spec.ts tests/e2e/keyboard.spec.ts"
+  },
+  "dependencies": {
+    "pinia": "^4.0.2",
+    "vue": "^3.5.40"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^26.1.2",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/coverage-v8": "^4.1.10",
+    "@vue/tsconfig": "^0.9.1",
+    "happy-dom": "^20.11.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.8"
+  }
+}

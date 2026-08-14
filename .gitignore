@@ -1,0 +1,25 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+.idea/
+
+# Vue / Vite
+**/node_modules/
+src/CodexU.Web/dist/
+src/CodexU.Web/.vite/
+*.tsbuildinfo
+
+# Local runtime data
+*.log
+artifacts/
+.codexu/
+
+# Agent scratch worktrees — separate checkouts, never part of this tree
+.claude/worktrees/
+
+# OS
+Thumbs.db
+.DS_Store

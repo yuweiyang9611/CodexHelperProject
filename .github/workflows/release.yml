@@ -1,0 +1,454 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      archive: ${{ steps.version.outputs.archive }}
+      checksum: ${{ steps.version.outputs.checksum }}
+      installer: ${{ steps.version.outputs.installer }}
+      installer_checksum: ${{ steps.version.outputs.installer_checksum }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      release_sha: ${{ steps.state.outputs.release_sha }}
+      should_release: ${{ steps.state.outputs.should_release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content -LiteralPath 'Directory.Build.props'
+          $version = ([string]$props.Project.PropertyGroup.Version).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Directory.Build.props contains an invalid release version: '$version'"
+          }
+
+          $tag = "v$version"
+          $archive = "CodexU-$version-win-x64.zip"
+          $checksum = "CodexU-$version-win-x64.sha256"
+          $installer = "CodexU-$version-win-x64-setup.exe"
+          $installerChecksum = "CodexU-$version-win-x64-setup.sha256"
+          $prerelease = $version.Contains('-').ToString().ToLowerInvariant()
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "checksum=$checksum" >> $env:GITHUB_OUTPUT
+          "installer=$installer" >> $env:GITHUB_OUTPUT
+          "installer_checksum=$installerChecksum" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+
+      - name: Inspect existing release
+        id: state
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_ARCHIVE: ${{ steps.version.outputs.archive }}
+          RELEASE_CHECKSUM: ${{ steps.version.outputs.checksum }}
+          RELEASE_INSTALLER: ${{ steps.version.outputs.installer }}
+          RELEASE_INSTALLER_CHECKSUM: ${{ steps.version.outputs.installer_checksum }}
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const release = releases.find(item => item.tag_name === process.env.RELEASE_TAG);
+            const expectedAssets = [
+              process.env.RELEASE_ARCHIVE,
+              process.env.RELEASE_CHECKSUM,
+              process.env.RELEASE_INSTALLER,
+              process.env.RELEASE_INSTALLER_CHECKSUM,
+            ];
+            const complete = Boolean(
+              release
+              && !release.draft
+              && expectedAssets.every(name => release.assets.some(
+                asset => asset.name === name && asset.state === 'uploaded' && asset.size > 0,
+              )),
+            );
+            async function resolveTagCommitSha(tagName) {
+              let object;
+              try {
+                const ref = await github.rest.git.getRef({
+                  owner,
+                  repo,
+                  ref: `tags/${tagName}`,
+                });
+                object = ref.data.object;
+              } catch (error) {
+                if (error.status === 404) {
+                  core.info(`Tag ${tagName} does not exist yet; using workflow commit ${context.sha}.`);
+                  return context.sha;
+                }
+                throw error;
+              }
+
+              const visited = new Set();
+              while (object.type === 'tag') {
+                if (visited.has(object.sha)) {
+                  throw new Error(`Annotated tag cycle detected while resolving ${tagName}.`);
+                }
+                visited.add(object.sha);
+                const tag = await github.rest.git.getTag({ owner, repo, tag_sha: object.sha });
+                object = tag.data.object;
+              }
+
+              if (object.type !== 'commit' || !/^[0-9a-f]{40}$/i.test(object.sha)) {
+                throw new Error(`Tag ${tagName} does not resolve to a commit.`);
+              }
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${object.sha}...${context.sha}`,
+              });
+              if (!['ahead', 'identical'].includes(comparison.data.status)) {
+                throw new Error(
+                  `Refusing to release ${tagName}: tagged commit ${object.sha} is not reachable from main ${context.sha} `
+                  + `(comparison status: ${comparison.data.status}).`,
+                );
+              }
+              core.info(`Resolved ${tagName} to commit ${object.sha}.`);
+              return object.sha;
+            }
+
+            const releaseSha = await resolveTagCommitSha(process.env.RELEASE_TAG);
+
+            core.setOutput('should_release', complete ? 'false' : 'true');
+            core.setOutput('release_sha', releaseSha);
+            core.info(complete
+              ? `${process.env.RELEASE_TAG} is already complete; no release will be created.`
+              : `${process.env.RELEASE_TAG} needs to be built or repaired from ${releaseSha}.`);
+
+  build:
+    needs: inspect
+    if: needs.inspect.outputs.should_release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.inspect.outputs.release_sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out release identity
+        shell: pwsh
+        env:
+          EXPECTED_RELEASE_SHA: ${{ needs.inspect.outputs.release_sha }}
+          EXPECTED_RELEASE_VERSION: ${{ needs.inspect.outputs.version }}
+        run: |
+          $actualSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualSha -ne $env:EXPECTED_RELEASE_SHA) {
+            throw "Release checkout mismatch: expected $env:EXPECTED_RELEASE_SHA, got $actualSha"
+          }
+          [xml]$props = Get-Content -LiteralPath 'Directory.Build.props'
+          $actualVersion = ([string]$props.Project.PropertyGroup.Version).Trim()
+          if ($actualVersion -ne $env:EXPECTED_RELEASE_VERSION) {
+            throw "Release version mismatch after checkout: expected $env:EXPECTED_RELEASE_VERSION, got $actualVersion"
+          }
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/CodexU.Web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: src/CodexU.Web
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: src/CodexU.Web
+        run: npx playwright install chromium
+
+      - name: Restore
+        run: dotnet restore CodexU.sln
+
+      - name: Verify third-party inventory
+        shell: powershell
+        run: |
+          ./tools/Verify-VersionConsistency.ps1
+          ./tools/Verify-ReleaseAutomation.ps1
+          ./tools/Generate-ThirdPartyInventory.ps1
+          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt
+
+      - name: Build
+        run: dotnet build CodexU.sln --configuration Release --no-restore -warnaserror
+
+      - name: Verify formatting
+        run: dotnet format CodexU.sln --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test CodexU.sln --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Visual and accessibility tests
+        working-directory: src/CodexU.Web
+        run: npm run test:e2e
+
+      - name: Upload Playwright failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Playwright-release-failure-${{ github.sha }}
+          path: |
+            src/CodexU.Web/test-results
+            src/CodexU.Web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish self-contained Windows build
+        run: dotnet publish src/CodexU.App/CodexU.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false --output artifacts/publish
+
+      - name: Verify publish payload
+        shell: powershell
+        run: |
+          $required = @(
+            'artifacts/publish/CodexU.App.exe',
+            'artifacts/publish/web/index.html',
+            'artifacts/publish/LICENSE',
+            'artifacts/publish/THIRD-PARTY-NOTICES.md',
+            'artifacts/publish/THIRD-PARTY-INVENTORY.md',
+            'artifacts/publish/THIRD-PARTY-LICENSES.txt',
+            'artifacts/publish/LICENSES/Inno-Setup-license.txt',
+            'artifacts/publish/LICENSES/dotnet-runtime-MIT.txt',
+            'artifacts/publish/LICENSES/dotnet-runtime-ThirdPartyNotices.txt',
+            'artifacts/publish/LICENSES/shanggqm-codexU-MIT.txt',
+            'artifacts/publish/LICENSES/liu-codexU-windows-MIT.txt'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_ -PathType Leaf) }
+          if ($missing) { throw "Publish payload is missing: $($missing -join ', ')" }
+
+      - name: Sign published executable when configured
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: ./tools/Sign-ReleaseArtifact.ps1 -Path artifacts/publish/CodexU.App.exe
+
+      - name: Smoke-test published EXE
+        shell: powershell
+        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish
+
+      - name: Smoke-test WPF status strip
+        shell: powershell
+        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish -TimeoutSeconds 120 -VerifyStatusStrip
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --version=6.7.1 --no-progress --yes
+
+      - name: Build per-user Windows installer
+        shell: pwsh
+        env:
+          INNO_SETUP_LICENSE_KEY: ${{ secrets.INNO_SETUP_LICENSE_KEY }}
+          CODEXU_VERSION: ${{ needs.inspect.outputs.version }}
+          CODEXU_NUMERIC_VERSION: ${{ needs.inspect.outputs.version }}
+          CODEXU_PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish
+          CODEXU_INSTALLER_OUTPUT_DIR: ${{ github.workspace }}\artifacts\release
+        run: |
+          $env:CODEXU_NUMERIC_VERSION = $env:CODEXU_NUMERIC_VERSION.Split('-', 2)[0]
+          if (-not [string]::IsNullOrWhiteSpace($env:INNO_SETUP_LICENSE_KEY)) {
+            New-Item -Path 'HKCU:\Software\Jordan Russell\Inno Setup\License' -Force | Out-Null
+            New-ItemProperty -Path 'HKCU:\Software\Jordan Russell\Inno Setup\License' -Name LicenseKey -Value $env:INNO_SETUP_LICENSE_KEY -PropertyType String -Force | Out-Null
+          }
+          New-Item -ItemType Directory -Force -Path 'artifacts/release' | Out-Null
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
+          & $compiler 'installer\CodexU.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+          $installer = Join-Path 'artifacts/release' '${{ needs.inspect.outputs.installer }}'
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf) -or (Get-Item $installer).Length -le 0) {
+            throw "Installer was not produced: $installer"
+          }
+
+      - name: Sign Windows installer when configured
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: ./tools/Sign-ReleaseArtifact.ps1 -Path 'artifacts/release/${{ needs.inspect.outputs.installer }}'
+
+      - name: Package release assets
+        shell: pwsh
+        env:
+          RELEASE_ARCHIVE: ${{ needs.inspect.outputs.archive }}
+          RELEASE_CHECKSUM: ${{ needs.inspect.outputs.checksum }}
+          RELEASE_INSTALLER: ${{ needs.inspect.outputs.installer }}
+          RELEASE_INSTALLER_CHECKSUM: ${{ needs.inspect.outputs.installer_checksum }}
+        run: |
+          New-Item -ItemType Directory -Force -Path 'artifacts/release' | Out-Null
+          $archivePath = Join-Path 'artifacts/release' $env:RELEASE_ARCHIVE
+          $checksumPath = Join-Path 'artifacts/release' $env:RELEASE_CHECKSUM
+          $installerPath = Join-Path 'artifacts/release' $env:RELEASE_INSTALLER
+          $installerChecksumPath = Join-Path 'artifacts/release' $env:RELEASE_INSTALLER_CHECKSUM
+
+          Compress-Archive -Path 'artifacts/publish/*' -DestinationPath $archivePath -CompressionLevel Optimal -Force
+          $archive = Get-Item -LiteralPath $archivePath
+          if ($archive.Length -le 0) { throw 'Release archive is empty.' }
+
+          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($archive.Name)" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+          $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$installerHash  $env:RELEASE_INSTALLER" | Set-Content -LiteralPath $installerChecksumPath -Encoding ascii
+
+      # Hand-off from this Windows build job to the Ubuntu publish job in the
+      # same run, consumed within minutes. The durable copies are the assets on
+      # the GitHub Release itself, so retaining a 125 MB duplicate for two weeks
+      # bought nothing. A re-run rebuilds from source rather than reusing this.
+      - name: Upload release payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodexU-${{ needs.inspect.outputs.version }}-release
+          path: artifacts/release
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  publish:
+    needs: [inspect, build]
+    if: needs.inspect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download validated release payload
+        uses: actions/download-artifact@v8
+        with:
+          name: CodexU-${{ needs.inspect.outputs.version }}-release
+          path: artifacts/release
+
+      - name: Create or repair GitHub Release
+        id: publish
+        uses: actions/github-script@v9
+        env:
+          RELEASE_VERSION: ${{ needs.inspect.outputs.version }}
+          RELEASE_TAG: ${{ needs.inspect.outputs.tag }}
+          RELEASE_SHA: ${{ needs.inspect.outputs.release_sha }}
+          RELEASE_ARCHIVE: ${{ needs.inspect.outputs.archive }}
+          RELEASE_CHECKSUM: ${{ needs.inspect.outputs.checksum }}
+          RELEASE_INSTALLER: ${{ needs.inspect.outputs.installer }}
+          RELEASE_INSTALLER_CHECKSUM: ${{ needs.inspect.outputs.installer_checksum }}
+          RELEASE_PRERELEASE: ${{ needs.inspect.outputs.prerelease }}
+        with:
+          retries: 3
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { owner, repo } = context.repo;
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            let release = releases.find(item => item.tag_name === process.env.RELEASE_TAG);
+
+            if (!release) {
+              const created = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: process.env.RELEASE_TAG,
+                target_commitish: process.env.RELEASE_SHA,
+                name: `CodexU ${process.env.RELEASE_VERSION}`,
+                draft: true,
+                prerelease: process.env.RELEASE_PRERELEASE === 'true',
+                generate_release_notes: true,
+              });
+              release = created.data;
+              core.info(`Created draft release ${process.env.RELEASE_TAG}.`);
+            } else if (release.draft) {
+              const updated = await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: release.id,
+                tag_name: process.env.RELEASE_TAG,
+                target_commitish: process.env.RELEASE_SHA,
+                name: `CodexU ${process.env.RELEASE_VERSION}`,
+                draft: true,
+                prerelease: process.env.RELEASE_PRERELEASE === 'true',
+              });
+              release = updated.data;
+              core.info(`Reusing draft release ${process.env.RELEASE_TAG}.`);
+            } else {
+              core.info(`Repairing assets on published release ${process.env.RELEASE_TAG}.`);
+            }
+
+            const assets = [
+              { name: process.env.RELEASE_ARCHIVE, type: 'application/zip' },
+              { name: process.env.RELEASE_CHECKSUM, type: 'text/plain' },
+              { name: process.env.RELEASE_INSTALLER, type: 'application/vnd.microsoft.portable-executable' },
+              { name: process.env.RELEASE_INSTALLER_CHECKSUM, type: 'text/plain' },
+            ];
+
+            for (const asset of assets) {
+              const existing = release.assets.find(item => item.name === asset.name);
+              if (existing) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner,
+                  repo,
+                  asset_id: existing.id,
+                });
+              }
+
+              const assetPath = path.join('artifacts', 'release', asset.name);
+              const data = fs.readFileSync(assetPath);
+              await github.rest.repos.uploadReleaseAsset({
+                owner,
+                repo,
+                release_id: release.id,
+                name: asset.name,
+                data,
+                headers: {
+                  'content-type': asset.type,
+                  'content-length': data.length,
+                },
+              });
+              core.info(`Uploaded ${asset.name} (${data.length} bytes).`);
+            }
+
+            if (release.draft) {
+              const published = await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: release.id,
+                draft: false,
+                prerelease: process.env.RELEASE_PRERELEASE === 'true',
+              });
+              release = published.data;
+            }
+
+            core.setOutput('release_url', release.html_url);
+            core.info(`Published ${release.html_url}`);

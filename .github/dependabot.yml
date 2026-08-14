@@ -1,0 +1,57 @@
+version: 2
+
+# Note: CI regenerates THIRD-PARTY-INVENTORY.md and fails on any diff. The
+# inventory covers shipped dependencies only (NuGet packages reaching
+# CodexU.App, plus `npm ls --omit=dev`), so dev-only bumps land clean while a
+# production bump needs `./tools/Generate-ThirdPartyInventory.ps1` re-run and
+# the result committed onto the PR branch.
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Test tooling moves together and never touches the shipped inventory.
+      test-tooling:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "coverlet.*"
+
+  - package-ecosystem: npm
+    directory: /src/CodexU.Web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Grouped so the toolchain lands as one reviewable PR; all dev-only, so
+      # the shipped inventory is unaffected.
+      web-tooling:
+        dependency-type: development
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+          - "@vitest/*"
+          - "vue-tsc"
+          - "typescript"
+          - "happy-dom"
+      playwright:
+        dependency-type: development
+        patterns:
+          - "@playwright/*"
+          - "@axe-core/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

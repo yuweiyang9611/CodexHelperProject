@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-publish:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/CodexU.Web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: src/CodexU.Web
+        run: npm ci
+
+      # Runs before the browser download and the .NET build so a broken
+      # presentation-layer change fails in seconds rather than minutes.
+      - name: Web unit tests
+        working-directory: src/CodexU.Web
+        run: npm run test:unit
+
+      - name: Install Playwright Chromium
+        working-directory: src/CodexU.Web
+        run: npx playwright install chromium
+
+      - name: Restore
+        run: dotnet restore CodexU.sln
+
+      - name: Verify third-party inventory
+        shell: powershell
+        run: |
+          ./tools/Verify-VersionConsistency.ps1
+          ./tools/Verify-ReleaseAutomation.ps1
+          ./tools/Generate-ThirdPartyInventory.ps1
+          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt
+
+      - name: Build
+        run: dotnet build CodexU.sln --configuration Release --no-restore -warnaserror
+
+      - name: Verify formatting
+        run: dotnet format CodexU.sln --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test CodexU.sln --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Visual and accessibility tests
+        working-directory: src/CodexU.Web
+        run: npm run test:e2e
+
+      - name: Upload Playwright failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Playwright-failure-${{ github.sha }}
+          path: |
+            src/CodexU.Web/test-results
+            src/CodexU.Web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish self-contained Windows build
+        run: dotnet publish src/CodexU.App/CodexU.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false --output artifacts/publish
+
+      - name: Verify publish payload
+        shell: powershell
+        run: |
+          $required = @(
+            'artifacts/publish/CodexU.App.exe',
+            'artifacts/publish/web/index.html',
+            'artifacts/publish/LICENSE',
+            'artifacts/publish/THIRD-PARTY-NOTICES.md',
+            'artifacts/publish/THIRD-PARTY-INVENTORY.md',
+            'artifacts/publish/THIRD-PARTY-LICENSES.txt',
+            'artifacts/publish/LICENSES/Inno-Setup-license.txt',
+            'artifacts/publish/LICENSES/dotnet-runtime-MIT.txt',
+            'artifacts/publish/LICENSES/dotnet-runtime-ThirdPartyNotices.txt',
+            'artifacts/publish/LICENSES/shanggqm-codexU-MIT.txt',
+            'artifacts/publish/LICENSES/liu-codexU-windows-MIT.txt'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_ -PathType Leaf) }
+          if ($missing) { throw "Publish payload is missing: $($missing -join ', ')" }
+
+      - name: Smoke-test published EXE
+        shell: powershell
+        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish
+
+      - name: Smoke-test WPF status strip
+        shell: powershell
+        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish -TimeoutSeconds 120 -VerifyStatusStrip
+
+      - name: Validate Windows installer
+        shell: pwsh
+        env:
+          CODEXU_VERSION: 0.0.0-ci
+          CODEXU_NUMERIC_VERSION: 0.0.0
+          CODEXU_PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish
+          CODEXU_INSTALLER_OUTPUT_DIR: ${{ github.workspace }}\artifacts\installer
+        run: |
+          choco install innosetup --version=6.7.1 --no-progress --yes
+          New-Item -ItemType Directory -Force -Path 'artifacts/installer' | Out-Null
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
+          & $compiler 'installer\CodexU.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+          $installer = Get-Item -LiteralPath 'artifacts/installer/CodexU-0.0.0-ci-win-x64-setup.exe'
+          if ($installer.Length -le 0) { throw 'Installer is empty.' }
+
+      # Actions storage is billed per account, so this 74 MB payload kept for a
+      # week on every pull-request commit crowded out other repositories. Pull
+      # requests still build, verify, smoke-test and installer-validate exactly
+      # the same payload — they just do not store it. Pushes to main and manual
+      # runs keep a downloadable build.
+      # Storing the build is a convenience, not a check: by this point the payload
+      # has already been published, verified, smoke-tested and compiled into an
+      # installer. Account-level artifact storage is a shared resource that can be
+      # exhausted by other repositories — and GitHub recalculates usage only every
+      # 6-12 hours, so a run can be refused storage for hours after the space is
+      # actually free. Failing the build for that reports an infrastructure
+      # condition as a code defect and buries real failures in recurring red.
+      # The step still shows as failed in the run, so a genuine upload problem
+      # stays visible rather than silent.
+      - name: Upload validated Windows build
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodexU-win-x64-${{ github.sha }}
+          path: artifacts/publish
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
