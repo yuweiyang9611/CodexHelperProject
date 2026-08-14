@@ -18,6 +18,13 @@ function Test-NoreplyAddress {
         $Address -match '(?i)^noreply@github\.com$'
 }
 
+function Test-PublicServiceAddress {
+    param([string]$Address)
+
+    return (Test-NoreplyAddress $Address) -or
+        $Address -match '(?i)^support@github\.com$'
+}
+
 function Assert-NoEmailText {
     param(
         [AllowNull()]
@@ -25,7 +32,10 @@ function Assert-NoEmailText {
         [string]$Location
     )
 
-    if (-not [string]::IsNullOrEmpty($Text) -and $emailRegex.IsMatch($Text)) {
+    $privateMatches = if ([string]::IsNullOrEmpty($Text)) { @() } else {
+        @($emailRegex.Matches($Text) | Where-Object { -not (Test-PublicServiceAddress $_.Value) })
+    }
+    if (@($privateMatches).Count -gt 0) {
         throw "Privacy check failed: an email address is present in $Location. The address is intentionally not printed."
     }
 }
@@ -94,7 +104,7 @@ foreach ($commit in $commits) {
 
         $content = (Invoke-GitLines @('show', "${commit}:$file")) -join "`n"
         $matches = @($emailRegex.Matches($content))
-        $nonNoreplyMatches = @($matches | Where-Object { -not (Test-NoreplyAddress $_.Value) })
+        $nonNoreplyMatches = @($matches | Where-Object { -not (Test-PublicServiceAddress $_.Value) })
         if ($nonNoreplyMatches.Count -eq 0) { continue }
 
         $onlyReservedTestAddresses = $file.StartsWith('tests/', [StringComparison]::Ordinal) -and
