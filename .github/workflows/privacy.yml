@@ -1,0 +1,31 @@
+name: Privacy Guard
+
+on:
+  push:
+  pull_request:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    name: Privacy Guard
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout complete public history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reject private email exposure
+        shell: pwsh
+        run: ./tools/Test-RepositoryPrivacy.ps1
