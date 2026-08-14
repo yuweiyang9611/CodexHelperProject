@@ -5,7 +5,7 @@ Identical legal documents are printed once and list every component to which the
 
 ==============================================================================
 Components:
-- NuGet: Microsoft.Web.WebView2 1.0.4078.44 [NOTICE.txt]
+- NuGet: Microsoft.Web.WebView2 1.0.4129.50 [NOTICE.txt]
 
 NOTICES AND INFORMATION
 Do Not Translate or Localize
@@ -669,7 +669,7 @@ https://sqlite.org/copyright.html
 
 ==============================================================================
 Components:
-- NuGet: Microsoft.Web.WebView2 1.0.4078.44 [LICENSE.txt]
+- NuGet: Microsoft.Web.WebView2 1.0.4129.50 [LICENSE.txt]
 
 Copyright (C) Microsoft Corporation. All rights reserved.
 
