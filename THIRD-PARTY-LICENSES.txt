@@ -840,7 +840,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ==============================================================================
 Components:
-- NuGet: Microsoft.Data.Sqlite.Core 10.0.10 [SPDX-MIT.txt]
+- NuGet: Microsoft.Data.Sqlite.Core 10.0.11 [SPDX-MIT.txt]
 
 MIT License
 
