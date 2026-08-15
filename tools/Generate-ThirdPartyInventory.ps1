@@ -167,7 +167,7 @@ Add-ProductionDependencies $npmTree.dependencies
 
 $seenNpmPackages = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($packageJsonFile in Get-ChildItem $nodeModules -Filter package.json -File -Recurse) {
-    $package = Get-Content $packageJsonFile.FullName -Raw | ConvertFrom-Json
+    $package = Get-Content $packageJsonFile.FullName -Raw -Encoding utf8 | ConvertFrom-Json
     $packageKey = "$($package.name)@$($package.version)"
     if (-not $productionPackages.Contains($packageKey) -or -not $seenNpmPackages.Add($packageKey)) { continue }
 

@@ -27,10 +27,10 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/tsconfig": "^0.9.1",
-    "happy-dom": "^20.11.1",
+    "happy-dom": "^20.11.2",
     "typescript": "~6.0.2",
-    "vite": "^8.1.5",
+    "vite": "^8.2.1",
     "vitest": "^4.1.10",
-    "vue-tsc": "^3.3.8"
+    "vue-tsc": "^3.3.9"
   }
 }
