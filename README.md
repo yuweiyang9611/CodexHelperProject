@@ -9,7 +9,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 
 本仓库于 2026-08-15 从原私有开发仓库迁移而来。原仓库的提交元数据、Pull Request 及相关记录包含个人隐私信息，因此原私有仓库及全部历史记录已删除；当前公开仓库从经过检查的文件快照重新初始化，没有导入旧提交、分支、标签、PR 或 Release 历史。
 
-本仓库要求所有提交使用 GitHub noreply 邮箱，并通过本地 pre-push hook 与 GitHub Actions 检查提交作者、提交者、提交信息、文件内容及 PR/Issue 文本。贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，不要在公开提交、PR、Issue、评论或日志中填写私人邮箱。
+本仓库要求所有提交使用 GitHub noreply 邮箱，并通过本地 pre-push hook 与 GitHub Actions 检查提交作者、提交者、提交信息、文件内容及 PR/Issue 文本。新设备克隆后请先按 [GIT-HOOKS.md](GIT-HOOKS.md) 启用仓库 hooks；贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，不要在公开提交、PR、Issue、评论或日志中填写私人邮箱。
 
 ## 当前能力
 

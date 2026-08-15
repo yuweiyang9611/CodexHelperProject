@@ -9,8 +9,10 @@ Enable **Keep my email addresses private** and **Block command line pushes that 
 ```powershell
 git config --local user.email "<id>+<username>@users.noreply.github.com"
 git config --local user.useConfigOnly true
-git config --local core.hooksPath .githooks
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Enable-GitHooks.ps1
 ```
+
+The hook directory is versioned, but Git does not enable repository hooks automatically after clone. See [GIT-HOOKS.md](GIT-HOOKS.md) for setup, verification and manual fallback instructions.
 
 Before committing, verify that the effective address ends in `@users.noreply.github.com`:
 
