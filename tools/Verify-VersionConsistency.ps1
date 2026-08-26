@@ -4,7 +4,13 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $productVersion = [string]$buildProps.Project.PropertyGroup.Version
 $webPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Web\package.json') -Raw | ConvertFrom-Json
 $electronPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Electron\package.json') -Raw | ConvertFrom-Json
-$electronPackageLock = Get-Content (Join-Path $projectRoot 'src\CodexU.Electron\package-lock.json') -Raw | ConvertFrom-Json -AsHashtable
+$electronPackageLockPath = Join-Path $projectRoot 'src\CodexU.Electron\package-lock.json'
+$electronLockVersionReader = Join-Path $PSScriptRoot 'Get-ElectronLockVersions.cjs'
+$electronLockVersionJson = & node $electronLockVersionReader $electronPackageLockPath
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to read Electron package-lock.json with Node.js.'
+}
+$electronLockVersions = $electronLockVersionJson | ConvertFrom-Json
 [xml]$appManifest = Get-Content (Join-Path $projectRoot 'src\CodexU.App\app.manifest') -Raw
 
 if ([string]::IsNullOrWhiteSpace($productVersion)) {
@@ -19,9 +25,13 @@ if ($electronPackage.version -ne $productVersion) {
     throw "Version mismatch: .NET=$productVersion, Electron=$($electronPackage.version)"
 }
 
-if ($electronPackageLock['version'] -ne $productVersion -or
-    $electronPackageLock['packages']['']['version'] -ne $productVersion) {
-    throw "Version mismatch: .NET=$productVersion, Electron lock=$($electronPackageLock['version'])"
+if ([string]::IsNullOrWhiteSpace([string]$electronLockVersions.rootVersion)) {
+    throw 'Electron package-lock.json does not contain a root package entry.'
+}
+
+if ($electronLockVersions.lockVersion -ne $productVersion -or
+    $electronLockVersions.rootVersion -ne $productVersion) {
+    throw "Version mismatch: .NET=$productVersion, Electron lock=$($electronLockVersions.lockVersion)"
 }
 
 $manifestVersion = [string]$appManifest.assembly.assemblyIdentity.version
