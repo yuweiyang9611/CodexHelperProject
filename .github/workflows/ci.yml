@@ -44,6 +44,10 @@ jobs:
         working-directory: src/CodexU.Electron
         run: npm ci
 
+      - name: Audit Electron runtime dependencies
+        working-directory: src/CodexU.Electron
+        run: npm audit --omit=dev --audit-level=high
+
       # Runs before the browser download and the .NET build so a broken
       # presentation-layer change fails in seconds rather than minutes.
       - name: Web unit tests
