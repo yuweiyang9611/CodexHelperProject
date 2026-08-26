@@ -7,7 +7,9 @@ namespace CodexU.Sidecar.Tests;
 
 public sealed class SidecarHostRpcTests
 {
-    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(2);
+    // This guard catches deadlocks without failing when a shared Windows runner
+    // temporarily suspends the test process under parallel solution load.
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
 
     [Fact]
     public async Task FileDialogUsesFixedSchemaAndDirectStringPayload()
