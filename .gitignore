@@ -16,6 +16,7 @@ src/CodexU.Web/.vite/
 *.log
 artifacts/
 .codexu/
+.tmp/
 
 # Agent scratch worktrees — separate checkouts, never part of this tree
 .claude/worktrees/

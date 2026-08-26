@@ -49,6 +49,11 @@ const splitTotal = computed(() => {
     + (split.value.billableCacheWriteTokens ?? 0)
     + split.value.outputTokens)
 })
+
+function splitPercentage(value?: number | null): string {
+  const percentage = Math.max(0, value ?? 0) / splitTotal.value * 100
+  return `${percentage.toFixed(1)}%`
+}
 </script>
 
 <template>
@@ -103,10 +108,10 @@ const splitTotal = computed(() => {
           <i class="output" :style="{ width: `${(split?.outputTokens ?? 0) / splitTotal * 100}%` }" />
         </div>
         <div class="split-legend">
-          <span><i class="dot uncached" />未缓存输入 {{ compactNumber(split?.uncachedInputTokens) }}</span>
-          <span><i class="dot cached" />缓存读取 {{ compactNumber(split?.billableCachedInputTokens) }}</span>
-          <span v-if="split?.billableCacheWriteTokens"><i class="dot cache-write" />缓存写入 {{ compactNumber(split?.billableCacheWriteTokens) }}</span>
-          <span><i class="dot output" />输出 {{ compactNumber(split?.outputTokens) }}</span>
+          <span><i class="dot uncached" />未缓存输入 {{ compactNumber(split?.uncachedInputTokens) }} · {{ splitPercentage(split?.uncachedInputTokens) }}</span>
+          <span><i class="dot cached" />缓存读取 {{ compactNumber(split?.billableCachedInputTokens) }} · {{ splitPercentage(split?.billableCachedInputTokens) }}</span>
+          <span v-if="split?.billableCacheWriteTokens"><i class="dot cache-write" />缓存写入 {{ compactNumber(split?.billableCacheWriteTokens) }} · {{ splitPercentage(split?.billableCacheWriteTokens) }}</span>
+          <span><i class="dot output" />输出 {{ compactNumber(split?.outputTokens) }} · {{ splitPercentage(split?.outputTokens) }}</span>
         </div>
       </div>
     </article>

@@ -1,7 +1,15 @@
 import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, TodoItem, TodoMutation } from './types'
 
+type ElectronEventListener = (method: string, payload: unknown) => void
+
+interface ElectronHostBridge {
+  request(method: string, payload?: object): Promise<unknown>
+  onEvent(listener: ElectronEventListener): () => void
+}
+
 declare global {
   interface Window {
+    codexU?: ElectronHostBridge
     chrome?: {
       webview?: {
         postMessage(message: unknown): void
@@ -74,6 +82,7 @@ class HostBridge {
   }>()
 
   private readonly listeners = new Map<string, Set<EventHandler>>()
+  private unsubscribeElectronEvents?: () => void
 
   constructor() {
     if (!this.isNative) {
@@ -117,6 +126,11 @@ class HostBridge {
       if (visualTestMode) this.mockSettings.checkForUpdates = false
     }
 
+    // Electron owns its IPC channel through the context-isolated preload API.
+    // When both bridges exist during migration, never bind the legacy channel or
+    // one host event could be delivered twice.
+    if (window.codexU) return
+
     window.chrome?.webview?.addEventListener('message', (event) => {
       if (!event.data || typeof event.data !== 'object') return
       const envelope = event.data as IpcEnvelope
@@ -132,17 +146,21 @@ class HostBridge {
       }
 
       if (envelope.type === 'event' && envelope.method) {
-        this.listeners.get(envelope.method)?.forEach((handler) => handler(envelope.payload))
+        this.dispatchEvent(envelope.method, envelope.payload)
       }
     })
   }
 
   get isNative(): boolean {
-    return Boolean(window.chrome?.webview)
+    return Boolean(window.codexU || window.chrome?.webview)
   }
 
   request<T>(method: string, payload: object = {}): Promise<T> {
-    if (!this.isNative) return this.mockRequest<T>(method, payload)
+    const electron = window.codexU
+    if (electron) return electron.request(method, payload) as Promise<T>
+
+    const webview = window.chrome?.webview
+    if (!webview) return this.mockRequest<T>(method, payload)
 
     const id = crypto.randomUUID()
     return new Promise<T>((resolve, reject) => {
@@ -164,7 +182,7 @@ class HostBridge {
         timeout,
       })
       try {
-        window.chrome!.webview!.postMessage({ version: 1, id, type: 'request', method, payload })
+        webview.postMessage({ version: 1, id, type: 'request', method, payload })
       } catch (reason) {
         if (timeout !== undefined) window.clearTimeout(timeout)
         this.pending.delete(id)
@@ -177,7 +195,38 @@ class HostBridge {
     const handlers = this.listeners.get(method) ?? new Set<EventHandler>()
     handlers.add(handler)
     this.listeners.set(method, handlers)
-    return () => handlers.delete(handler)
+
+    try {
+      this.subscribeToElectronEvents()
+    } catch (reason) {
+      handlers.delete(handler)
+      if (handlers.size === 0) this.listeners.delete(method)
+      throw reason
+    }
+
+    let subscribed = true
+    return () => {
+      if (!subscribed) return
+      subscribed = false
+      handlers.delete(handler)
+      if (handlers.size === 0) this.listeners.delete(method)
+
+      if (this.listeners.size === 0 && this.unsubscribeElectronEvents) {
+        this.unsubscribeElectronEvents()
+        this.unsubscribeElectronEvents = undefined
+      }
+    }
+  }
+
+  private subscribeToElectronEvents(): void {
+    if (!window.codexU || this.unsubscribeElectronEvents) return
+    this.unsubscribeElectronEvents = window.codexU.onEvent((method, payload) => {
+      this.dispatchEvent(method, payload)
+    })
+  }
+
+  private dispatchEvent(method: string, payload: unknown): void {
+    this.listeners.get(method)?.forEach((handler) => handler(payload))
   }
 
   private async mockRequest<T>(method: string, payload: object): Promise<T> {

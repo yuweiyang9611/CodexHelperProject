@@ -1,0 +1,37 @@
+{
+  "name": "codexu-electron",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Electron desktop host for codexU",
+  "license": "MIT",
+  "main": "dist/main.js",
+  "scripts": {
+    "verify:node": "node scripts/verify-node-version.cjs",
+    "prestart": "npm run verify:node",
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && electron-forge start",
+    "prepackage": "npm run verify:node",
+    "package": "npm run build && electron-forge package",
+    "premake": "npm run verify:node",
+    "make": "npm run build && electron-forge make",
+    "presmoke": "npm run verify:node",
+    "smoke": "npm run build && electron-forge start -- --smoke-test",
+    "pretest": "npm run verify:node",
+    "test": "npm run build && node --test test/framing.test.cjs test/host-requests.test.cjs test/host-settings.test.cjs test/lifecycle.test.cjs test/preload.test.cjs test/security.test.cjs test/sidecar-client.test.cjs"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "overrides": {
+    "tar": "7.5.22",
+    "tmp": "0.2.7"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron/fuses": "2.1.3",
+    "@types/node": "24.13.3",
+    "electron": "43.4.1",
+    "typescript": "6.0.2"
+  }
+}
