@@ -1,10 +1,11 @@
 version: 2
 
 # Note: CI regenerates THIRD-PARTY-INVENTORY.md and fails on any diff. The
-# inventory covers shipped dependencies only (NuGet packages reaching
-# CodexU.App, plus `npm ls --omit=dev`), so dev-only bumps land clean while a
-# production bump needs `./tools/Generate-ThirdPartyInventory.ps1` re-run and
-# the result committed onto the PR branch.
+# inventory currently covers the shipped WPF dependencies (NuGet packages
+# reaching CodexU.App, plus the Vue production graph). Electron is built only as
+# a migration gate for now; its Chromium/runtime notices must be added before
+# Electron artifacts are published. A covered production bump needs
+# `./tools/Generate-ThirdPartyInventory.ps1` re-run and the result committed.
 updates:
   - package-ecosystem: nuget
     directory: /
@@ -44,6 +45,26 @@ updates:
         patterns:
           - "@playwright/*"
           - "@axe-core/*"
+
+  - package-ecosystem: npm
+    directory: /src/CodexU.Electron
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      electron-runtime:
+        patterns:
+          - "electron"
+          - "@electron/fuses"
+      electron-forge:
+        patterns:
+          - "@electron-forge/*"
+      electron-tooling:
+        dependency-type: development
+        patterns:
+          - "typescript"
+          - "@types/node"
 
   - package-ecosystem: github-actions
     directory: /

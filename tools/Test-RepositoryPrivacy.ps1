@@ -25,6 +25,15 @@ function Test-PublicServiceAddress {
         $Address -match '(?i)^support@github\.com$'
 }
 
+function Test-AllowlistedDependencyLockAddress {
+    param([string]$Address)
+
+    # npm writes these public upstream addresses into generated lock metadata:
+    # GitHub's SSH transport identity and glob's published deprecation notice.
+    return $Address -match '(?i)^git@github\.com$' -or
+        $Address -match '(?i)^i@izs\.me$'
+}
+
 function Assert-NoEmailText {
     param(
         [AllowNull()]
@@ -104,7 +113,11 @@ foreach ($commit in $commits) {
 
         $content = (Invoke-GitLines @('show', "${commit}:$file")) -join "`n"
         $matches = @($emailRegex.Matches($content))
-        $nonNoreplyMatches = @($matches | Where-Object { -not (Test-PublicServiceAddress $_.Value) })
+        $isNpmLockFile = $file.EndsWith('package-lock.json', [StringComparison]::Ordinal)
+        $nonNoreplyMatches = @($matches | Where-Object {
+            -not (Test-PublicServiceAddress $_.Value) -and
+            -not ($isNpmLockFile -and (Test-AllowlistedDependencyLockAddress $_.Value))
+        })
         if ($nonNoreplyMatches.Count -eq 0) { continue }
 
         $onlyReservedTestAddresses = $file.StartsWith('tests/', [StringComparison]::Ordinal) -and

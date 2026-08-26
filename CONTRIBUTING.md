@@ -20,6 +20,6 @@ Before committing, verify that the effective address ends in `@users.noreply.git
 git config --get user.email
 ```
 
-The privacy guard rejects commits whose author or committer email is not a GitHub noreply address. It also rejects email addresses in commit messages, ordinary repository files, and GitHub PR/Issue event text. Third-party license documents and reserved `example.com`/`example.test` test addresses are the only content exceptions.
+The privacy guard rejects commits whose author or committer email is not a GitHub noreply address. It also rejects email addresses in commit messages, ordinary repository files, and GitHub PR/Issue event text. Exceptions are limited to third-party license documents, reserved `example.com`/`example.test` test addresses, and explicitly allow-listed public upstream addresses that npm writes into generated `package-lock.json` metadata.
 
 Automated checks cannot prevent someone from deliberately typing private data into a public GitHub form: the text becomes public before a workflow can report it. Review all text and attachments before submitting them.

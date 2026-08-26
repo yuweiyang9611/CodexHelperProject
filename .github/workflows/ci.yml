@@ -30,12 +30,18 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 22.23.2
           cache: npm
-          cache-dependency-path: src/CodexU.Web/package-lock.json
+          cache-dependency-path: |
+            src/CodexU.Web/package-lock.json
+            src/CodexU.Electron/package-lock.json
 
       - name: Install web dependencies
         working-directory: src/CodexU.Web
+        run: npm ci
+
+      - name: Install Electron dependencies
+        working-directory: src/CodexU.Electron
         run: npm ci
 
       # Runs before the browser download and the .NET build so a broken
@@ -43,6 +49,10 @@ jobs:
       - name: Web unit tests
         working-directory: src/CodexU.Web
         run: npm run test:unit
+
+      - name: Electron unit tests
+        working-directory: src/CodexU.Electron
+        run: npm test
 
       - name: Install Playwright Chromium
         working-directory: src/CodexU.Web
@@ -67,6 +77,53 @@ jobs:
 
       - name: Test
         run: dotnet test CodexU.sln --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Build Electron renderer
+        working-directory: src/CodexU.Web
+        run: npm run build
+
+      - name: Publish Electron .NET sidecar
+        run: dotnet publish src/CodexU.Sidecar/CodexU.Sidecar.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false --output src/CodexU.Electron/backend
+
+      - name: Package Electron Windows app
+        working-directory: src/CodexU.Electron
+        run: npm run package
+
+      - name: Smoke-test packaged Electron app
+        shell: pwsh
+        run: |
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'codexu-electron-smoke'
+          New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
+          $env:CODEXU_DATA_DIRECTORY = Join-Path $smokeRoot 'data'
+          $stdoutPath = Join-Path $smokeRoot 'stdout.log'
+          $stderrPath = Join-Path $smokeRoot 'stderr.log'
+          $process = Start-Process `
+            -FilePath 'src/CodexU.Electron/out/CodexU-win32-x64/CodexU.exe' `
+            -ArgumentList '--smoke-test' `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+          Get-Content -LiteralPath $stdoutPath
+          Get-Content -LiteralPath $stderrPath
+          if ($process.ExitCode -ne 0) {
+            throw "Packaged Electron smoke test failed with exit code $($process.ExitCode)."
+          }
+          $stdout = Get-Content -LiteralPath $stdoutPath -Raw
+          if ($stdout -notmatch 'CODEXU_ELECTRON_SMOKE_OK') {
+            throw 'Packaged Electron smoke test did not report its success marker.'
+          }
+          if ($stdout -notmatch 'host-state=false') {
+            throw 'Packaged Electron smoke test did not report the safe host state.'
+          }
+          if ($stdout -notmatch 'reverse-rpc=rates\.export-cancelled') {
+            throw 'Packaged Electron smoke test did not exercise safe reverse RPC cancellation.'
+          }
+          $unexpectedExports = @(Get-ChildItem -LiteralPath $smokeRoot -Recurse -File -Filter 'codexU-rate-catalog-*.json')
+          if ($unexpectedExports.Count -ne 0) {
+            throw 'Packaged Electron smoke test unexpectedly wrote a rate-catalog export.'
+          }
 
       - name: Visual and accessibility tests
         working-directory: src/CodexU.Web

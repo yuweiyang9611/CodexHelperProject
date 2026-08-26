@@ -3,7 +3,7 @@
 [![CI](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml)
 [![Release](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml)
 
-codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。应用使用 WPF/.NET 10 作为桌面宿主，WebView2 + Vue 3 负责高保真界面，C# 服务只读聚合本机 Codex 数据。
+codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。当前正式发行版仍使用 WPF/WebView2；仓库正在迁移到内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立后端进程。当前重构已完成 Windows-first 的可运行垂直切片，尚未替换正式 Release 与安装器。
 
 ## 仓库迁移与隐私说明
 
@@ -13,6 +13,8 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 
 ## 当前能力
 
+- Electron 主进程负责窗口、生命周期和原生权限；沙箱 preload 只暴露固定 IPC 白名单，Vue 不获得 Node.js 权限。
+- .NET 自包含 Sidecar 复用 Application/Core/Infrastructure，通过私有 stdin/stdout 长度前缀 JSON 协议与 Electron 通信，不监听网络端口。
 - WPF/.NET 10 无边框桌面宿主与 Windows 11 Mica 降级支持。
 - WebView2 安全虚拟主机与类型化 JSON IPC。
 - Vue 3 + TypeScript 仪表盘：额度、token、按模型核算后换算的等效金额、任务、趋势、项目、工具和 Skill。
@@ -44,16 +46,24 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 
 ## 设计方案
 
+Electron 重构中的职责边界为：`Electron main → sandbox preload → Vue renderer → .NET Sidecar → Application/Core/Infrastructure`。Electron 路径自带 Chromium，不依赖系统 WebView2；旧 WPF 宿主在功能迁移完成前继续保留。
+
+### Electron 迁移状态
+
+当前 Windows-first 路径已经打通真实 Vue 页面、.NET 数据与设置服务、私有双向 RPC、原生打开/保存/确认对话框、托盘与关闭驻留、全局快捷键、紧凑窗口、原生主题、单实例恢复，以及由 Sidecar 驱动的后台自动刷新。Electron 启动时先校验后端能力并读取宿主所需设置，应用原生状态后再创建 renderer；用量快照由 Application 层统一投影，手动刷新、自动刷新和数据变更不会各自重复发送同类事件。打包态 smoke 会验证 sandbox preload、`app.initialize` 和反向对话框 RPC，并发送宿主状态；整个过程不会打开窗口、对话框、外链或修改系统设置。
+
+这条路径仍是迁移候选而非正式发行版。切换 Release 前还需要让开机启动设置具备可回传失败的事务确认，按显示器工作区/DPI 约束和恢复窗口边界，迁移 Windows 通知、顶部状态条与桌面底层模式，清理 Electron Forge 构建链的上游审计告警，并完成 Electron/Chromium 许可清单和安装器。Linux 适配尚未开始，当前只验证 Windows。
+
 本机历史 Token 的归一化、active/archive 合并、fork 去重与保守区间说明见 [docs/local-token-ledger.md](docs/local-token-ledger.md)。
 
-完整设计和验收标准见 [docs/design-plan.md](docs/design-plan.md)。
+原 WPF/WebView2 版本的完整设计与功能对等基线见 [docs/design-plan.md](docs/design-plan.md)；当前 Electron 进程布局、协议和打包约束见 [src/CodexU.Electron/README.md](src/CodexU.Electron/README.md)。
 
 ## 环境要求
 
 - Windows 10 22H2 或 Windows 11，推荐 Windows 11。
 - .NET SDK 10。
-- Node.js 22 或更新版本。
-- WebView2 Evergreen Runtime。
+- Node.js 22.x（Electron Forge 打包固定使用该版本）。
+- WebView2 Evergreen Runtime（仅当前 WPF 正式版需要；Electron 路径不需要）。
 - 已安装并登录的 ChatGPT 桌面应用（含 Codex）或 Codex CLI；没有 Codex 数据时应用仍可显示空状态。
 
 ## 构建
@@ -99,6 +109,30 @@ npm.cmd run dev
 
 浏览器开发模式使用演示快照；WPF/WebView2 模式自动使用 C# 本地服务。
 
+### Electron + .NET Sidecar 垂直切片
+
+先构建 Vue、发布 Windows x64 自包含后端，再安装并测试 Electron 宿主：
+
+```powershell
+cd src\CodexU.Web
+npm.cmd ci
+npm.cmd run build
+cd ..\..
+dotnet publish src\CodexU.Sidecar\CodexU.Sidecar.csproj `
+  --configuration Release `
+  --runtime win-x64 `
+  --self-contained true `
+  -p:PublishReadyToRun=false `
+  --output src\CodexU.Electron\backend
+cd src\CodexU.Electron
+npm.cmd ci
+npm.cmd test
+npm.cmd run package
+.\out\CodexU-win32-x64\CodexU.exe --smoke-test
+```
+
+正常开发启动使用 `npm.cmd start`。更完整的进程布局、协议与打包说明见 [`src/CodexU.Electron/README.md`](src/CodexU.Electron/README.md)。正式 Release 目前仍走 WPF/Inno Setup 链路；Electron 安装包将在功能对等和第三方许可清单扩展完成后切换。
+
 ## 测试
 
 ```powershell
@@ -108,6 +142,8 @@ npm.cmd run test:unit
 npm.cmd run build
 npx.cmd playwright install chromium
 npm.cmd run test:e2e
+cd ..\CodexU.Electron
+npm.cmd test
 ```
 
 前端单元测试用 Vitest，位于 `src\CodexU.Web\tests\unit`，不需要浏览器或构建产物，可用 `npm.cmd run test:unit:watch` 监听、`npm.cmd run test:unit:coverage` 查看覆盖率。时区固定为 `Asia/Tokyo`，与 Playwright 一致，保证跨月投影一类的本地时间断言可复现。
@@ -118,8 +154,8 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 
 ## GitHub 自动化
 
-- `CI` 在 pull request、`main` 推送和手动触发时运行，执行版本/许可清单校验、前端单元测试、Release 构建、格式检查、C# 单元测试、Playwright 视觉与无障碍测试、自包含发布、真实 EXE 冒烟测试和 Inno Setup 安装包编译验证；前端单元测试排在浏览器下载和 .NET 构建之前，让展示层回归在数秒内暴露。失败时上传 Playwright 截图差异与 trace。pull request 不保存 74 MB 的构建产物（构建、冒烟测试和安装包验证照常执行，只是不留存）；`main` 推送和手动触发保留 3 天，可直接下载。Actions 存储按账号计费并由所有仓库共享，这样可避免单个仓库的 PR 挤占其他项目的构建配额。产物上传本身不计入成败：走到这一步时构建、校验、冒烟测试和安装包编译都已通过，存不下只是共享存储被占满（GitHub 每 6–12 小时才重算用量，空间释放后仍可能被拒绝数小时），把它记为构建失败等于用基础设施状态污染代码信号。该步骤仍会在运行记录里显示为失败，真正的上传故障不会被掩盖。
-- Dependabot 每周一检查 NuGet、npm 和 GitHub Actions 依赖。`THIRD-PARTY-INVENTORY.md` 和 `THIRD-PARTY-LICENSES.txt` 只覆盖随应用分发的依赖，因此开发期依赖升级不会触发清单校验；升级生产依赖时需要重新运行 `./tools/Generate-ThirdPartyInventory.ps1` 并把两个生成文件一并提交到该 PR 分支。
+- `CI` 在 pull request、`main` 推送和手动触发时运行，执行版本/许可清单校验、Vue 与 Electron 单元测试、Release 构建、格式检查、C# 单元测试、Playwright 视觉与无障碍测试、WPF 自包含发布与真实 EXE 冒烟测试、Electron Sidecar 自包含发布与打包态端到端冒烟测试，以及现有 Inno Setup 安装包编译验证。Electron 构建目前只作迁移门禁，不上传为公开产物。pull request 不保存 WPF 构建产物；`main` 推送和手动触发保留 3 天。产物上传本身不计入成败，避免共享 Actions 存储状态污染代码信号，但失败仍会显示在运行记录中。
+- Dependabot 每周一检查 NuGet、Vue npm、Electron npm 和 GitHub Actions 依赖。`THIRD-PARTY-INVENTORY.md` 和 `THIRD-PARTY-LICENSES.txt` 当前覆盖 WPF 正式版；Electron 虽把构建工具列在 `devDependencies`，Electron/Chromium 本身会进入成品，因此公开发布 Electron 前必须扩展清单生成逻辑。升级当前正式版的生产依赖时，需要重新运行 `./tools/Generate-ThirdPartyInventory.ps1` 并把两个生成文件一并提交到该 PR 分支。
 - `Release` 在 `main` 推送和从 `main` 手动触发时读取 `Directory.Build.props` 中的版本。只有对应版本尚未完整发布时，才重新完成同等级验证并创建 `vX.Y.Z` 标签；从其他分支手动触发不会发布。若同名标签已存在，工作流只接受当前 `main` 本身或其祖先提交，并在 checkout 后再次核对提交与版本，防止从旁支或错版本标签发布。
 - Release 包含完整自包含 ZIP、每用户 Setup EXE，以及两者各自的 `.sha256` 文件。ZIP 不能只提取其中的 EXE。
 - 发布使用 GitHub Actions 自带的 `GITHUB_TOKEN`，不需要个人访问令牌或本机 GitHub CLI。草稿、资源上传和正式发布分阶段执行；中断后重新运行工作流会修复缺失资源。
@@ -155,7 +191,7 @@ statusLine 的 JSON 里**没有套餐名字段**，所以订阅月费无法自�
 - 不上传本机 usage、线程、路径或账户数据。
 - 为生成统计，应用会在本机解析必要字段；不保存、不展示、不上传 prompt、回复正文、工具参数、工具输出、附件正文或 auth token。
 - 前端没有任意文件、SQL、Shell 或进程权限。
-- WebView2 IPC 采用明确方法白名单。
+- WPF/WebView2 与 Electron preload IPC 都采用明确方法白名单；Electron 到 .NET Sidecar 的消息使用有大小上限的长度前缀协议。
 
 ## 许可
 

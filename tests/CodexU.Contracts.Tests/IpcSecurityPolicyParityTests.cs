@@ -4,32 +4,40 @@ using CodexU.Contracts;
 namespace CodexU.Contracts.Tests;
 
 /// <summary>
-/// The IPC surface is declared in two places that nothing else keeps in step:
-/// the allow-list in <see cref="IpcSecurityPolicy"/> and the dispatch switch in
-/// MainWindow.Ipc.cs. Adding a method to one and not the other is silent — an
+/// During the Electron migration the IPC surface is declared in three places:
+/// the allow-list in <see cref="IpcSecurityPolicy"/>, the shared application
+/// dispatcher, and the still-shipping WPF dispatcher. Adding a method to only
+/// some of them is silent — an
 /// allow-listed method with no case throws NotSupportedException at runtime, and
 /// a case with no allow-list entry is unreachable. These tests make it loud.
 /// </summary>
 public sealed class IpcSecurityPolicyParityTests
 {
-    private const string DispatchRelativePath = "src/CodexU.App/MainWindow.Ipc.cs";
+    private static readonly string[] DispatchRelativePaths =
+    [
+        "src/CodexU.Application/IpcDispatcher.cs",
+        "src/CodexU.App/MainWindow.Ipc.cs"
+    ];
 
     [Fact]
     public void DispatchSwitchHandlesExactlyTheAllowedMethods()
     {
-        var dispatched = ReadDispatchedMethods();
         var allowed = IpcSecurityPolicy.AllowedMethodNames.ToHashSet(StringComparer.Ordinal);
 
-        var missingCases = allowed.Except(dispatched).OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        var unreachableCases = dispatched.Except(allowed).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        foreach (var dispatchRelativePath in DispatchRelativePaths)
+        {
+            var dispatched = ReadDispatchedMethods(dispatchRelativePath);
+            var missingCases = allowed.Except(dispatched).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+            var unreachableCases = dispatched.Except(allowed).OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
-        Assert.True(
-            missingCases.Length == 0,
-            $"Allow-listed but not handled in {DispatchRelativePath}: {string.Join(", ", missingCases)}");
-        Assert.True(
-            unreachableCases.Length == 0,
-            $"Handled in {DispatchRelativePath} but not allow-listed, so unreachable: "
-            + string.Join(", ", unreachableCases));
+            Assert.True(
+                missingCases.Length == 0,
+                $"Allow-listed but not handled in {dispatchRelativePath}: {string.Join(", ", missingCases)}");
+            Assert.True(
+                unreachableCases.Length == 0,
+                $"Handled in {dispatchRelativePath} but not allow-listed, so unreachable: "
+                + string.Join(", ", unreachableCases));
+        }
     }
 
     [Fact]
@@ -84,21 +92,21 @@ public sealed class IpcSecurityPolicyParityTests
     public void AllowListMatchingIsExact(string method) =>
         Assert.False(IpcSecurityPolicy.IsAllowedMethod(method));
 
-    private static HashSet<string> ReadDispatchedMethods()
+    private static HashSet<string> ReadDispatchedMethods(string dispatchRelativePath)
     {
-        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), DispatchRelativePath));
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), dispatchRelativePath));
 
         // Scoped to the single dispatch switch so unrelated switches added later
         // cannot silently widen what this test believes the IPC surface to be.
         var switchMatches = Regex.Matches(source, @"switch\s*\(\s*request\.Method\s*\)");
         Assert.True(
             switchMatches.Count == 1,
-            $"Expected exactly one dispatch switch in {DispatchRelativePath}, found {switchMatches.Count}. "
+            $"Expected exactly one dispatch switch in {dispatchRelativePath}, found {switchMatches.Count}. "
             + "Update this test if the dispatch shape changed.");
 
         var start = switchMatches[0].Index;
         var end = source.IndexOf("default:", start, StringComparison.Ordinal);
-        Assert.True(end > start, $"Dispatch switch in {DispatchRelativePath} has no default arm.");
+        Assert.True(end > start, $"Dispatch switch in {dispatchRelativePath} has no default arm.");
 
         var body = source[start..end];
         return Regex.Matches(body, """case\s+"(?<method>[^"]+)"\s*:""")

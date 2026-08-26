@@ -1,5 +1,8 @@
 # codexU Windows 设计方案
 
+> [!NOTE]
+> 本文是 0.4 版 WPF/WebView2 正式发行路径的历史设计和 Electron 功能对等基线。其中“不再评估 Electron”是已经被取代的旧决策；当前迁移目标为 Electron + Vue renderer + .NET Sidecar，进程边界、协议和打包约束以仓库根 README 与 `src/CodexU.Electron/README.md` 为准。WPF 在迁移完成前仍是正式发行版。
+
 版本：0.4
 日期：2026-07-16
 状态：已实施视觉回归、无障碍与费率版本化基线
