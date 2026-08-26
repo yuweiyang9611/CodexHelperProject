@@ -13,6 +13,10 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     include: ['tests/unit/**/*.spec.ts'],
+    // GitHub's shared Windows runners can briefly stall synchronous Intl/Vue
+    // setup; keep tests bounded without treating a transient 5 s stall as a
+    // product failure.
+    testTimeout: 15_000,
     // Pinned so assertions over local-time maths (month-to-date projection) do
     // not shift with the machine's zone. Matches playwright.config.ts.
     env: { TZ: 'Asia/Tokyo' },
