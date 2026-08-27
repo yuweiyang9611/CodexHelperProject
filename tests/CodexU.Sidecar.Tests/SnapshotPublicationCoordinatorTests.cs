@@ -16,13 +16,20 @@ public sealed class SnapshotPublicationCoordinatorTests
         var snapshot = Snapshot("shared");
         var sharedGeneration = coordinator.CompleteLoad();
         var projected = 0;
-        using var ready = new CountdownEvent(callerCount);
-        using var release = new ManualResetEventSlim();
+        var readyCount = 0;
+        var allCallersReady = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var callers = Enumerable.Range(0, callerCount)
-            .Select(_ => Task.Run(() =>
+            .Select(_ => Task.Run(async () =>
             {
-                ready.Signal();
-                release.Wait(TestTimeout);
+                if (Interlocked.Increment(ref readyCount) == callerCount)
+                {
+                    allCallersReady.TrySetResult();
+                }
+
+                await release.Task;
                 coordinator.PublishIf(
                     sharedGeneration,
                     snapshot,
@@ -31,9 +38,15 @@ public sealed class SnapshotPublicationCoordinatorTests
             }))
             .ToArray();
 
-        Assert.True(ready.Wait(TestTimeout));
-        release.Set();
-        await Task.WhenAll(callers).WaitAsync(TestTimeout);
+        try
+        {
+            await allCallersReady.Task.WaitAsync(TestTimeout);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(callers).WaitAsync(TestTimeout);
+        }
 
         Assert.Equal(1, Volatile.Read(ref projected));
         Assert.Same(snapshot, coordinator.LastSnapshot);
