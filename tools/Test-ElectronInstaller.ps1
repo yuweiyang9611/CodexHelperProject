@@ -805,9 +805,11 @@ if (-not [string]::Equals(
     throw "Legacy installer SHA256 mismatch. Expected $expectedLegacyInstallerSha256, found $actualLegacyInstallerSha256."
 }
 $legacyVersionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($legacyInstaller)
-if (-not [string]::Equals($legacyVersionInfo.FileVersion, '0.5.0.0', [StringComparison]::Ordinal) -or
-    -not [string]::Equals($legacyVersionInfo.ProductVersion, '0.5.0.0', [StringComparison]::Ordinal)) {
-    throw "Legacy installer must have file and product version 0.5.0.0; found file '$($legacyVersionInfo.FileVersion)' and product '$($legacyVersionInfo.ProductVersion)'."
+$legacyFileVersion = ([string]$legacyVersionInfo.FileVersion).Trim()
+$legacyProductVersion = ([string]$legacyVersionInfo.ProductVersion).Trim()
+if (-not [string]::Equals($legacyFileVersion, '0.5.0.0', [StringComparison]::Ordinal) -or
+    -not [string]::Equals($legacyProductVersion, '0.5.0.0', [StringComparison]::Ordinal)) {
+    throw "Legacy installer must have file and product version 0.5.0.0; found file '$legacyFileVersion' and product '$legacyProductVersion'."
 }
 $expectedPackageCandidate = [System.IO.Path]::GetFullPath($ExpectedPackageDirectory)
 if (-not [System.IO.Directory]::Exists($expectedPackageCandidate)) {
