@@ -89,6 +89,17 @@ Assert-Matches $installer '\[Run\].*?Filename:\s*"\{app\}\\CodexU\.exe"' `
     'Installer post-install action must launch CodexU.exe.'
 Assert-Contains $installer 'CloseApplicationsFilter=CodexU.exe,CodexU.Sidecar.exe,CodexU.App.exe' `
     'Installer upgrades must close the Electron host, Sidecar and legacy WPF host.'
+$dirsSectionMatch = [Regex]::Match($installer, '(?ms)^\[Dirs\]\s*\r?\n(?<Body>.*?)(?=^\[|\z)')
+if (-not $dirsSectionMatch.Success) {
+    throw 'Installer must declare the application-directory uninstall policy in [Dirs].'
+}
+$applicationDirectoryEntries = @($dirsSectionMatch.Groups['Body'].Value -split '\r?\n' | Where-Object {
+    $_ -match '^\s*Name:\s*"\{app\}"\s*;'
+})
+if ($applicationDirectoryEntries.Count -ne 1 -or
+    $applicationDirectoryEntries[0] -notmatch '^\s*Name:\s*"\{app\}";\s*Flags:\s*uninsalwaysuninstall\s*$') {
+    throw 'Uninstall must remove an empty application directory even when it predated Setup.'
+}
 Assert-Contains $installer '[InstallDelete]' `
     'Installer must explicitly migrate files from the legacy WPF layout.'
 $installDeleteSection = [Regex]::Match($installer, '(?s)\[InstallDelete\](.*?)(?:\r?\n\[|\z)').Groups[1].Value

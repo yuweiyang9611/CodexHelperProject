@@ -53,6 +53,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
 
+[Dirs]
+; Remove the application directory after uninstall even when it predated Setup,
+; but only when it is empty. Inno never recursively deletes user-owned contents.
+Name: "{app}"; Flags: uninsalwaysuninstall
+
 [Files]
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
