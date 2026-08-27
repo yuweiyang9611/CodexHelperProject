@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 [xml]$buildProps = Get-Content (Join-Path $projectRoot 'Directory.Build.props') -Raw
-$productVersion = [string]$buildProps.Project.PropertyGroup.Version
+$productVersion = ([string]$buildProps.Project.PropertyGroup.Version).Trim()
+$assemblyVersion = ([string]$buildProps.Project.PropertyGroup.AssemblyVersion).Trim()
+$fileVersion = ([string]$buildProps.Project.PropertyGroup.FileVersion).Trim()
 $webPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Web\package.json') -Raw | ConvertFrom-Json
 $electronPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Electron\package.json') -Raw | ConvertFrom-Json
 $electronPackageLockPath = Join-Path $projectRoot 'src\CodexU.Electron\package-lock.json'
@@ -13,8 +15,27 @@ if ($LASTEXITCODE -ne 0) {
 $electronLockVersions = $electronLockVersionJson | ConvertFrom-Json
 [xml]$appManifest = Get-Content (Join-Path $projectRoot 'src\CodexU.App\app.manifest') -Raw
 
-if ([string]::IsNullOrWhiteSpace($productVersion)) {
-    throw 'Directory.Build.props does not define Version.'
+$productVersionMatch = [Regex]::Match(
+    $productVersion,
+    '^(?<numeric>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$')
+if (-not $productVersionMatch.Success) {
+    throw "Directory.Build.props contains an invalid Version: '$productVersion'. Expected a three-part semantic version with an optional prerelease suffix."
+}
+
+$fourPartNumericVersionPattern = '^\d+\.\d+\.\d+\.\d+$'
+if ($assemblyVersion -notmatch $fourPartNumericVersionPattern) {
+    throw "Directory.Build.props contains an invalid AssemblyVersion: '$assemblyVersion'. Expected four numeric components."
+}
+if ($fileVersion -notmatch $fourPartNumericVersionPattern) {
+    throw "Directory.Build.props contains an invalid FileVersion: '$fileVersion'. Expected four numeric components."
+}
+
+$expectedBinaryVersion = "$($productVersionMatch.Groups['numeric'].Value).0"
+if ($assemblyVersion -ne $expectedBinaryVersion) {
+    throw "Version mismatch: product=$productVersion requires AssemblyVersion=$expectedBinaryVersion, found $assemblyVersion"
+}
+if ($fileVersion -ne $expectedBinaryVersion) {
+    throw "Version mismatch: product=$productVersion requires FileVersion=$expectedBinaryVersion, found $fileVersion"
 }
 
 if ($webPackage.version -ne $productVersion) {
@@ -35,8 +56,8 @@ if ($electronLockVersions.lockVersion -ne $productVersion -or
 }
 
 $manifestVersion = [string]$appManifest.assembly.assemblyIdentity.version
-if ($manifestVersion -ne "$productVersion.0") {
-    throw "Version mismatch: .NET=$productVersion, app manifest=$manifestVersion"
+if ($manifestVersion -ne $assemblyVersion) {
+    throw "Version mismatch: AssemblyVersion=$assemblyVersion, app manifest=$manifestVersion"
 }
 
-Write-Host "Version consistency verified: $productVersion"
+Write-Host "Version consistency verified: product=$productVersion, assembly=$assemblyVersion, file=$fileVersion"

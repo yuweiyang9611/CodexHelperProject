@@ -84,13 +84,47 @@ jobs:
               process.env.RELEASE_INSTALLER,
               process.env.RELEASE_INSTALLER_CHECKSUM,
             ];
-            const complete = Boolean(
+            const exactAssetSet = Boolean(
               release
               && !release.draft
-              && expectedAssets.every(name => release.assets.some(
+              && release.assets.length === expectedAssets.length
+              && expectedAssets.every(name => release.assets.filter(
                 asset => asset.name === name && asset.state === 'uploaded' && asset.size > 0,
-              )),
+              ).length === 1),
             );
+            async function checksumMatches(payloadName, checksumName) {
+              const payload = release.assets.find(asset => asset.name === payloadName);
+              const checksum = release.assets.find(asset => asset.name === checksumName);
+              if (!payload?.digest?.startsWith('sha256:') || !checksum) return false;
+
+              const response = await github.request(
+                'GET /repos/{owner}/{repo}/releases/assets/{asset_id}',
+                {
+                  owner,
+                  repo,
+                  asset_id: checksum.id,
+                  headers: { accept: 'application/octet-stream' },
+                },
+              );
+              const text = Buffer.from(response.data).toString('utf8').trim();
+              const match = /^([0-9a-f]{64})  (.+)$/.exec(text);
+              return Boolean(
+                match
+                && match[2] === payload.name
+                && `sha256:${match[1]}` === payload.digest,
+              );
+            }
+            const complete = Boolean(
+              exactAssetSet
+              && await checksumMatches(process.env.RELEASE_ARCHIVE, process.env.RELEASE_CHECKSUM)
+              && await checksumMatches(process.env.RELEASE_INSTALLER, process.env.RELEASE_INSTALLER_CHECKSUM)
+            );
+            if (release && !release.draft && !complete) {
+              throw new Error(
+                `Refusing to modify published release ${process.env.RELEASE_TAG}: its exact asset set, digest, or checksum content is invalid. `
+                + 'Create a new patch version or repair it manually after reviewing the public state.',
+              );
+            }
             async function resolveTagCommitSha(tagName) {
               let object;
               try {
@@ -148,7 +182,7 @@ jobs:
     needs: inspect
     if: needs.inspect.outputs.should_release == 'true'
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout release commit
@@ -181,13 +215,35 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 22.23.2
           cache: npm
-          cache-dependency-path: src/CodexU.Web/package-lock.json
+          cache-dependency-path: |
+            src/CodexU.Web/package-lock.json
+            src/CodexU.Electron/package-lock.json
 
       - name: Install web dependencies
         working-directory: src/CodexU.Web
         run: npm ci
+
+      - name: Install Electron dependencies
+        working-directory: src/CodexU.Electron
+        run: npm ci
+
+      - name: Audit Electron dependency graph
+        working-directory: src/CodexU.Electron
+        run: npm audit --audit-level=high
+
+      - name: Verify Electron dependency policy
+        working-directory: src/CodexU.Electron
+        run: npm run verify:dependency-policy
+
+      - name: Web unit tests
+        working-directory: src/CodexU.Web
+        run: npm run test:unit
+
+      - name: Electron unit tests
+        working-directory: src/CodexU.Electron
+        run: npm test
 
       - name: Install Playwright Chromium
         working-directory: src/CodexU.Web
@@ -196,13 +252,11 @@ jobs:
       - name: Restore
         run: dotnet restore CodexU.sln
 
-      - name: Verify third-party inventory
+      - name: Verify release automation
         shell: powershell
         run: |
           ./tools/Verify-VersionConsistency.ps1
           ./tools/Verify-ReleaseAutomation.ps1
-          ./tools/Generate-ThirdPartyInventory.ps1
-          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt
 
       - name: Build
         run: dotnet build CodexU.sln --configuration Release --no-restore -warnaserror
@@ -221,54 +275,52 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: Playwright-release-failure-${{ github.sha }}
+          name: Playwright-release-failure-${{ needs.inspect.outputs.release_sha }}
           path: |
             src/CodexU.Web/test-results
             src/CodexU.Web/playwright-report
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Publish self-contained Windows build
-        run: dotnet publish src/CodexU.App/CodexU.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false --output artifacts/publish
+      - name: Build Electron renderer
+        working-directory: src/CodexU.Web
+        env:
+          CODEXU_VERSION: ${{ needs.inspect.outputs.version }}
+        run: npm run build
 
-      - name: Verify publish payload
+      - name: Publish self-contained .NET sidecar
+        run: dotnet publish src/CodexU.Sidecar/CodexU.Sidecar.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false -p:DebugSymbols=false -p:DebugType=None --output src/CodexU.Electron/backend
+
+      - name: Verify third-party inventory
         shell: powershell
         run: |
-          $required = @(
-            'artifacts/publish/CodexU.App.exe',
-            'artifacts/publish/web/index.html',
-            'artifacts/publish/LICENSE',
-            'artifacts/publish/THIRD-PARTY-NOTICES.md',
-            'artifacts/publish/THIRD-PARTY-INVENTORY.md',
-            'artifacts/publish/THIRD-PARTY-LICENSES.txt',
-            'artifacts/publish/LICENSES/Apache-2.0.txt',
-            'artifacts/publish/LICENSES/Inno-Setup-license.txt',
-            'artifacts/publish/LICENSES/dotnet-runtime-MIT.txt',
-            'artifacts/publish/LICENSES/dotnet-runtime-ThirdPartyNotices.txt',
-            'artifacts/publish/LICENSES/shanggqm-codexU-MIT.txt',
-            'artifacts/publish/LICENSES/liu-codexU-windows-MIT.txt'
-          )
-          $missing = $required | Where-Object { -not (Test-Path $_ -PathType Leaf) }
-          if ($missing) { throw "Publish payload is missing: $($missing -join ', ')" }
+          ./tools/Generate-ThirdPartyInventory.ps1
+          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt LICENSES/dotnet-runtime-MIT.txt LICENSES/dotnet-runtime-ThirdPartyNotices.txt
 
-      - name: Sign published executable when configured
+      - name: Package Electron Windows app
+        working-directory: src/CodexU.Electron
+        run: npm run package
+
+      - name: Sign Electron executables when configured
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
-        run: ./tools/Sign-ReleaseArtifact.ps1 -Path artifacts/publish/CodexU.App.exe
+        run: |
+          ./tools/Sign-ReleaseArtifact.ps1 -Path src/CodexU.Electron/out/CodexU-win32-x64/CodexU.exe
+          ./tools/Sign-ReleaseArtifact.ps1 -Path src/CodexU.Electron/out/CodexU-win32-x64/resources/backend/CodexU.Sidecar.exe
 
-      - name: Smoke-test published EXE
-        shell: powershell
-        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish
-
-      - name: Smoke-test WPF status strip
-        shell: powershell
-        run: ./tools/Test-PublishedApp.ps1 -PublishDirectory artifacts/publish -TimeoutSeconds 120 -VerifyStatusStrip
-
-      - name: Install Inno Setup
+      - name: Verify signed Electron package
         shell: pwsh
-        run: choco install innosetup --version=6.7.1 --no-progress --yes
+        run: ./tools/Test-PackagedElectron.ps1 -ApplicationDirectory src/CodexU.Electron/out/CodexU-win32-x64
+
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 --no-progress --yes
+          if ($LASTEXITCODE -ne 0) { throw "Chocolatey failed to install Inno Setup 6.7.1 (exit $LASTEXITCODE)." }
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
 
       - name: Build per-user Windows installer
         shell: pwsh
@@ -276,7 +328,7 @@ jobs:
           INNO_SETUP_LICENSE_KEY: ${{ secrets.INNO_SETUP_LICENSE_KEY }}
           CODEXU_VERSION: ${{ needs.inspect.outputs.version }}
           CODEXU_NUMERIC_VERSION: ${{ needs.inspect.outputs.version }}
-          CODEXU_PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish
+          CODEXU_PUBLISH_DIR: ${{ github.workspace }}\src\CodexU.Electron\out\CodexU-win32-x64
           CODEXU_INSTALLER_OUTPUT_DIR: ${{ github.workspace }}\artifacts\release
         run: |
           $env:CODEXU_NUMERIC_VERSION = $env:CODEXU_NUMERIC_VERSION.Split('-', 2)[0]
@@ -287,8 +339,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'artifacts/release' | Out-Null
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
-          & $compiler 'installer\CodexU.iss'
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+          $compilerOutput = @(& $compiler 'installer\CodexU.iss' 2>&1)
+          $compilerExitCode = $LASTEXITCODE
+          $compilerOutput | ForEach-Object { Write-Host $_ }
+          if ($compilerExitCode -ne 0) { throw "Inno Setup failed with exit code $compilerExitCode." }
+          $engineVersionLines = @($compilerOutput | Where-Object {
+            [string]$_ -eq 'Compiler engine version: Inno Setup 6.7.1'
+          })
+          if ($engineVersionLines.Count -ne 1) {
+            throw 'Inno Setup did not report the exact reviewed compiler engine version 6.7.1.'
+          }
           $installer = Join-Path 'artifacts/release' '${{ needs.inspect.outputs.installer }}'
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf) -or (Get-Item $installer).Length -le 0) {
             throw "Installer was not produced: $installer"
@@ -301,6 +361,32 @@ jobs:
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: ./tools/Sign-ReleaseArtifact.ps1 -Path 'artifacts/release/${{ needs.inspect.outputs.installer }}'
 
+      - name: Download verified v0.5.0 WPF installer
+        shell: pwsh
+        run: |
+          $legacyDirectory = 'artifacts/legacy'
+          $legacyInstaller = Join-Path $legacyDirectory 'CodexU-0.5.0-win-x64-setup.exe'
+          New-Item -ItemType Directory -Force -Path $legacyDirectory | Out-Null
+          Invoke-WebRequest `
+            -Uri 'https://github.com/yuweiyang9611/CodexHelperProject/releases/download/v0.5.0/CodexU-0.5.0-win-x64-setup.exe' `
+            -OutFile $legacyInstaller `
+            -MaximumRetryCount 3 `
+            -RetryIntervalSec 2
+          $legacyFile = Get-Item -LiteralPath $legacyInstaller
+          $legacyHash = (Get-FileHash -LiteralPath $legacyInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($legacyFile.Length -ne 53864409 -or
+              $legacyHash -ne '0f01958eeca60ac5ee57658680af5120d55e6dfaa786a8ed30bf76600bbb2b21') {
+            throw "Downloaded v0.5.0 installer failed the pinned size/SHA-256 check: $($legacyFile.Length) bytes, $legacyHash"
+          }
+
+      - name: Smoke-test final Windows installer
+        shell: pwsh
+        run: |
+          ./tools/Test-ElectronInstaller.ps1 `
+            -InstallerPath 'artifacts/release/${{ needs.inspect.outputs.installer }}' `
+            -LegacyInstallerPath artifacts/legacy/CodexU-0.5.0-win-x64-setup.exe `
+            -ExpectedPackageDirectory src/CodexU.Electron/out/CodexU-win32-x64
+
       - name: Package release assets
         shell: pwsh
         env:
@@ -310,23 +396,54 @@ jobs:
           RELEASE_INSTALLER_CHECKSUM: ${{ needs.inspect.outputs.installer_checksum }}
         run: |
           New-Item -ItemType Directory -Force -Path 'artifacts/release' | Out-Null
+          $packageDirectory = 'src/CodexU.Electron/out/CodexU-win32-x64'
           $archivePath = Join-Path 'artifacts/release' $env:RELEASE_ARCHIVE
           $checksumPath = Join-Path 'artifacts/release' $env:RELEASE_CHECKSUM
           $installerPath = Join-Path 'artifacts/release' $env:RELEASE_INSTALLER
           $installerChecksumPath = Join-Path 'artifacts/release' $env:RELEASE_INSTALLER_CHECKSUM
 
-          Compress-Archive -Path 'artifacts/publish/*' -DestinationPath $archivePath -CompressionLevel Optimal -Force
+          Compress-Archive -Path "$packageDirectory/*" -DestinationPath $archivePath -CompressionLevel Optimal -Force
           $archive = Get-Item -LiteralPath $archivePath
           if ($archive.Length -le 0) { throw 'Release archive is empty.' }
+          $installer = Get-Item -LiteralPath $installerPath
+          if ($installer.Length -le 0) { throw 'Release installer is empty.' }
 
           $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($archive.Name)" | Set-Content -LiteralPath $checksumPath -Encoding ascii
           $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$installerHash  $env:RELEASE_INSTALLER" | Set-Content -LiteralPath $installerChecksumPath -Encoding ascii
 
+          foreach ($pair in @(
+            @($archivePath, $checksumPath),
+            @($installerPath, $installerChecksumPath)
+          )) {
+            $payload = Get-Item -LiteralPath $pair[0]
+            $line = (Get-Content -LiteralPath $pair[1] -Raw).Trim()
+            $checksumMatch = [Regex]::Match($line, '^([0-9a-f]{64})  (.+)$')
+            if (-not $checksumMatch.Success) {
+              throw "Invalid checksum format: $($pair[1])"
+            }
+            $actualHash = (Get-FileHash -LiteralPath $payload.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($checksumMatch.Groups[1].Value -ne $actualHash -or
+                $checksumMatch.Groups[2].Value -ne $payload.Name) {
+              throw "Checksum verification failed for $($payload.Name)."
+            }
+          }
+
+          $expectedNames = @(
+            $env:RELEASE_ARCHIVE,
+            $env:RELEASE_CHECKSUM,
+            $env:RELEASE_INSTALLER,
+            $env:RELEASE_INSTALLER_CHECKSUM
+          ) | Sort-Object
+          $actualNames = @(Get-ChildItem -LiteralPath 'artifacts/release' -File | ForEach-Object Name | Sort-Object)
+          if (($actualNames -join "`n") -ne ($expectedNames -join "`n")) {
+            throw "Unexpected release payload: $($actualNames -join ', ')"
+          }
+
       # Hand-off from this Windows build job to the Ubuntu publish job in the
       # same run, consumed within minutes. The durable copies are the assets on
-      # the GitHub Release itself, so retaining a 125 MB duplicate for two weeks
+      # the GitHub Release itself, so retaining a large Chromium duplicate
       # bought nothing. A re-run rebuilds from source rather than reusing this.
       - name: Upload release payload
         uses: actions/upload-artifact@v7
@@ -352,7 +469,7 @@ jobs:
           name: CodexU-${{ needs.inspect.outputs.version }}-release
           path: artifacts/release
 
-      - name: Create or repair GitHub Release
+      - name: Create and publish GitHub Release
         id: publish
         uses: actions/github-script@v9
         env:
@@ -367,15 +484,64 @@ jobs:
         with:
           retries: 3
           script: |
+            const crypto = require('crypto');
             const fs = require('fs');
             const path = require('path');
             const { owner, repo } = context.repo;
+            const assets = [
+              { name: process.env.RELEASE_ARCHIVE, type: 'application/zip' },
+              { name: process.env.RELEASE_CHECKSUM, type: 'text/plain' },
+              { name: process.env.RELEASE_INSTALLER, type: 'application/vnd.microsoft.portable-executable' },
+              { name: process.env.RELEASE_INSTALLER_CHECKSUM, type: 'text/plain' },
+            ].map(asset => {
+              const assetPath = path.join('artifacts', 'release', asset.name);
+              const stats = fs.statSync(assetPath);
+              if (!stats.isFile() || stats.size <= 0) {
+                throw new Error(`Validated release asset is missing or empty: ${assetPath}`);
+              }
+              const digest = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(assetPath)).digest('hex')}`;
+              return { ...asset, path: assetPath, size: stats.size, digest };
+            });
+
+            function assertChecksum(payloadName, checksumName) {
+              const payload = assets.find(asset => asset.name === payloadName);
+              const checksum = assets.find(asset => asset.name === checksumName);
+              if (!payload || !checksum) {
+                throw new Error(`Checksum pair is missing: ${payloadName}, ${checksumName}`);
+              }
+              const text = fs.readFileSync(checksum.path, 'utf8').trim();
+              const match = /^([0-9a-f]{64})  (.+)$/.exec(text);
+              if (!match || match[2] !== payload.name || `sha256:${match[1]}` !== payload.digest) {
+                throw new Error(`Downloaded release checksum does not match ${payload.name}.`);
+              }
+            }
+            assertChecksum(process.env.RELEASE_ARCHIVE, process.env.RELEASE_CHECKSUM);
+            assertChecksum(process.env.RELEASE_INSTALLER, process.env.RELEASE_INSTALLER_CHECKSUM);
+
             const releases = await github.paginate(github.rest.repos.listReleases, {
               owner,
               repo,
               per_page: 100,
             });
             let release = releases.find(item => item.tag_name === process.env.RELEASE_TAG);
+
+            if (release && !release.draft) {
+              const complete = release.assets.length === assets.length && assets.every(expected => release.assets.filter(
+                actual => actual.name === expected.name
+                  && actual.state === 'uploaded'
+                  && actual.size === expected.size
+                  && actual.digest === expected.digest,
+              ).length === 1);
+              if (!complete) {
+                throw new Error(
+                  `Refusing to overwrite published release ${process.env.RELEASE_TAG} because its exact asset set, size, or digest differs. `
+                  + 'Create a new patch version or repair it manually after reviewing the public state.',
+                );
+              }
+              core.setOutput('release_url', release.html_url);
+              core.info(`${process.env.RELEASE_TAG} was published concurrently and is already complete; leaving it unchanged.`);
+              return;
+            }
 
             if (!release) {
               const created = await github.rest.repos.createRelease({
@@ -403,20 +569,26 @@ jobs:
               });
               release = updated.data;
               core.info(`Reusing draft release ${process.env.RELEASE_TAG}.`);
-            } else {
-              core.info(`Repairing assets on published release ${process.env.RELEASE_TAG}.`);
             }
 
-            const assets = [
-              { name: process.env.RELEASE_ARCHIVE, type: 'application/zip' },
-              { name: process.env.RELEASE_CHECKSUM, type: 'text/plain' },
-              { name: process.env.RELEASE_INSTALLER, type: 'application/vnd.microsoft.portable-executable' },
-              { name: process.env.RELEASE_INSTALLER_CHECKSUM, type: 'text/plain' },
-            ];
+            const currentAssets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: release.id,
+              per_page: 100,
+            });
+            const expectedNames = new Set(assets.map(asset => asset.name));
+            const unexpectedAssets = currentAssets.filter(asset => !expectedNames.has(asset.name));
+            if (unexpectedAssets.length > 0) {
+              throw new Error(
+                `Refusing to publish draft ${process.env.RELEASE_TAG} with unexpected assets: `
+                + unexpectedAssets.map(asset => asset.name).join(', '),
+              );
+            }
 
             for (const asset of assets) {
-              const existing = release.assets.find(item => item.name === asset.name);
-              if (existing) {
+              const existingAssets = currentAssets.filter(item => item.name === asset.name);
+              for (const existing of existingAssets) {
                 await github.rest.repos.deleteReleaseAsset({
                   owner,
                   repo,
@@ -424,8 +596,7 @@ jobs:
                 });
               }
 
-              const assetPath = path.join('artifacts', 'release', asset.name);
-              const data = fs.readFileSync(assetPath);
+              const data = fs.readFileSync(asset.path);
               await github.rest.repos.uploadReleaseAsset({
                 owner,
                 repo,
@@ -440,16 +611,31 @@ jobs:
               core.info(`Uploaded ${asset.name} (${data.length} bytes).`);
             }
 
-            if (release.draft) {
-              const published = await github.rest.repos.updateRelease({
-                owner,
-                repo,
-                release_id: release.id,
-                draft: false,
-                prerelease: process.env.RELEASE_PRERELEASE === 'true',
-              });
-              release = published.data;
+            const uploadedAssets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: release.id,
+              per_page: 100,
+            });
+            const exactAssets = uploadedAssets.length === assets.length && assets.every(expected => uploadedAssets.filter(
+              actual => actual.name === expected.name
+                && actual.state === 'uploaded'
+                && actual.size === expected.size
+                && actual.digest === expected.digest,
+            ).length === 1);
+            if (!exactAssets) {
+              throw new Error('Draft release asset verification failed: names, states, sizes, or SHA-256 digests differ.');
             }
+
+            const published = await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: release.id,
+              draft: false,
+              prerelease: process.env.RELEASE_PRERELEASE === 'true',
+            });
+            release = published.data;
+            if (release.draft) throw new Error(`Release ${process.env.RELEASE_TAG} remained a draft after publication.`);
 
             core.setOutput('release_url', release.html_url);
             core.info(`Published ${release.html_url}`);

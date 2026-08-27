@@ -1,4 +1,5 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -24,13 +25,20 @@ import {
   DEFAULT_HOST_SETTINGS,
   nativeActivationAction,
   parseHostSettings,
+  shouldApplyStartupRegistration,
   shouldHideWindowOnClose,
   shouldSuppressHostEventInSmoke,
-  shouldUpdateStartupRegistration,
   windowLayout,
   type HostSettings,
 } from './hostSettings';
 import { decideQuitRequest } from './lifecycle';
+import {
+  resetMaintenanceShutdownMarker,
+  resolveMaintenanceShutdownMarker,
+  waitForMaintenanceShutdown,
+  writeMaintenanceShutdownFailureMarker,
+  writeMaintenanceShutdownMarker,
+} from './maintenance';
 import {
   EVENT_CHANNEL,
   REQUEST_CHANNEL,
@@ -50,6 +58,7 @@ const APP_SCHEME = 'app';
 const SMOKE_SUCCESS = 'CODEXU_ELECTRON_SMOKE_OK';
 const SMOKE_FAILURE = 'CODEXU_ELECTRON_SMOKE_FAILED';
 const SMOKE_READY_TIMEOUT_MS = 60_000;
+const WINDOWS_LOGIN_ITEM_NAME = 'codexU';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -78,18 +87,63 @@ let sidecarHandshakeVersion = 'unknown';
 let allowQuit = false;
 let shutdownStarted = false;
 let desiredExitCode = 0;
+let pendingMaintenanceShutdownMarker: string | undefined;
 let resolveRendererReady!: () => void;
 const rendererReady = new Promise<void>((resolve) => {
   resolveRendererReady = resolve;
 });
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
-  if (smokeTest) console.error(`${SMOKE_FAILURE}: another instance is already running`);
-  app.exit(smokeTest ? 1 : 0);
-} else {
+startElectronHost();
+
+function startElectronHost(): void {
+  let maintenanceShutdownMarker: string | undefined;
+  try {
+    maintenanceShutdownMarker = resolveMaintenanceShutdownMarker(process.argv, tmpdir());
+    configureElectronStorageOverride();
+    if (maintenanceShutdownMarker) resetMaintenanceShutdownMarker(maintenanceShutdownMarker);
+  } catch (reason) {
+    console.error('[startup] invalid maintenance or storage configuration:', errorMessage(reason));
+    app.exit(2);
+    return;
+  }
+
+  const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!hasSingleInstanceLock) {
+    if (maintenanceShutdownMarker) {
+      void waitForMaintenanceShutdown(maintenanceShutdownMarker).then(
+        () => app.exit(0),
+        (reason) => {
+          console.error('[shutdown] maintenance handshake failed:', errorMessage(reason));
+          app.exit(1);
+        },
+      );
+      return;
+    }
+
+    if (smokeTest) console.error(`${SMOKE_FAILURE}: another instance is already running`);
+    app.exit(smokeTest ? 1 : 0);
+    return;
+  }
+
+  if (maintenanceShutdownMarker) {
+    app.releaseSingleInstanceLock();
+    app.exit(0);
+    return;
+  }
+
   registerLifecycleHandlers();
   void app.whenReady().then(bootstrap).catch(failAndQuit);
+}
+
+function configureElectronStorageOverride(): void {
+  const configuredRoot = process.env.CODEXU_ELECTRON_USER_DATA_DIRECTORY?.trim();
+  if (!configuredRoot) return;
+
+  const userDataRoot = path.resolve(configuredRoot);
+  const sessionDataRoot = path.join(userDataRoot, 'session');
+  mkdirSync(sessionDataRoot, { recursive: true });
+  app.setPath('userData', userDataRoot);
+  app.setPath('sessionData', sessionDataRoot);
 }
 
 async function bootstrap(): Promise<void> {
@@ -184,7 +238,19 @@ async function bootstrap(): Promise<void> {
 }
 
 function registerLifecycleHandlers(): void {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    try {
+      const marker = resolveMaintenanceShutdownMarker(commandLine, tmpdir());
+      if (marker) {
+        pendingMaintenanceShutdownMarker = marker;
+        requestQuit(0);
+        return;
+      }
+    } catch (reason) {
+      console.error('[shutdown] rejected maintenance request:', errorMessage(reason));
+      return;
+    }
+
     const action = nativeActivationAction(smokeTest, 'second-instance');
     if (action === 'fail') {
       failAndQuit(new Error('Smoke test rejected a second-instance activation.'));
@@ -207,10 +273,37 @@ function registerLifecycleHandlers(): void {
     if (shutdownStarted) return;
     shutdownStarted = true;
 
-    void shutdownSidecar().finally(() => {
-      allowQuit = true;
-      requestQuit(desiredExitCode);
-    });
+    const maintenanceMarker = pendingMaintenanceShutdownMarker;
+    void shutdownSidecar(maintenanceMarker !== undefined).then(
+      () => {
+        if (maintenanceMarker) {
+          try {
+            writeMaintenanceShutdownMarker(maintenanceMarker);
+          } catch (reason) {
+            console.error('[shutdown] failed to acknowledge maintenance request:', errorMessage(reason));
+            desiredExitCode = 1;
+          }
+        }
+        allowQuit = true;
+        requestQuit(desiredExitCode);
+      },
+      (reason) => {
+        console.error('[shutdown] maintenance Sidecar shutdown failed:', errorMessage(reason));
+        desiredExitCode = 1;
+        if (maintenanceMarker) {
+          try {
+            writeMaintenanceShutdownFailureMarker(maintenanceMarker);
+          } catch (markerReason) {
+            console.error(
+              '[shutdown] failed to report maintenance shutdown failure:',
+              errorMessage(markerReason),
+            );
+          }
+        }
+        allowQuit = true;
+        requestQuit(desiredExitCode);
+      },
+    );
   });
 
   app.on('will-quit', () => disposeNativeShell());
@@ -526,21 +619,18 @@ function windowBackgroundColor(): string {
 }
 
 function reconcileStartupRegistration(enabled: boolean): void {
-  if (smokeTest || process.platform !== 'win32' || !app.isPackaged) return;
+  if (!shouldApplyStartupRegistration(process.platform, app.isPackaged, smokeTest)) return;
 
   try {
-    const current = app.getLoginItemSettings().openAtLogin;
-    if (!shouldUpdateStartupRegistration(
-      process.platform,
-      app.isPackaged,
-      smokeTest,
-      current,
-      enabled,
-    )) return;
-
+    const loginItemIdentity = {
+      path: process.execPath,
+      args: [] as string[],
+    };
     app.setLoginItemSettings({
       openAtLogin: enabled,
-      path: process.execPath,
+      enabled,
+      name: WINDOWS_LOGIN_ITEM_NAME,
+      ...loginItemIdentity,
     });
   } catch (reason) {
     console.error('[startup] reconciliation failed:', errorMessage(reason));
@@ -678,12 +768,13 @@ function resolveAppIconPath(): string {
   return iconPath;
 }
 
-async function shutdownSidecar(): Promise<void> {
+async function shutdownSidecar(failOnError = false): Promise<void> {
   if (!sidecar) return;
   try {
     await sidecar.shutdown();
   } catch (reason) {
     console.error('[sidecar] shutdown failed:', errorMessage(reason));
+    if (failOnError) throw reason;
   }
 }
 

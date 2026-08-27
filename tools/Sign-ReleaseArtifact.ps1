@@ -7,9 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $certificateBase64 = $env:WINDOWS_SIGNING_CERTIFICATE_BASE64
 $certificatePassword = $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD
-if ([string]::IsNullOrWhiteSpace($certificateBase64) -or [string]::IsNullOrWhiteSpace($certificatePassword)) {
+$hasCertificate = -not [string]::IsNullOrWhiteSpace($certificateBase64)
+$hasPassword = -not [string]::IsNullOrWhiteSpace($certificatePassword)
+if (-not $hasCertificate -and -not $hasPassword) {
     Write-Host "Windows signing certificate is not configured; leaving '$Path' unsigned."
     return
+}
+if ($hasCertificate -ne $hasPassword) {
+    throw 'Windows signing is partially configured; WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD must both be set.'
 }
 
 $target = (Resolve-Path -LiteralPath $Path).Path
