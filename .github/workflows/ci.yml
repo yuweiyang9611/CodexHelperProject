@@ -129,10 +129,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Chocolatey failed to install Inno Setup 6.7.1 (exit $LASTEXITCODE)." }
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
-          $installedVersion = (Get-Item -LiteralPath $compiler).VersionInfo.ProductVersion
-          if ($installedVersion -notin @('6.7.1', '6.7.1.0')) {
-            throw "Expected Inno Setup 6.7.1, found '$installedVersion'."
-          }
 
       - name: Build Electron Windows installer
         shell: pwsh
@@ -147,8 +143,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'artifacts/installer' | Out-Null
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
-          & $compiler 'installer\CodexU.iss'
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+          $compilerOutput = @(& $compiler 'installer\CodexU.iss' 2>&1)
+          $compilerExitCode = $LASTEXITCODE
+          $compilerOutput | ForEach-Object { Write-Host $_ }
+          if ($compilerExitCode -ne 0) { throw "Inno Setup failed with exit code $compilerExitCode." }
+          $engineVersionLines = @($compilerOutput | Where-Object {
+            [string]$_ -eq 'Compiler engine version: Inno Setup 6.7.1'
+          })
+          if ($engineVersionLines.Count -ne 1) {
+            throw 'Inno Setup did not report the exact reviewed compiler engine version 6.7.1.'
+          }
           $installer = Get-Item -LiteralPath 'artifacts/installer/CodexU-0.5.1-ci-win-x64-setup.exe'
           if ($installer.Length -le 0) { throw 'Installer is empty.' }
 

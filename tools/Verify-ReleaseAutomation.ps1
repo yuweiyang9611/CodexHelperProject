@@ -216,8 +216,10 @@ foreach ($workflow in @($ciWorkflow, $releaseWorkflow)) {
         'name: Smoke-test',
         '-LegacyInstallerPath artifacts/legacy/CodexU-0.5.0-win-x64-setup.exe'
     ) 'CI and Release must verify the legacy installer before running the real upgrade test.'
-    Assert-Matches $workflow 'name:\s*Install(?: pinned)? Inno Setup.*?choco install innosetup --version=6\.7\.1.*?LASTEXITCODE.*?ProductVersion.*?-notin\s+@\(''6\.7\.1'',\s*''6\.7\.1\.0''\)' `
-        'CI and Release must independently install and verify the pinned Inno Setup compiler.'
+    Assert-Matches $workflow 'name:\s*Install pinned Inno Setup.*?choco install innosetup --version=6\.7\.1.*?LASTEXITCODE.*?Test-Path -LiteralPath \$compiler' `
+        'CI and Release must independently install the pinned Inno Setup compiler and verify its executable exists.'
+    Assert-Matches $workflow '\$compilerOutput\s*=\s*@\(& \$compiler ''installer\\CodexU\.iss'' 2>&1\).*?\$compilerExitCode\s*=\s*\$LASTEXITCODE.*?Compiler engine version: Inno Setup 6\.7\.1' `
+        'CI and Release must verify the compiler-reported Inno Setup 6.7.1 engine version.'
     Assert-NotContains $workflow 'Test-PublishedApp.ps1' `
         'The public automation must not return to the legacy WPF smoke test.'
     Assert-NotContains $workflow 'artifacts/publish/CodexU.App.exe' `
