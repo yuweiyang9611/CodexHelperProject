@@ -81,17 +81,14 @@ export function shouldHideWindowOnClose(
   return settings.closeToTray && !shutdownStarted && trayAvailable;
 }
 
-export function shouldUpdateStartupRegistration(
+export function shouldApplyStartupRegistration(
   platform: NodeJS.Platform,
   isPackaged: boolean,
   smokeTest: boolean,
-  currentValue: boolean,
-  desiredValue: boolean,
 ): boolean {
   return platform === 'win32'
     && isPackaged
-    && !smokeTest
-    && currentValue !== desiredValue;
+    && !smokeTest;
 }
 
 export function shouldSuppressHostEventInSmoke(smokeTest: boolean, method: string): boolean {

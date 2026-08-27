@@ -6,7 +6,7 @@ const {
   parseHostSettings,
   shouldHideWindowOnClose,
   shouldSuppressHostEventInSmoke,
-  shouldUpdateStartupRegistration,
+  shouldApplyStartupRegistration,
   windowLayout,
 } = require('../dist/hostSettings.js');
 
@@ -97,12 +97,11 @@ test('hides on close only when a usable tray exists and shutdown has not started
   assert.equal(shouldHideWindowOnClose(exitOnClose, false, true), false);
 });
 
-test('reconciles startup registration only for non-smoke packaged Windows changes', () => {
-  assert.equal(shouldUpdateStartupRegistration('win32', true, false, false, true), true);
-  assert.equal(shouldUpdateStartupRegistration('win32', true, false, true, true), false);
-  assert.equal(shouldUpdateStartupRegistration('win32', true, true, false, true), false);
-  assert.equal(shouldUpdateStartupRegistration('linux', true, false, false, true), false);
-  assert.equal(shouldUpdateStartupRegistration('win32', false, false, false, true), false);
+test('applies startup registration only for non-smoke packaged Windows hosts', () => {
+  assert.equal(shouldApplyStartupRegistration('win32', true, false), true);
+  assert.equal(shouldApplyStartupRegistration('win32', true, true), false);
+  assert.equal(shouldApplyStartupRegistration('linux', true, false), false);
+  assert.equal(shouldApplyStartupRegistration('win32', false, false), false);
 });
 
 test('smoke suppresses every native host event except its web-ready barrier', () => {

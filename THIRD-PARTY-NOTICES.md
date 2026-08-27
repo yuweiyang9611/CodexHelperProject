@@ -25,13 +25,13 @@ This project also references the Windows feature set of:
 
 The corresponding MIT notice is retained at `LICENSES/liu-codexU-windows-MIT.txt` (source: https://github.com/liu1198767931-bit/codexU-windows/blob/f27427302390c408863c6b0c747f777bca9e3317/LICENSE).
 
-This repository reimplements the Windows application using WPF/.NET 10, WebView2 and C# services. The upstream project remains acknowledged as a product and behavior reference.
+This repository reimplements the desktop application as an Electron/Chromium host with a Vue renderer and a self-contained .NET 10 Sidecar. The upstream project remains acknowledged as a product and behavior reference.
 
 ## Runtime dependencies
 
-NuGet and npm dependencies retain their respective licenses. `THIRD-PARTY-INVENTORY.md` records the shipped dependency graph and declared license expressions. `THIRD-PARTY-LICENSES.txt` contains the complete license and notice texts extracted from restored production packages; packages that publish only an SPDX expression receive the corresponding standard license text together with their package copyright metadata.
+The Electron runtime, the .NET Sidecar's NuGet dependencies and the Web renderer's production npm dependencies retain their respective licenses. `THIRD-PARTY-INVENTORY.md` records these shipped components and their declared license expressions. `THIRD-PARTY-LICENSES.txt` contains Electron's MIT license and the complete license and notice texts extracted from restored production packages; packages that publish only an SPDX expression receive the corresponding standard license text together with their package copyright metadata.
 
-The self-contained .NET runtime license and Microsoft's accompanying third-party notices are retained in `LICENSES/dotnet-runtime-MIT.txt` and `LICENSES/dotnet-runtime-ThirdPartyNotices.txt`. The project `LICENSE`, this notice, both generated dependency files and the complete `LICENSES` directory are copied into normal build and publish output.
+Electron retains its runtime license in `LICENSE` and the complete Chromium and bundled third-party notices in `LICENSES.chromium.html` at the packaged application root. The packaged project's own legal payload consists of `resources/LICENSE`, `resources/THIRD-PARTY-NOTICES.md`, `resources/THIRD-PARTY-INVENTORY.md`, `resources/THIRD-PARTY-LICENSES.txt` and `resources/LICENSES/`. The self-contained .NET runtime license and Microsoft's accompanying third-party notices are included there as `resources/LICENSES/dotnet-runtime-MIT.txt` and `resources/LICENSES/dotnet-runtime-ThirdPartyNotices.txt`.
 
 ## Inno Setup
 

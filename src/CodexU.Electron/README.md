@@ -65,9 +65,9 @@ higher non-zero exit code.
 
 ## Development
 
-Use Node.js 22.x for the Electron workspace. The `node` executable actually resolved
-from `PATH` must report version 22; invoking a version-specific `npm.cmd` by absolute
-path is insufficient when its child scripts still resolve another Node version. Build
+Use Node.js 22.23.2 for the Electron workspace. The `node` executable actually resolved
+from `PATH` must report that exact version; invoking a version-specific `npm.cmd` by
+absolute path is insufficient when its child scripts still resolve another Node version. Build
 the Vue renderer, publish the self-contained sidecar, and install the locked Electron
 dependencies from the repository root:
 
@@ -81,6 +81,8 @@ dotnet publish src\CodexU.Sidecar\CodexU.Sidecar.csproj `
   --runtime win-x64 `
   --self-contained true `
   -p:PublishReadyToRun=false `
+  -p:DebugSymbols=false `
+  -p:DebugType=None `
   --output src\CodexU.Electron\backend
 cd src\CodexU.Electron
 npm.cmd ci
@@ -88,55 +90,67 @@ npm start
 ```
 
 Dependencies are exact-version pinned. Do not commit `node_modules`, generated
-`dist`, Forge `out`, or staged backend binaries.
+`dist`/`out`, or staged backend binaries.
 
 ## Packaging
 
-After staging the renderer and sidecar as shown above, run with Node.js 22.x:
+After staging the renderer and sidecar as shown above, run with Node.js 22.23.2:
 
 ```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\Generate-ThirdPartyInventory.ps1
 npm run package
-npm run make
 ```
 
-Forge packages the Electron application into ASAR, copies Vue assets and the backend
-outside ASAR, and applies restrictive Electron fuses. The current maker emits a
-Windows ZIP suitable for the existing installer pipeline to consume later.
+The legal-payload gate reruns the inventory generator under Windows PowerShell into an
+isolated temporary directory, compares all four generated files byte-for-byte, rejects
+unresolved licenses, and verifies that package.json, package-lock and the installed
+Electron runtime all name the same exact version. The package script then calls the
+stable `@electron/packager@20.3.0` API directly with that verified Electron version. It packages
+the host into ASAR, copies the Vue renderer and a PDB-free self-contained backend outside
+ASAR, embeds Windows version metadata, and applies restrictive Electron fuses. It also
+stages the project license, generated dependency inventory/license bundle, retained .NET
+runtime notices and upstream licenses under `resources/`. Electron's own `LICENSE` and
+complete `LICENSES.chromium.html` remain at the package root.
+
+The output is `out/CodexU-win32-x64`. GitHub Release signs `CodexU.exe` and
+`resources/backend/CodexU.Sidecar.exe`, smoke-tests that exact directory, builds and tests
+the Inno Setup installer, then compresses the already-signed directory into the public ZIP.
+There is no separate maker step that can silently recreate and discard signed binaries.
 
 The packaging hook uses `@electron/fuses` directly and enables
 `strictlyRequireAllFuses`. Every fuse in Electron's current V1 wire is explicit, so a
 future Electron fuse addition fails packaging instead of silently inheriting an
 unknown default. Node execution/option/inspector entry points and extra `file://`
-privileges are disabled; cookie encryption and ASAR integrity enforcement are enabled;
-`WasmTrapHandlers` remains enabled.
+privileges are disabled; cookie encryption and embedded ASAR integrity validation are
+enabled; `WasmTrapHandlers` remains enabled. The embedded ASAR integrity fuse is not a
+general integrity guarantee for the external Vue or Sidecar resources; Authenticode and
+release checksums cover the Windows distribution boundary.
 
-Node.js 24.16 has an upstream child-process regression that can make Electron Forge
-stop silently during finalization ([Electron Forge #4282](https://github.com/electron/forge/issues/4282),
-[Node.js #63581](https://github.com/nodejs/node/issues/63581)), so packaging is
-intentionally pinned to Node 22.x.
+The complete Electron workspace, including build tooling, must pass
+`npm audit --audit-level=high`. Forge 7 was removed because it pinned Electron Packager 18
+and the vulnerable `extract-zip@2.0.1` build path. Packager 20 uses the hardened
+`@electron-internal/extract-zip` implementation; CI inspects the locked package map and
+fails if the legacy package is reintroduced or the hardened implementation disappears.
 
 ## Migration limitations
 
-The WPF build remains the official release. Before Electron replaces it, startup
-registration needs a correlated result so backend settings can roll back when the OS
-operation fails; window bounds need work-area/DPI clamping; Windows notifications,
-the status strip, and desktop mode still need native-host implementations; and the
-installer plus Electron/Chromium license inventory must be completed. The shipped ASAR
-has no runtime npm dependency tree. The build-only dependency graph pins patched
-`tar@7.5.22` and `tmp@0.2.7` releases through npm overrides; a clean install, package,
-and packaged smoke test cover those overrides. The remaining audit report is one
-upstream [`extract-zip@2.0.1` symlink-traversal advisory](https://github.com/advisories/GHSA-jmr9-qjv8-65gv) propagated through Electron
-Packager/Forge. No patched `extract-zip` release exists yet, so Electron stays blocked
-from public release until Forge replaces it or upstream ships a fix. Packaging must use
-the exact lockfile and trusted Electron artifacts in the meantime.
-Linux has not yet been validated.
+The currently published v0.5.0 remains the legacy WPF build, while the next-version
+GitHub Release pipeline now targets Electron. This packaging readiness does not imply
+complete product parity: startup registration still needs a correlated failure result so
+backend settings can roll back when the OS operation fails; window bounds need full
+work-area/DPI restoration; and Windows notifications, the status strip and desktop mode
+still need native-host implementations. The first Electron version should therefore be
+validated as a prerelease. The shipped ASAR has no runtime npm dependency tree. Linux has
+not yet been validated.
 
 ## Automated checks
 
 ```powershell
 npm test
 npm run smoke
-.\out\CodexU-win32-x64\CodexU.exe --smoke-test
+cd ..\..
+.\tools\Test-PackagedElectron.ps1 `
+  -ApplicationDirectory src\CodexU.Electron\out\CodexU-win32-x64
 ```
 
 `--smoke-test` keeps the window hidden, waits for the `app://codexu` page to load,

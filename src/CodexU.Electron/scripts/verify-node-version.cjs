@@ -1,13 +1,12 @@
 'use strict';
 
-const supportedMajor = 22;
+const supportedVersion = '22.23.2';
 const actualVersion = process.versions.node;
-const actualMajor = Number.parseInt(actualVersion.split('.')[0], 10);
 
-if (actualMajor !== supportedMajor) {
+if (actualVersion !== supportedVersion) {
   console.error(
-    `CodexU Electron requires Node.js ${supportedMajor}.x; the npm script resolved Node.js ${actualVersion}. `
-    + 'Switch the active PATH to Node.js 22 before running Electron commands.',
+    `CodexU Electron requires Node.js ${supportedVersion}; the npm script resolved Node.js ${actualVersion}. `
+    + `Switch the active PATH to Node.js ${supportedVersion} before running Electron commands.`,
   );
   process.exitCode = 1;
 } else {
