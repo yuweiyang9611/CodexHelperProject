@@ -297,15 +297,46 @@ function Get-ShortcutTargetPath {
 
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $null
+    $shellApplication = $null
+    $shortcutFolder = $null
+    $shortcutItem = $null
     try {
         $shortcut = $shell.CreateShortcut($ShortcutPath)
         $targetPath = [string]$shortcut.TargetPath
+        if ([string]::IsNullOrWhiteSpace($targetPath)) {
+            # Inno uninstall links can use a Shell item identifier instead of the
+            # string path exposed by WScript.Shell. Resolve the same read-only
+            # target through the Windows property system before rejecting it.
+            $shellApplication = New-Object -ComObject Shell.Application
+            $shortcutFolder = $shellApplication.NameSpace(
+                [System.IO.Path]::GetDirectoryName($ShortcutPath))
+            if ($null -ne $shortcutFolder) {
+                $shortcutItem = $shortcutFolder.ParseName(
+                    [System.IO.Path]::GetFileName($ShortcutPath))
+            }
+            if ($null -ne $shortcutItem) {
+                $targetPath = [string]$shortcutItem.ExtendedProperty(
+                    'System.Link.TargetParsingPath')
+            }
+        }
         if ([string]::IsNullOrWhiteSpace($targetPath)) {
             throw "Shortcut has no target: '$ShortcutPath'."
         }
         return [System.IO.Path]::GetFullPath($targetPath)
     }
     finally {
+        if ($null -ne $shortcutItem -and
+            [System.Runtime.InteropServices.Marshal]::IsComObject($shortcutItem)) {
+            [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutItem)
+        }
+        if ($null -ne $shortcutFolder -and
+            [System.Runtime.InteropServices.Marshal]::IsComObject($shortcutFolder)) {
+            [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutFolder)
+        }
+        if ($null -ne $shellApplication -and
+            [System.Runtime.InteropServices.Marshal]::IsComObject($shellApplication)) {
+            [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($shellApplication)
+        }
         if ($null -ne $shortcut -and
             [System.Runtime.InteropServices.Marshal]::IsComObject($shortcut)) {
             [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
