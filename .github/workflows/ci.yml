@@ -130,13 +130,34 @@ jobs:
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler was not installed.' }
 
+      - name: Resolve CI installer version
+        id: installer_version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content -LiteralPath 'Directory.Build.props'
+          $version = ([string]$props.Project.PropertyGroup.Version).Trim()
+          $versionMatch = [Regex]::Match(
+            $version,
+            '^(?<numeric>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$')
+          if (-not $versionMatch.Success) {
+            throw "Directory.Build.props contains an invalid CI installer version: '$version'"
+          }
+
+          $numericVersion = $versionMatch.Groups['numeric'].Value
+          if ([version]$numericVersion -le [version]'0.5.0') {
+            throw "CI installer version $version must be newer than the v0.5.0 migration fixture."
+          }
+
+          $installerPath = "artifacts/installer/CodexU-$version-win-x64-setup.exe"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "numeric_version=$numericVersion" >> $env:GITHUB_OUTPUT
+          "installer_path=$installerPath" >> $env:GITHUB_OUTPUT
+
       - name: Build Electron Windows installer
         shell: pwsh
         env:
-          # Must be newer than the real v0.5.0 installer exercised below;
-          # otherwise the migration test would be a silent downgrade.
-          CODEXU_VERSION: 0.5.1-ci
-          CODEXU_NUMERIC_VERSION: 0.5.1
+          CODEXU_VERSION: ${{ steps.installer_version.outputs.version }}
+          CODEXU_NUMERIC_VERSION: ${{ steps.installer_version.outputs.numeric_version }}
           CODEXU_PUBLISH_DIR: ${{ github.workspace }}\src\CodexU.Electron\out\CodexU-win32-x64
           CODEXU_INSTALLER_OUTPUT_DIR: ${{ github.workspace }}\artifacts\installer
         run: |
@@ -153,7 +174,7 @@ jobs:
           if ($engineVersionLines.Count -ne 1) {
             throw 'Inno Setup did not report the exact reviewed compiler engine version 6.7.1.'
           }
-          $installer = Get-Item -LiteralPath 'artifacts/installer/CodexU-0.5.1-ci-win-x64-setup.exe'
+          $installer = Get-Item -LiteralPath '${{ steps.installer_version.outputs.installer_path }}'
           if ($installer.Length -le 0) { throw 'Installer is empty.' }
 
       - name: Download verified v0.5.0 WPF installer
@@ -178,7 +199,7 @@ jobs:
         shell: pwsh
         run: |
           ./tools/Test-ElectronInstaller.ps1 `
-            -InstallerPath artifacts/installer/CodexU-0.5.1-ci-win-x64-setup.exe `
+            -InstallerPath '${{ steps.installer_version.outputs.installer_path }}' `
             -LegacyInstallerPath artifacts/legacy/CodexU-0.5.0-win-x64-setup.exe `
             -ExpectedPackageDirectory src/CodexU.Electron/out/CodexU-win32-x64
 

@@ -6,9 +6,15 @@ $assemblyVersion = ([string]$buildProps.Project.PropertyGroup.AssemblyVersion).T
 $fileVersion = ([string]$buildProps.Project.PropertyGroup.FileVersion).Trim()
 $webPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Web\package.json') -Raw | ConvertFrom-Json
 $electronPackage = Get-Content (Join-Path $projectRoot 'src\CodexU.Electron\package.json') -Raw | ConvertFrom-Json
+$webPackageLockPath = Join-Path $projectRoot 'src\CodexU.Web\package-lock.json'
 $electronPackageLockPath = Join-Path $projectRoot 'src\CodexU.Electron\package-lock.json'
-$electronLockVersionReader = Join-Path $PSScriptRoot 'Get-ElectronLockVersions.cjs'
-$electronLockVersionJson = & node $electronLockVersionReader $electronPackageLockPath
+$lockVersionReader = Join-Path $PSScriptRoot 'Get-ElectronLockVersions.cjs'
+$webLockVersionJson = & node $lockVersionReader $webPackageLockPath
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to read Web package-lock.json with Node.js.'
+}
+$webLockVersions = $webLockVersionJson | ConvertFrom-Json
+$electronLockVersionJson = & node $lockVersionReader $electronPackageLockPath
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to read Electron package-lock.json with Node.js.'
 }
@@ -40,6 +46,15 @@ if ($fileVersion -ne $expectedBinaryVersion) {
 
 if ($webPackage.version -ne $productVersion) {
     throw "Version mismatch: .NET=$productVersion, web=$($webPackage.version)"
+}
+
+if ([string]::IsNullOrWhiteSpace([string]$webLockVersions.rootVersion)) {
+    throw 'Web package-lock.json does not contain a root package entry.'
+}
+
+if ($webLockVersions.lockVersion -ne $productVersion -or
+    $webLockVersions.rootVersion -ne $productVersion) {
+    throw "Version mismatch: .NET=$productVersion, Web lock=$($webLockVersions.lockVersion)"
 }
 
 if ($electronPackage.version -ne $productVersion) {

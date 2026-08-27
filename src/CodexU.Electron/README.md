@@ -134,8 +134,8 @@ fails if the legacy package is reintroduced or the hardened implementation disap
 
 ## Migration limitations
 
-The currently published v0.5.0 remains the legacy WPF build, while the next-version
-GitHub Release pipeline now targets Electron. This packaging readiness does not imply
+The v0.5.0 release remains the legacy WPF build, while v0.6.0-beta.1 is the first
+Electron prerelease. This packaging readiness does not imply
 complete product parity: startup registration still needs a correlated failure result so
 backend settings can roll back when the OS operation fails; window bounds need full
 work-area/DPI restoration; and Windows notifications, the status strip and desktop mode

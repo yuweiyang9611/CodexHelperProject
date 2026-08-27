@@ -1,4 +1,3 @@
-using System.Reflection;
 using CodexU.Application;
 
 namespace CodexU.Sidecar;
@@ -125,8 +124,7 @@ public sealed record SidecarOptions(
             }
         }
 
-        var backendVersion = typeof(SidecarOptions).Assembly.GetName().Version?.ToString(3)
-            ?? "development";
+        var backendVersion = SidecarVersion.Resolve(typeof(SidecarOptions).Assembly);
         var defaultDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "codexU");
