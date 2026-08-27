@@ -3,7 +3,7 @@
 [![CI](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml)
 [![Release](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml)
 
-codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。当前公开的 v0.5.0 仍是 WPF/WebView2 版本；`main` 的下一版本发布链已经切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
+codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
 
 ## 仓库迁移与隐私说明
 
@@ -61,7 +61,7 @@ Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron
 - Windows 10 22H2 或 Windows 11，推荐 Windows 11。
 - .NET SDK 10.0.400（由 `global.json` 精确锁定）。
 - Node.js 22.23.2（Electron 构建与 CI/Release 使用同一精确版本）。
-- Electron 与下一版本安装包不需要 WebView2 Evergreen Runtime；只有运行仓库中的旧 WPF 宿主时才需要。
+- Electron 安装包不需要 WebView2 Evergreen Runtime；只有运行仓库中的旧 WPF 宿主时才需要。
 - 已安装并登录的 ChatGPT 桌面应用（含 Codex）或 Codex CLI；没有 Codex 数据时应用仍可显示空状态。
 
 ## 构建
@@ -146,7 +146,7 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 - 若仓库同时配置 `WINDOWS_SIGNING_CERTIFICATE_BASE64` 与 `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`，发布流程会先签名并验证 `CodexU.exe` 与 `CodexU.Sidecar.exe`，再签名并测试 Setup EXE；两者都未配置时会明确产出未签名包，只配置一个则立即失败。
 - 若该项目用于符合 Inno Setup 定义的商业场景，请购买许可证并将密钥配置为仓库 Secret `INNO_SETUP_LICENSE_KEY`；仅 Release 会在临时 Runner 的当前用户注册表中激活它，CI 不会使用该许可密钥。
 
-发布新版本时，先修改 `Directory.Build.props` 的 `Version`、`AssemblyVersion` 和 `FileVersion`，并同步 Web/Electron package 与 lockfile，通过 PR 合并到 `main`；自动化会跳过已完整发布的同版本，防止覆盖历史 Release。当前 v0.5.0 因已完整发布而保持原 WPF 资产不变；首个 Electron 版本应使用预发布版本号（计划为 `0.6.0-beta.1`），验证功能对等后再提升为稳定版。
+发布新版本时，先修改 `Directory.Build.props` 的 `Version`、`AssemblyVersion` 和 `FileVersion`，并同步 Web/Electron package 与 lockfile，通过 PR 合并到 `main`；自动化会跳过已完整发布的同版本，防止覆盖历史 Release。v0.5.0 保持原 WPF 资产不变；v0.6.0-beta.1 是首个 Electron 预发布版，验证功能对等后再提升为稳定版。
 
 ## Claude 额度接入
 

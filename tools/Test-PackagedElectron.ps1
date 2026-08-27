@@ -12,6 +12,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$buildPropsPath = Join-Path $projectRoot 'Directory.Build.props'
+[xml]$buildProps = Get-Content -LiteralPath $buildPropsPath -Raw
+$expectedBackendVersion = ([string]$buildProps.Project.PropertyGroup.Version).Trim()
+if ($expectedBackendVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+    throw "Directory.Build.props contains an invalid product version: '$expectedBackendVersion'."
+}
+
 function Assert-NonEmptyFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -371,11 +379,20 @@ try {
     if ($process.ExitCode -ne 0) {
         throw "Packaged Electron smoke test failed with exit code $($process.ExitCode)."
     }
+    $successPattern = '^CODEXU_ELECTRON_SMOKE_OK: app-loaded backend=(?<backend>\S+) host-state=false reverse-rpc=rates\.export-cancelled$'
     $successLines = @($standardOutput -split '\r?\n' | Where-Object {
-        $_ -match '^CODEXU_ELECTRON_SMOKE_OK: app-loaded backend=\S+ host-state=false reverse-rpc=rates\.export-cancelled$'
+        $_ -match $successPattern
     })
     if ($successLines.Count -ne 1) {
         throw 'Packaged Electron smoke test did not report exactly one complete success record with safe host state and reverse-RPC cancellation.'
+    }
+    $successMatch = [Regex]::Match($successLines[0], $successPattern)
+    $reportedBackendVersion = $successMatch.Groups['backend'].Value
+    if (-not [string]::Equals(
+        $reportedBackendVersion,
+        $expectedBackendVersion,
+        [StringComparison]::Ordinal)) {
+        throw "Packaged Electron smoke test reported backend version '$reportedBackendVersion'; expected '$expectedBackendVersion'."
     }
 
     $unexpectedExports = @(Get-ChildItem `

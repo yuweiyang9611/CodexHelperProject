@@ -237,10 +237,25 @@ foreach ($workflow in @($ciWorkflow, $releaseWorkflow)) {
         'The public automation must not package the legacy WPF executable.'
 }
 
-Assert-Contains $ciWorkflow 'CODEXU_VERSION: 0.5.1-ci' `
-    'The CI installer version must be newer than the real v0.5.0 migration fixture.'
-Assert-Contains $ciWorkflow 'CODEXU_NUMERIC_VERSION: 0.5.1' `
+Assert-Matches $ciWorkflow `
+    "name:\s*Resolve CI installer version.*?\[xml\]\`$props\s*=\s*Get-Content -LiteralPath 'Directory\.Build\.props'.*?\`$version\s*=\s*\(\[string\]\`$props\.Project\.PropertyGroup\.Version\)\.Trim\(\).*?\`$numericVersion\s*=\s*\`$versionMatch\.Groups\['numeric'\]\.Value" `
+    'CI must derive its installer product and numeric versions from Directory.Build.props.'
+Assert-Contains $ciWorkflow "if ([version]`$numericVersion -le [version]'0.5.0')" `
     'The CI installer numeric version must be newer than the real v0.5.0 migration fixture.'
+Assert-Contains $ciWorkflow 'CODEXU_VERSION: ${{ steps.installer_version.outputs.version }}' `
+    'The CI installer product version must use the version resolved from Directory.Build.props.'
+Assert-Contains $ciWorkflow 'CODEXU_NUMERIC_VERSION: ${{ steps.installer_version.outputs.numeric_version }}' `
+    'The CI installer numeric version must use the numeric version resolved from Directory.Build.props.'
+Assert-Contains $ciWorkflow '$installerPath = "artifacts/installer/CodexU-$version-win-x64-setup.exe"' `
+    'CI must construct the installer path from the resolved product version.'
+Assert-Ordered $ciWorkflow @(
+    '"installer_path=$installerPath" >> $env:GITHUB_OUTPUT',
+    'Get-Item -LiteralPath ''${{ steps.installer_version.outputs.installer_path }}''',
+    '-InstallerPath ''${{ steps.installer_version.outputs.installer_path }}'''
+) 'CI must pass the same dynamically versioned installer from build verification to the smoke test.'
+if ([Regex]::IsMatch($ciWorkflow, 'CODEXU_(?:NUMERIC_)?VERSION:\s*[0-9]')) {
+    throw 'CI installer versions must be dynamically resolved rather than hard-coded.'
+}
 
 Assert-Contains $releaseWorkflow 'github.rest.repos.compareCommitsWithBasehead' `
     'Release inspection must compare an existing tag commit with the triggering main commit.'
