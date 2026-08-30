@@ -262,8 +262,8 @@ select:focus-visible,
 .setting-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setting-checks label { min-width: 0; line-height: 1.45; }
 .setting-checks input { flex: none; }
-.settings-group input:disabled,
-.settings-group select:disabled {
+.settings-group input:disabled[aria-describedby$="-capability-note"],
+.settings-group select:disabled[aria-describedby$="-capability-note"] {
   opacity: .52;
   cursor: not-allowed;
 }
