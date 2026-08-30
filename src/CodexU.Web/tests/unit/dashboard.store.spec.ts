@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEMO_HOST_CAPABILITIES, HOST_CAPABILITY } from '../../src/hostCapabilities'
 import type { AppSettings, DashboardSnapshot } from '../../src/types'
 import { appSettings, runtimeRead, snapshot } from './fixtures'
 
@@ -37,7 +38,7 @@ function routeRequests(routes: Record<string, unknown | (() => unknown)>) {
       const route = routes[method]
       return typeof route === 'function' ? (route as () => unknown)() : route
     }
-    if (method === 'app.initialize') return { appVersion: '9.9.9', platform: 'test', theme: 'dark', mockData: false, capabilities: [] }
+    if (method === 'app.initialize') return { appVersion: '9.9.9', platform: 'test', theme: 'dark', isPackaged: false, capabilities: [...DEMO_HOST_CAPABILITIES] }
     if (method === 'todos.list') return []
     if (method === 'settings.get') return appSettings()
     if (method === 'rates.getCatalog') return { builtIn: {}, builtInRates: [] }
@@ -83,6 +84,29 @@ describe('initialize', () => {
     expect(store.snapshot).toEqual(loaded)
     expect(store.todos).toHaveLength(1)
     expect(store.appVersion).toBe('9.9.9')
+    expect(store.hostPlatform).toBe('test')
+    expect(store.hostIsPackaged).toBe(false)
+    expect(store.hasHostCapability(HOST_CAPABILITY.statusStripControl)).toBe(true)
+  })
+
+  it('replaces and de-duplicates host capabilities on every handshake', async () => {
+    let capabilities: string[] = [HOST_CAPABILITY.tray, HOST_CAPABILITY.tray, HOST_CAPABILITY.globalHotKey]
+    routeRequests({
+      'app.initialize': () => ({
+        appVersion: '1', platform: 'windows', theme: 'dark', isPackaged: true, capabilities,
+      }),
+      'settings.get': appSettings({ checkForUpdates: false }),
+    })
+    const store = useDashboardStore()
+
+    await store.initialize()
+    expect(store.hostCapabilities).toEqual([HOST_CAPABILITY.tray, HOST_CAPABILITY.globalHotKey])
+    expect(store.hostIsPackaged).toBe(true)
+
+    capabilities = [HOST_CAPABILITY.compactMode]
+    await store.initialize()
+    expect(store.hostCapabilities).toEqual([HOST_CAPABILITY.compactMode])
+    expect(store.hasHostCapability(HOST_CAPABILITY.tray)).toBe(false)
   })
 
   it('keeps the sources that succeeded and aggregates the ones that failed', async () => {
@@ -114,6 +138,8 @@ describe('initialize', () => {
     expect(store.error).toContain('宿主初始化失败：宿主未就绪')
     expect(store.settings).not.toBeNull()
     expect(store.appVersion).toBe('development')
+    expect(store.hostCapabilities).toEqual([])
+    expect(store.hostPlatform).toBe('unknown')
   })
 
   it('checks for updates only when the setting is on', async () => {
@@ -190,7 +216,7 @@ describe('stale response guarding', () => {
       if (method === 'runtime.select') return runtimeSwitch.promise
       if (method === 'settings.get') return appSettings({ checkForUpdates: false })
       if (method === 'todos.list') return []
-      if (method === 'app.initialize') return { appVersion: '1', platform: 'test', theme: 'dark', mockData: false, capabilities: [] }
+      if (method === 'app.initialize') return { appVersion: '1', platform: 'test', theme: 'dark', isPackaged: false, capabilities: [...DEMO_HOST_CAPABILITIES] }
       return snapshot()
     })
 
@@ -333,6 +359,40 @@ describe('settings draft merging', () => {
 })
 
 describe('status strip controls', () => {
+  it('does not call status-strip IPC when the host does not advertise it', async () => {
+    routeRequests({
+      'app.initialize': {
+        appVersion: '1', platform: 'windows', theme: 'dark', isPackaged: true, capabilities: [],
+      },
+      'settings.get': appSettings({ checkForUpdates: false, statusStripEnabled: true }),
+    })
+    const store = useDashboardStore()
+
+    await store.initialize()
+    await store.previewStatusStrip()
+    await store.recoverStatusStrip()
+    await store.refreshStatusStripState()
+    emit('statusStrip.stateChanged', {
+      configuredEnabled: true,
+      visible: true,
+      positionLocked: true,
+      hasManualPosition: true,
+      positionMode: 'stale',
+      displayName: 'stale',
+      message: 'stale',
+    })
+
+    const methods = mocks.request.mock.calls.map(([method]) => method)
+    expect(methods).not.toContain('statusStrip.getState')
+    expect(methods).not.toContain('statusStrip.preview')
+    expect(methods).not.toContain('statusStrip.recover')
+    expect(store.statusStripState).toMatchObject({
+      configuredEnabled: true,
+      visible: false,
+      positionMode: '当前不可用',
+    })
+  })
+
   it('adopts host-pushed visibility changes when a temporary preview expires', async () => {
     routeRequests({ 'settings.get': appSettings({ checkForUpdates: false, statusStripEnabled: false }) })
     const store = useDashboardStore()

@@ -61,7 +61,7 @@ public sealed class SidecarBackend : IDisposable
                 options.Platform,
                 settings.Theme,
                 options.IsPackaged,
-                SidecarOptions.HostCapabilities,
+                SidecarOptions.ResolveHostCapabilities(options.Platform, options.IsPackaged),
                 eventSink);
             var session = new ApplicationSession(
                 CreateDashboardService(settings, options.ApplicationDataDirectory),

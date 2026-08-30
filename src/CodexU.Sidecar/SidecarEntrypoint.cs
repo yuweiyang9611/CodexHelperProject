@@ -1,4 +1,5 @@
 using CodexU.Application;
+using CodexU.Contracts;
 
 namespace CodexU.Sidecar;
 
@@ -82,7 +83,7 @@ public sealed record SidecarOptions(
         "gracefulShutdown"
     ];
 
-    public static IReadOnlyList<string> HostCapabilities { get; } =
+    private static IReadOnlyList<string> SharedHostCapabilities { get; } =
     [
         "usage",
         "runtime",
@@ -94,9 +95,29 @@ public sealed record SidecarOptions(
         "diagnostics",
         "rateCatalog",
         "todos",
-        "nativeDialogs",
+        HostCapabilityNames.NativeDialogs,
+        HostCapabilityNames.AlwaysOnTop,
+        HostCapabilityNames.CompactMode,
         "sidecar"
     ];
+
+    public static IReadOnlyList<string> ResolveHostCapabilities(string platform, bool isPackaged)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(platform);
+
+        var capabilities = new List<string>(SharedHostCapabilities);
+        if (string.Equals(platform, "windows", StringComparison.OrdinalIgnoreCase))
+        {
+            capabilities.Add(HostCapabilityNames.Tray);
+            capabilities.Add(HostCapabilityNames.GlobalHotKey);
+            if (isPackaged)
+            {
+                capabilities.Add(HostCapabilityNames.StartupRegistration);
+            }
+        }
+
+        return capabilities;
+    }
 
     public static SidecarOptions Parse(IReadOnlyList<string> args)
     {

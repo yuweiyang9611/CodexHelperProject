@@ -36,6 +36,19 @@ public sealed record IpcEvent(
 
 public sealed record IpcError(string Code, string Message);
 
+public static class HostCapabilityNames
+{
+    public const string NativeDialogs = "nativeDialogs";
+    public const string NativeNotifications = "nativeNotifications";
+    public const string StatusStripControl = "statusStripControl";
+    public const string DesktopMode = "desktopMode";
+    public const string Tray = "tray";
+    public const string AlwaysOnTop = "alwaysOnTop";
+    public const string GlobalHotKey = "globalHotKey";
+    public const string CompactMode = "compactMode";
+    public const string StartupRegistration = "startupRegistration";
+}
+
 public sealed record InitializeResult(
     string AppVersion,
     string Platform,

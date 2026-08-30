@@ -9,6 +9,19 @@ namespace CodexU.Sidecar.Tests;
 public sealed class IpcDispatcherTests
 {
     [Fact]
+    public async Task InitializeReturnsHostCapabilitiesUnchanged()
+    {
+        using var context = TestContext.Create(new ImmediateDashboardService());
+
+        var initialized = Assert.IsType<InitializeResult>(
+            await context.Dispatcher.DispatchAsync(Request("app.initialize")));
+
+        Assert.Equal(
+            new[] { HostCapabilityNames.NativeDialogs, HostCapabilityNames.StatusStripControl },
+            initialized.Capabilities);
+    }
+
+    [Fact]
     public async Task GetSnapshotProjectsSnapshotChangedExactlyOnce()
     {
         using var context = TestContext.Create(new ImmediateDashboardService());
@@ -243,7 +256,8 @@ public sealed class IpcDispatcherTests
 
         public bool IsPackaged => false;
 
-        public IReadOnlyList<string> Capabilities => [];
+        public IReadOnlyList<string> Capabilities =>
+            [HostCapabilityNames.NativeDialogs, HostCapabilityNames.StatusStripControl];
 
         public bool IsClosing => false;
 

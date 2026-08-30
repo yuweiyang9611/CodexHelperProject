@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { host } from '../host'
+import { HOST_CAPABILITY, type HostCapabilityName } from '../hostCapabilities'
 import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, TodoItem, TodoMutation, UpdateCheckResult } from '../types'
 
 export const useDashboardStore = defineStore('dashboard', () => {
@@ -20,6 +21,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const statusStripState = ref<StatusStripControlState | null>(null)
   const isControllingStatusStrip = ref(false)
   const appVersion = ref('development')
+  const hostPlatform = ref('unknown')
+  const hostIsPackaged = ref(false)
+  const hostCapabilities = ref<string[]>([])
   const combined = ref<CombinedSnapshots | null>(null)
   const isLoadingCombined = ref(false)
   const combinedError = ref<string | null>(null)
@@ -36,6 +40,22 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const runtime = computed(() => snapshot.value?.runtime ?? 'codex')
   const compactMode = computed(() => settings.value?.compactMode ?? false)
   const settingsDirty = computed(() => JSON.stringify(settingsDraft.value) !== JSON.stringify(settings.value))
+
+  function hasHostCapability(capability: HostCapabilityName): boolean {
+    return hostCapabilities.value.includes(capability)
+  }
+
+  function unavailableStatusStripState(currentSettings: AppSettings | null = settings.value): StatusStripControlState {
+    return {
+      configuredEnabled: currentSettings?.statusStripEnabled ?? false,
+      visible: false,
+      positionLocked: currentSettings?.statusStripPositionLocked ?? false,
+      hasManualPosition: false,
+      positionMode: '当前不可用',
+      displayName: '当前宿主',
+      message: '当前宿主尚未接入顶部状态条；已保存设置会保留，但暂不生效。',
+    }
+  }
 
   function cloneSettings(value: AppSettings): AppSettings {
     return {
@@ -112,6 +132,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   async function initialize() {
     isLoading.value = true
     error.value = null
+    hostPlatform.value = 'unknown'
+    hostIsPackaged.value = false
+    hostCapabilities.value = []
     if (!listenersBound) {
       listenersBound = true
       host.on('usage.snapshotChanged', (payload) => {
@@ -138,6 +161,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         if (combined.value) void loadCombined(true)
       })
       host.on('statusStrip.stateChanged', (payload) => {
+        if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)) return
         statusStripState.value = payload as StatusStripControlState
       })
       host.on('window.compactChanged', (payload) => {
@@ -151,17 +175,25 @@ export const useDashboardStore = defineStore('dashboard', () => {
     try {
       const initialized = await host.request<InitializeResult>('app.initialize')
       appVersion.value = initialized.appVersion
+      hostPlatform.value = initialized.platform
+      hostIsPackaged.value = initialized.isPackaged
+      hostCapabilities.value = Array.isArray(initialized.capabilities)
+        ? [...new Set(initialized.capabilities.filter((capability) => typeof capability === 'string'))]
+        : []
     } catch (reason) {
       failures.push(`宿主初始化失败：${errorMessage(reason)}`)
     }
 
     const snapshotGeneration = beginSnapshotOperation()
+    const statusStripSupported = hasHostCapability(HOST_CAPABILITY.statusStripControl)
     const [snapshotResult, settingsResult, todosResult, rateCatalogResult, statusStripResult] = await Promise.allSettled([
       host.request<DashboardSnapshot>('usage.getSnapshot'),
       host.request<AppSettings>('settings.get'),
       host.request<TodoItem[]>('todos.list'),
       host.request<RateCatalogSnapshot>('rates.getCatalog'),
-      host.request<StatusStripControlState>('statusStrip.getState'),
+      statusStripSupported
+        ? host.request<StatusStripControlState>('statusStrip.getState')
+        : Promise.resolve<StatusStripControlState | null>(null),
     ])
     if (isLatestSnapshotOperation(snapshotGeneration)) {
       if (snapshotResult.status === 'fulfilled') snapshot.value = snapshotResult.value
@@ -178,8 +210,13 @@ export const useDashboardStore = defineStore('dashboard', () => {
     else failures.push(`待办读取失败：${errorMessage(todosResult.reason)}`)
     if (rateCatalogResult.status === 'fulfilled') rateCatalog.value = rateCatalogResult.value
     else failures.push(`费率目录读取失败：${errorMessage(rateCatalogResult.reason)}`)
-    if (statusStripResult.status === 'fulfilled') statusStripState.value = statusStripResult.value
-    else failures.push(`状态条状态读取失败：${errorMessage(statusStripResult.reason)}`)
+    if (!statusStripSupported) {
+      statusStripState.value = unavailableStatusStripState(settings.value)
+    } else if (statusStripResult.status === 'fulfilled' && statusStripResult.value) {
+      statusStripState.value = statusStripResult.value
+    } else if (statusStripResult.status === 'rejected') {
+      failures.push(`状态条状态读取失败：${errorMessage(statusStripResult.reason)}`)
+    }
 
     error.value = failures.length ? failures.join('；') : null
     isLoading.value = false
@@ -220,6 +257,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function refreshStatusStripState() {
+    if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)) {
+      statusStripState.value = unavailableStatusStripState()
+      return
+    }
     try {
       statusStripState.value = await host.request<StatusStripControlState>('statusStrip.getState')
     } catch (reason) {
@@ -236,7 +277,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function previewStatusStrip() {
-    if (!settingsDraft.value || isControllingStatusStrip.value || isUpdatingSettings.value) return
+    if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)
+      || !settingsDraft.value || isControllingStatusStrip.value || isUpdatingSettings.value) return
     isControllingStatusStrip.value = true
     try {
       const patch: Partial<AppSettings> = {
@@ -253,7 +295,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function recoverStatusStrip() {
-    if (isControllingStatusStrip.value || isUpdatingSettings.value) return
+    if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)
+      || isControllingStatusStrip.value || isUpdatingSettings.value) return
     isControllingStatusStrip.value = true
     try {
       statusStripState.value = await host.request<StatusStripControlState>('statusStrip.recover')
@@ -409,6 +452,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   return {
     snapshot, settings, settingsDraft, settingsDirty, todos, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
+    hostPlatform, hostIsPackaged, hostCapabilities, hasHostCapability,
     isLoading, isRefreshing, error, runtime, compactMode,
     combined, isLoadingCombined, combinedError, loadCombined,
     initialize, refresh, selectRuntime, saveSettings, resetSettingsDraft, toggleCompact, previewStatusStrip, recoverStatusStrip, refreshStatusStripState,

@@ -304,11 +304,21 @@ public sealed class SidecarHostRpcTests
     }
 
     [Fact]
-    public void CapabilitiesDeclareReverseRpcAndNativeDialogs()
+    public void WindowsPackagedCapabilitiesDeclareOnlyImplementedElectronFeatures()
     {
+        var capabilities = SidecarOptions.ResolveHostCapabilities("windows", isPackaged: true);
+
         Assert.Contains("host.rpc.v1", SidecarOptions.SidecarCapabilities);
         Assert.Contains("host.state.v1", SidecarOptions.SidecarCapabilities);
-        Assert.Contains("nativeDialogs", SidecarOptions.HostCapabilities);
+        Assert.Contains(HostCapabilityNames.NativeDialogs, capabilities);
+        Assert.Contains(HostCapabilityNames.Tray, capabilities);
+        Assert.Contains(HostCapabilityNames.AlwaysOnTop, capabilities);
+        Assert.Contains(HostCapabilityNames.GlobalHotKey, capabilities);
+        Assert.Contains(HostCapabilityNames.CompactMode, capabilities);
+        Assert.Contains(HostCapabilityNames.StartupRegistration, capabilities);
+        Assert.DoesNotContain(HostCapabilityNames.NativeNotifications, capabilities);
+        Assert.DoesNotContain(HostCapabilityNames.StatusStripControl, capabilities);
+        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, capabilities);
         Assert.Equal(
             new[]
             {
@@ -317,6 +327,18 @@ public sealed class SidecarHostRpcTests
                 "host.dialog.saveFile"
             },
             SidecarHostRpcMethods.Allowed.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformSpecificCapabilitiesFailClosedOutsideWindowsInstaller()
+    {
+        var windowsDevelopment = SidecarOptions.ResolveHostCapabilities("windows", isPackaged: false);
+        var linuxPackaged = SidecarOptions.ResolveHostCapabilities("linux", isPackaged: true);
+
+        Assert.DoesNotContain(HostCapabilityNames.StartupRegistration, windowsDevelopment);
+        Assert.DoesNotContain(HostCapabilityNames.StartupRegistration, linuxPackaged);
+        Assert.DoesNotContain(HostCapabilityNames.Tray, linuxPackaged);
+        Assert.DoesNotContain(HostCapabilityNames.GlobalHotKey, linuxPackaged);
     }
 
     [Fact]

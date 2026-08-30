@@ -159,7 +159,25 @@ public partial class MainWindow
                     "windows",
                     "dark",
                     false,
-                    ["usage", "runtime", "claudeCode", "combinedRuntime", "tray", "alwaysOnTop", "localOnly", "updates", "localData", "diagnostics", "rateCatalog", "statusStripControl"]);
+                    [
+                        "usage",
+                        "runtime",
+                        "claudeCode",
+                        "combinedRuntime",
+                        HostCapabilityNames.Tray,
+                        HostCapabilityNames.AlwaysOnTop,
+                        HostCapabilityNames.GlobalHotKey,
+                        HostCapabilityNames.CompactMode,
+                        HostCapabilityNames.StartupRegistration,
+                        HostCapabilityNames.NativeNotifications,
+                        HostCapabilityNames.StatusStripControl,
+                        HostCapabilityNames.DesktopMode,
+                        "localOnly",
+                        "updates",
+                        "localData",
+                        "diagnostics",
+                        "rateCatalog"
+                    ]);
 
             case "app.ready":
                 SmokeTestSignals.SignalWebReady();

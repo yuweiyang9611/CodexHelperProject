@@ -84,6 +84,28 @@ public sealed class IpcSecurityPolicyParityTests
             Assert.True(IpcSecurityPolicy.IsAllowedMethod(method)));
     }
 
+    [Fact]
+    public void HostCapabilityNamesMatchTheWebContract()
+    {
+        var contractNames = typeof(HostCapabilityNames)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
+            .ToHashSet(StringComparer.Ordinal);
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/CodexU.Web/src/hostCapabilities.ts"));
+        var webNames = Regex.Matches(
+                source,
+                @"^\s+\w+:\s*'(?<capability>[^']+)',?\s*$",
+                RegexOptions.Multiline)
+            .Select(match => match.Groups["capability"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(
+            contractNames.Order(StringComparer.Ordinal),
+            webNames.Order(StringComparer.Ordinal));
+    }
+
     [Theory]
     [InlineData("usage.getsnapshot")]
     [InlineData("USAGE.GETSNAPSHOT")]
