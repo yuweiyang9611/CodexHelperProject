@@ -59,16 +59,16 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- npm: @vue/compiler-core 3.5.41 [LICENSE]
-- npm: @vue/compiler-dom 3.5.41 [LICENSE]
-- npm: @vue/compiler-sfc 3.5.41 [LICENSE]
-- npm: @vue/compiler-ssr 3.5.41 [LICENSE]
-- npm: @vue/reactivity 3.5.41 [LICENSE]
-- npm: @vue/runtime-core 3.5.41 [LICENSE]
-- npm: @vue/runtime-dom 3.5.41 [LICENSE]
-- npm: @vue/server-renderer 3.5.41 [LICENSE]
-- npm: @vue/shared 3.5.41 [LICENSE]
-- npm: vue 3.5.41 [LICENSE]
+- npm: @vue/compiler-core 3.5.42 [LICENSE]
+- npm: @vue/compiler-dom 3.5.42 [LICENSE]
+- npm: @vue/compiler-sfc 3.5.42 [LICENSE]
+- npm: @vue/compiler-ssr 3.5.42 [LICENSE]
+- npm: @vue/reactivity 3.5.42 [LICENSE]
+- npm: @vue/runtime-core 3.5.42 [LICENSE]
+- npm: @vue/runtime-dom 3.5.42 [LICENSE]
+- npm: @vue/server-renderer 3.5.42 [LICENSE]
+- npm: @vue/shared 3.5.42 [LICENSE]
+- npm: vue 3.5.42 [LICENSE]
 
 The MIT License (MIT)
 
