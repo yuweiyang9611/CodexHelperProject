@@ -193,3 +193,41 @@ test('uses Electron\'s Linux overwrite property only on Linux', async () => {
   await linuxHandler(request);
   assert.deepEqual(propertiesSeen, [[], ['showOverwriteConfirmation']]);
 });
+
+test('startup registration returns the state read back from the native host', async () => {
+  const applied = [];
+  const handler = createHostRequestHandler(createDialog(), () => owner, {
+    startupRegistration: {
+      setEnabled(enabled) {
+        applied.push(enabled);
+        return enabled;
+      },
+    },
+  });
+
+  assert.equal(await handler(hostRequest('host.startup.set', { enabled: true })), true);
+  assert.equal(await handler(hostRequest('host.startup.set', { enabled: false })), false);
+  assert.deepEqual(applied, [true, false]);
+});
+
+test('startup registration rejects unsupported, malformed, and mismatched native state', async () => {
+  const unsupported = createHostRequestHandler(createDialog(), () => owner);
+  await assert.rejects(
+    () => unsupported(hostRequest('host.startup.set', { enabled: true })),
+    (error) => error instanceof HostRequestHandlerError && error.code === 'host_unsupported',
+  );
+
+  const mismatched = createHostRequestHandler(createDialog(), () => owner, {
+    startupRegistration: { setEnabled: () => false },
+  });
+  await assert.rejects(
+    () => mismatched(hostRequest('host.startup.set', { enabled: true })),
+    (error) => error instanceof HostRequestHandlerError
+      && error.code === 'startup_registration_mismatch',
+  );
+  await assert.rejects(
+    () => mismatched(hostRequest('host.startup.set', { enabled: 'yes' })),
+    (error) => error instanceof HostRequestHandlerError
+      && error.code === 'invalid_host_request',
+  );
+});

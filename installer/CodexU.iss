@@ -116,7 +116,7 @@ Type: filesandordirs; Name: "{app}\runtimes"; Check: ShouldRemoveLegacyWpfFiles
 Type: filesandordirs; Name: "{app}\web"; Check: ShouldRemoveLegacyWpfFiles
 
 [Icons]
-Name: "{group}\codexU"; Filename: "{app}\CodexU.exe"; WorkingDir: "{app}"
+Name: "{group}\codexU"; Filename: "{app}\CodexU.exe"; WorkingDir: "{app}"; AppUserModelID: "io.github.yuweiyang9611.CodexU"; AppUserModelToastActivatorCLSID: "073466E0-6E09-49FC-A4D3-900BED0DBD46"
 Name: "{group}\卸载 codexU"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\codexU"; Filename: "{app}\CodexU.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 

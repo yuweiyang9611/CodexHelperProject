@@ -26,9 +26,12 @@ Sidecar -> Electron: { version: 1, id, type: "hostRequest", method, payload }
 Electron -> Sidecar: { version: 1, id, type: "hostResponse", ok, payload | error }
 ```
 
-The reverse-RPC allow-list contains only `host.dialog.saveFile`,
-`host.dialog.openFile`, and `host.dialog.confirm`. Successful file-dialog payloads are
-the selected path or `null`; confirmation payloads are booleans. A failed response
+The reverse-RPC allow-list contains `host.dialog.saveFile`,
+`host.dialog.openFile`, `host.dialog.confirm`, and `host.startup.set`. Successful
+file-dialog payloads are the selected path or `null`; confirmation and startup-state
+payloads are booleans. The startup method writes the packaged Windows login item and
+reads it back before the Sidecar commits settings, so a mismatch or native failure rolls
+the setting back. A failed response
 contains `{ code, message }` in `error` and no payload. Electron validates every field,
 allows only one real native dialog at a time, and keeps host responses inside the main
 process so the renderer cannot forge them.
@@ -42,11 +45,20 @@ shell state, and sends this exact one-way status message back to the sidecar:
 Electron -> Sidecar: { version: 1, type: "hostState", globalHotKeyRegistered: boolean }
 ```
 
-The same reconciliation runs for `settings.changed`. On Windows this owns the tray
-menu (open, refresh, compact mode, and graceful exit), close-to-tray behavior, the
-configured global shortcut, compact window sizing, native light/dark/system theme,
-and packaged startup registration. A second launch or the shortcut restores and
-focuses the existing window.
+The same native-settings projection runs for `settings.changed`. On Windows the host
+owns the tray menu (open, refresh, compact mode, and graceful exit), close-to-tray
+behavior, the configured global shortcut, and compact/native-theme state. Startup
+registration is committed through the verified reverse RPC described above. The host
+also restores window bounds against the saved display work area and presents quota
+alerts through the packaged Windows notification identity. A second launch, a
+notification activation, or the shortcut restores and focuses the existing window.
+
+Unexpected Sidecar and renderer exits are supervised independently with bounded
+exponential backoff and a circuit breaker. Successful Sidecar recovery reloads the Vue
+renderer against the new private transport. Main-process, renderer, and Sidecar failures
+are written to bounded rotating logs under Electron `userData/logs`; credentials, account
+identities, and user-profile paths are redacted. The .NET diagnostics export includes a
+sanitized tail of those logs.
 
 The .NET sidecar owns the automatic refresh schedule. Its first refresh waits for the
 configured interval, a settings change restarts that interval immediately, and only
@@ -136,10 +148,9 @@ fails if the legacy package is reintroduced or the hardened implementation disap
 
 The v0.5.0 release remains the legacy WPF build, while v0.6.0-beta.1 is the first
 Electron prerelease. This packaging readiness does not imply
-complete product parity: startup registration still needs a correlated failure result so
-backend settings can roll back when the OS operation fails; window bounds need full
-work-area/DPI restoration; and Windows notifications, the status strip and desktop mode
-still need native-host implementations. The first Electron version should therefore be
+complete product parity: the status strip and desktop mode still need native-host
+implementations. Startup registration rollback, window work-area/DPI recovery, and
+Windows notifications are implemented. The first Electron version should still be
 validated as a prerelease. The shipped ASAR has no runtime npm dependency tree. Linux has
 not yet been validated.
 

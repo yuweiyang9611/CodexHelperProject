@@ -46,6 +46,7 @@ test('accepts only the trusted app origin', () => {
 test('uses a closed request-method allow-list', () => {
   assert.equal(isAllowedMethod('app.initialize'), true);
   assert.equal(isAllowedMethod('window.hide'), true);
+  assert.equal(isAllowedMethod('settings.reconcileStartupRegistration'), false);
   assert.equal(isAllowedMethod('host.dialog.confirm'), false);
   assert.equal(isAllowedMethod('shell.execute'), false);
 });
