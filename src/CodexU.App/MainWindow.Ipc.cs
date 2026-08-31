@@ -399,7 +399,7 @@ public partial class MainWindow
             case "data.backup":
                 var backupDialog = new SaveFileDialog
                 {
-                    Title = "备份 codexU 设置和待办",
+                    Title = "备份 codexU 设置、待办和每日用量历史",
                     FileName = $"codexU-backup-{DateTimeOffset.Now:yyyyMMdd}.json",
                     DefaultExt = ".json",
                     Filter = "codexU 备份 (*.json)|*.json",
@@ -415,7 +415,7 @@ public partial class MainWindow
             case "data.restore":
                 var restoreDialog = new OpenFileDialog
                 {
-                    Title = "恢复 codexU 设置和待办",
+                    Title = "恢复 codexU 设置、待办和每日用量历史",
                     DefaultExt = ".json",
                     Filter = "codexU 备份 (*.json)|*.json",
                     CheckFileExists = true,
@@ -427,7 +427,7 @@ public partial class MainWindow
                 }
                 if (WpfMessageBox.Show(
                         this,
-                        "恢复会替换当前设置和待办。是否继续？",
+                        "恢复会替换当前设置和待办；schema 2 备份还会替换每日用量历史。当前 Codex 可执行文件路径和本机开机启动状态将保留。是否继续？",
                         "恢复 codexU 备份",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) != MessageBoxResult.Yes)
@@ -604,7 +604,15 @@ public partial class MainWindow
         try
         {
             ThrowIfStateMutationUnavailable();
-            return await _dataManagementService.BackupAsync(_settings, path, cancellationToken);
+            await _refreshGate.WaitAsync(cancellationToken);
+            try
+            {
+                return await _dataManagementService.BackupAsync(_settings, path, cancellationToken);
+            }
+            finally
+            {
+                _refreshGate.Release();
+            }
         }
         finally
         {
@@ -620,61 +628,93 @@ public partial class MainWindow
         try
         {
             ThrowIfStateMutationUnavailable();
-            var previousSettings = _settings;
-            var previousTodos = _lastTodos
-                ?? PublishTodosAfterCommit(await _todoStore.ListAsync(cancellationToken));
-            var previousDashboardService = _dashboardService;
-            LocalOperationResult? restored = null;
+            await _refreshGate.WaitAsync(cancellationToken);
             try
             {
-                restored = await _dataManagementService.RestoreAsync(path, cancellationToken);
-                var restoredSettings = restored.Settings
-                    ?? throw new InvalidDataException("备份恢复结果缺少设置。");
-                var restoredTodos = restored.Todos
-                    ?? throw new InvalidDataException("备份恢复结果缺少待办。");
-                var replacementService = DashboardSettingsChanged(previousSettings, restoredSettings)
-                    ? CreateDashboardService(restoredSettings)
-                    : null;
-
-                if (previousSettings.StartAtLogin != restoredSettings.StartAtLogin)
-                {
-                    StartupRegistration.Apply(restoredSettings.StartAtLogin);
-                }
-
-                _settings = restoredSettings;
-                if (replacementService is not null)
-                {
-                    _dashboardService = replacementService;
-                }
-
-                ProjectSettingsAfterCommit(_settings);
-                var publishedTodos = PublishTodosAfterCommit(restoredTodos);
-                return restored with { Settings = _settings, Todos = publishedTodos };
-            }
-            catch (Exception exception) when (restored is not null)
-            {
+                var previousSettings = _settings;
+                var previousTodos = _lastTodos
+                    ?? PublishTodosAfterCommit(await _todoStore.ListAsync(cancellationToken));
+                var previousDashboardService = _dashboardService;
+                LocalDataRestoreTransaction? restoreTransaction = null;
                 try
                 {
-                    await _settingsStore.SaveAsync(previousSettings, CancellationToken.None);
-                    await _todoStore.ReplaceAsync(previousTodos, CancellationToken.None);
-                    if (previousSettings.StartAtLogin != restored.Settings?.StartAtLogin)
+                    restoreTransaction = await _dataManagementService.BeginRestoreAsync(
+                        path,
+                        cancellationToken);
+                    var restored = restoreTransaction.Result;
+                    var restoredSettings = restored.Settings
+                        ?? throw new InvalidDataException("备份恢复结果缺少设置。");
+                    var restoredTodos = restored.Todos
+                        ?? throw new InvalidDataException("备份恢复结果缺少待办。");
+                    var replacementService = DashboardSettingsChanged(previousSettings, restoredSettings)
+                        ? CreateDashboardService(restoredSettings)
+                        : null;
+
+                    if (previousSettings.StartAtLogin != restoredSettings.StartAtLogin)
                     {
-                        StartupRegistration.Apply(previousSettings.StartAtLogin);
+                        StartupRegistration.Apply(restoredSettings.StartAtLogin);
+                    }
+
+                    _settings = restoredSettings;
+                    if (replacementService is not null)
+                    {
+                        _dashboardService = replacementService;
+                    }
+
+                    ProjectSettingsAfterCommit(_settings);
+                    var publishedTodos = PublishTodosAfterCommit(restoredTodos);
+                    var result = restored with { Settings = _settings, Todos = publishedTodos };
+                    await restoreTransaction.CommitAsync();
+                    return result;
+                }
+                catch (LocalDataRestoreRollbackException)
+                {
+                    EnterFailedRestoreState();
+                    throw;
+                }
+                catch (Exception exception) when (restoreTransaction is not null)
+                {
+                    var rollbackExceptions = new List<Exception>();
+                    try
+                    {
+                        await restoreTransaction.RollbackAsync();
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        rollbackExceptions.Add(rollbackException);
+                    }
+
+                    if (previousSettings.StartAtLogin != restoreTransaction.Result.Settings?.StartAtLogin)
+                    {
+                        try
+                        {
+                            StartupRegistration.Apply(previousSettings.StartAtLogin);
+                        }
+                        catch (Exception rollbackException)
+                        {
+                            rollbackExceptions.Add(rollbackException);
+                        }
                     }
 
                     _settings = previousSettings;
                     _dashboardService = previousDashboardService;
                     ProjectSettingsAfterCommit(_settings);
                     PublishTodosAfterCommit(previousTodos);
-                }
-                catch (Exception rollbackException)
-                {
-                    throw new InvalidOperationException(
-                        "恢复后的应用状态初始化失败，且自动回滚也失败。",
-                        new AggregateException(exception, rollbackException));
-                }
 
-                throw;
+                    if (rollbackExceptions.Count > 0)
+                    {
+                        EnterFailedRestoreState();
+                        throw new InvalidOperationException(
+                            "恢复后的应用状态初始化失败，且自动回滚也失败。",
+                            new AggregateException([exception, .. rollbackExceptions]));
+                    }
+
+                    throw;
+                }
+            }
+            finally
+            {
+                _refreshGate.Release();
             }
         }
         finally

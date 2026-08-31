@@ -43,6 +43,9 @@ public sealed class IpcSecurityPolicyTests
         Assert.True(IpcSecurityPolicy.IsAllowedMethod("update.check"));
         Assert.True(IpcSecurityPolicy.IsAllowedMethod("data.backup"));
         Assert.True(IpcSecurityPolicy.IsAllowedMethod("diagnostics.export"));
+        Assert.False(IpcSecurityPolicy.IsAllowedMethod("settings.reconcileStartupRegistration"));
+        Assert.True(ElectronHostIpcSecurityPolicy.IsAllowedMethod(
+            "settings.reconcileStartupRegistration"));
         Assert.False(IpcSecurityPolicy.IsAllowedMethod("shell.execute"));
         Assert.False(IpcSecurityPolicy.IsAllowedMethod("file.read"));
         Assert.False(IpcSecurityPolicy.IsAllowedMethod("process.start"));

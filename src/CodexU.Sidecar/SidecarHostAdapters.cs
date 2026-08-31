@@ -99,8 +99,19 @@ public sealed class SidecarHostCommands(
 
     public bool IsAlwaysOnTop => Volatile.Read(ref _alwaysOnTop) != 0;
 
-    public void Apply(bool enabled) =>
-        _eventSink.PostEvent("host.startupRegistrationRequested", new { enabled });
+    public async Task ApplyAsync(
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        var actual = await _hostRpcClient.SetStartupRegistrationAsync(
+            enabled,
+            cancellationToken);
+        if (actual != enabled)
+        {
+            throw new InvalidOperationException(
+                "The Electron host did not apply the requested startup registration state.");
+        }
+    }
 
     public void SetAlwaysOnTop(bool enabled)
     {

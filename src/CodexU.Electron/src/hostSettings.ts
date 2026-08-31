@@ -91,6 +91,13 @@ export function shouldApplyStartupRegistration(
     && !smokeTest;
 }
 
+export function shouldEnableNativeDesktopFeatures(
+  platform: NodeJS.Platform,
+  smokeTest: boolean,
+): boolean {
+  return platform === 'win32' && !smokeTest;
+}
+
 export function shouldSuppressHostEventInSmoke(smokeTest: boolean, method: string): boolean {
   return smokeTest && (
     method === 'settings.changed'

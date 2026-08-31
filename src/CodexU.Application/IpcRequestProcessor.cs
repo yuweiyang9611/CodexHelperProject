@@ -9,7 +9,8 @@ namespace CodexU.Application;
 /// </summary>
 public sealed class IpcRequestProcessor(
     IpcDispatcher dispatcher,
-    IHostEnvironment hostEnvironment)
+    IHostEnvironment hostEnvironment,
+    IpcRequestRoute requestRoute = IpcRequestRoute.Renderer)
 {
     public const int MaximumMessageLength = 1024 * 1024;
 
@@ -17,6 +18,7 @@ public sealed class IpcRequestProcessor(
         dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
     private readonly IHostEnvironment _hostEnvironment =
         hostEnvironment ?? throw new ArgumentNullException(nameof(hostEnvironment));
+    private readonly IpcRequestRoute _requestRoute = requestRoute;
 
     public async Task<IpcResponse?> ProcessAsync(string? source, string? messageJson)
     {
@@ -44,7 +46,7 @@ public sealed class IpcRequestProcessor(
 
         try
         {
-            var payload = await _dispatcher.DispatchAsync(request);
+            var payload = await _dispatcher.DispatchAsync(request, _requestRoute);
             return IpcResponse.Success(request.Id, payload);
         }
         catch (NotSupportedException exception)
@@ -62,4 +64,10 @@ public sealed class IpcRequestProcessor(
             return IpcResponse.Failure(request.Id, "host_error", exception.Message);
         }
     }
+}
+
+public enum IpcRequestRoute
+{
+    Renderer,
+    ElectronHost
 }

@@ -17,11 +17,7 @@ public partial class App : System.Windows.Application
     private DispatcherTimer? _statusStripPreviewTimer;
     private readonly StatusStripProjection _statusStripProjection = new();
     private System.Windows.Forms.NotifyIcon? _trayIcon;
-    // Month-scoped alerts (monthly amount, rate coverage) — never cleared, so each
-    // fires once per calendar month. Window-scoped quota alerts live in
-    // _quotaAlerts instead, because those have to re-arm when a window rolls over.
-    private readonly HashSet<string> _notificationKeys = new(StringComparer.Ordinal);
-    private readonly QuotaAlertState _quotaAlerts = new();
+    private readonly QuotaNotificationProjector _quotaNotifications = new();
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _showEvent;
     private CancellationTokenSource? _instanceListenerCancellation;
@@ -555,155 +551,17 @@ public partial class App : System.Windows.Application
 
     private void ShowQuotaNotifications(DashboardSnapshot snapshot)
     {
-        if (!_settings.NotificationsEnabled || _trayIcon is null)
+        if (_trayIcon is null)
         {
             return;
         }
 
-        // Record both windows before announcing anything: a rollover re-arms that
-        // window's alerts, so it has to be seen first or the first alert of a new
-        // window is swallowed as a repeat of the last one.
-        _quotaAlerts.ObserveWindow(snapshot.Runtime, "5 小时", snapshot.PrimaryQuota);
-        _quotaAlerts.ObserveWindow(snapshot.Runtime, "7 天", snapshot.SecondaryQuota);
-
-        NotifyQuotaRefresh(snapshot.Runtime, snapshot.PrimaryQuota);
-        NotifyIfBelow(snapshot.Runtime, "5 小时", snapshot.PrimaryQuota, _settings.FiveHourAlertPercent);
-        NotifyIfBelow(snapshot.Runtime, "7 天", snapshot.SecondaryQuota, _settings.SevenDayAlertPercent);
-        NotifyForecast(
-            snapshot.Runtime,
-            "5 小时",
-            snapshot.PrimaryQuota,
-            snapshot.PrimaryForecast,
-            _settings.FiveHourAlertPercent,
-            QuotaForecastAlert.PrimaryLeadTime);
-        NotifyForecast(
-            snapshot.Runtime,
-            "7 天",
-            snapshot.SecondaryQuota,
-            snapshot.SecondaryForecast,
-            _settings.SevenDayAlertPercent,
-            QuotaForecastAlert.SecondaryLeadTime);
-        NotifyMonthlyAmount(snapshot);
-        NotifyRateCoverage(snapshot);
-    }
-
-    private void NotifyForecast(
-        AgentRuntime runtime,
-        string label,
-        RateLimitWindow? quota,
-        QuotaForecast? forecast,
-        int alertThresholdPercent,
-        TimeSpan leadTime)
-    {
-        // Announced once per window instance rather than at every refresh for as long
-        // as the pace holds; the window rolling over re-arms it.
-        if (!_settings.QuotaForecastAlertsEnabled
-            || !_quotaAlerts.TryAnnounce(
-                runtime,
-                label,
-                QuotaAlertKind.Forecast,
-                QuotaForecastAlert.ShouldWarn(quota, forecast, alertThresholdPercent, leadTime)))
+        foreach (var notification in _quotaNotifications.Project(snapshot, _settings))
         {
-            return;
+            _trayIcon.BalloonTipTitle = notification.Title;
+            _trayIcon.BalloonTipText = notification.Body;
+            _trayIcon.ShowBalloonTip(5000);
         }
-
-        _trayIcon!.BalloonTipTitle = "codexU 额度预警";
-        _trayIcon.BalloonTipText =
-            $"{runtime} 按最近 {FormatDuration(forecast!.MeasuredOver)}的用量，{label}额度预计还有 "
-            + $"{FormatDuration(forecast.TimeToExhaustion)}耗尽（约 {forecast.ExhaustsAt.ToLocalTime():g}），早于本轮重置。";
-        _trayIcon.ShowBalloonTip(5000);
-    }
-
-    private static string FormatDuration(TimeSpan span) => span.TotalHours >= 1
-        ? $"{span.TotalHours:0.#} 小时"
-        : $"{Math.Max(1, Math.Round(span.TotalMinutes))} 分钟";
-
-    private void NotifyQuotaRefresh(AgentRuntime runtime, RateLimitWindow? quota)
-    {
-        if (_quotaAlerts.ObserveReset(runtime, quota) is not { } kind)
-        {
-            return;
-        }
-
-        _trayIcon!.BalloonTipTitle = kind == QuotaRefreshKind.Refreshed
-            ? "codexU 额度已刷新"
-            : "codexU 刷新时间已更新";
-        _trayIcon.BalloonTipText =
-            $"{runtime} 下一次 5 小时额度刷新：{quota!.ResetsAt!.Value.ToLocalTime():g}";
-        _trayIcon.ShowBalloonTip(5000);
-    }
-
-    private void NotifyIfBelow(AgentRuntime runtime, string label, RateLimitWindow? quota, int threshold)
-    {
-        if (quota is null
-            || !_quotaAlerts.TryAnnounce(
-                runtime,
-                label,
-                QuotaAlertKind.BelowThreshold,
-                quota.RemainingPercent <= threshold))
-        {
-            return;
-        }
-
-        var resetsAt = quota.ResetsAt is { } reset ? $"，将在 {reset.ToLocalTime():g} 重置" : string.Empty;
-        _trayIcon!.BalloonTipTitle = "codexU 额度提醒";
-        _trayIcon.BalloonTipText =
-            $"{runtime} {label}额度剩余 {Math.Round(quota.RemainingPercent)}%{resetsAt}。";
-        _trayIcon.ShowBalloonTip(5000);
-    }
-
-    private void NotifyMonthlyAmount(DashboardSnapshot snapshot)
-    {
-        if (_settings.MonthlyAmountAlert <= 0)
-        {
-            return;
-        }
-
-        var amount = UsageCredits.ToAmount(
-            snapshot.Tokens.Month.CreditsUsed,
-            _settings.AmountPerThousandCredits);
-        if (amount < _settings.MonthlyAmountAlert)
-        {
-            return;
-        }
-
-        // The runtime belongs in the key, as it already does for the coverage alert
-        // below: the amount is one runtime's month total, so a shared key lets whichever
-        // runtime crosses first suppress the other for the rest of the calendar month.
-        var key = $"monthly-amount:{snapshot.Runtime}:{DateTimeOffset.Now:yyyy-MM}:{_settings.MonthlyAmountAlert:0.##}";
-        if (!_notificationKeys.Add(key))
-        {
-            return;
-        }
-
-        _trayIcon!.BalloonTipTitle = "codexU 本月金额提醒";
-        _trayIcon.BalloonTipText = $"{snapshot.Runtime} 本月 API 等效金额已达到 US${amount:N2}，超过提醒值 US${_settings.MonthlyAmountAlert:N2}。";
-        _trayIcon.ShowBalloonTip(5000);
-    }
-
-    private void NotifyRateCoverage(DashboardSnapshot snapshot)
-    {
-        var month = snapshot.Tokens.Month;
-        if (month.Tokens <= 0 || _settings.MinimumRateCoverageAlertPercent <= 0)
-        {
-            return;
-        }
-
-        var coverage = Math.Clamp((month.Tokens - month.UnratedTokens) * 100d / month.Tokens, 0d, 100d);
-        if (coverage >= _settings.MinimumRateCoverageAlertPercent)
-        {
-            return;
-        }
-
-        var key = $"rate-coverage:{snapshot.Runtime}:{DateTimeOffset.Now:yyyy-MM}:{Math.Floor(coverage / 5d) * 5d:0}";
-        if (!_notificationKeys.Add(key))
-        {
-            return;
-        }
-
-        _trayIcon!.BalloonTipTitle = "codexU 费率覆盖提醒";
-        _trayIcon.BalloonTipText = $"{snapshot.Runtime} 本月只有 {coverage:N1}% Token 可核算金额，请在设置中补充未知模型费率。";
-        _trayIcon.ShowBalloonTip(5000);
     }
 
     private void ShowMainWindow()

@@ -33,6 +33,7 @@ public sealed class ApplicationSession : IDisposable
     private IReadOnlyList<TodoItem>? _lastTodos;
     private UpdateCheckResult? _lastUpdateResult;
     private volatile bool _stateShutdownRequested;
+    private volatile string? _stateMutationFailure;
     private bool _disposed;
 
     public ApplicationSession(
@@ -138,7 +139,33 @@ public sealed class ApplicationSession : IDisposable
             var startupRegistrationChanged = previous.StartAtLogin != normalized.StartAtLogin;
             if (startupRegistrationChanged)
             {
-                _startupRegistration.Apply(normalized.StartAtLogin);
+                try
+                {
+                    await _startupRegistration.ApplyAsync(
+                        normalized.StartAtLogin,
+                        _lifetimeCancellation.Token);
+                }
+                catch (Exception applyException)
+                {
+                    try
+                    {
+                        // A timeout or read-back failure does not prove that the
+                        // platform write was rejected. Compensate even when the
+                        // first call failed so persisted and native state cannot
+                        // silently diverge.
+                        await _startupRegistration.ApplyAsync(
+                            previous.StartAtLogin,
+                            CancellationToken.None);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new InvalidOperationException(
+                            "开机启动设置失败，且原生状态自动回滚也失败。",
+                            new AggregateException(applyException, rollbackException));
+                    }
+
+                    throw;
+                }
             }
 
             AppSettings saved;
@@ -146,18 +173,21 @@ public sealed class ApplicationSession : IDisposable
             {
                 saved = await _settingsStore.SaveAsync(normalized);
             }
-            catch
+            catch (Exception saveException)
             {
                 if (startupRegistrationChanged)
                 {
                     try
                     {
-                        _startupRegistration.Apply(previous.StartAtLogin);
+                        await _startupRegistration.ApplyAsync(
+                            previous.StartAtLogin,
+                            CancellationToken.None);
                     }
-                    catch
+                    catch (Exception rollbackException)
                     {
-                        // Preserve the settings-write failure. The platform registration
-                        // is checked again on the next save.
+                        throw new InvalidOperationException(
+                            "设置写入失败，且开机启动原生状态自动回滚也失败。",
+                            new AggregateException(saveException, rollbackException));
                     }
                 }
 
@@ -170,6 +200,36 @@ public sealed class ApplicationSession : IDisposable
                 _dashboardService = replacementService;
             }
 
+            PublishSettingsAfterCommit(_settings);
+            return _settings;
+        }
+        finally
+        {
+            _stateMutationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Persists an effective startup value observed by the native host without
+    /// asking that same host to write it again. The expected value makes this a
+    /// compare-and-swap so a newer user save wins over a stale focus refresh.
+    /// </summary>
+    public async Task<AppSettings> ReconcileStartupRegistrationAsync(
+        bool expected,
+        bool actual)
+    {
+        await _stateMutationGate.WaitAsync();
+        try
+        {
+            ThrowIfStateMutationUnavailable();
+            if (_settings.StartAtLogin != expected || expected == actual)
+            {
+                return _settings;
+            }
+
+            _settings = await _settingsStore.SaveAsync(
+                _settings with { StartAtLogin = actual },
+                _lifetimeCancellation.Token);
             PublishSettingsAfterCommit(_settings);
             return _settings;
         }
@@ -222,6 +282,7 @@ public sealed class ApplicationSession : IDisposable
         await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
         try
         {
+            ThrowIfStateMutationUnavailable();
             return new CombinedSnapshots(
                 await ReadRuntimeForCombinedAsync(AgentRuntime.Codex),
                 await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode));
@@ -309,14 +370,23 @@ public sealed class ApplicationSession : IDisposable
 
     public async Task<LocalOperationResult> BackupStateAsync(string path)
     {
-        await _stateMutationGate.WaitAsync(_lifetimeCancellation.Token);
+        var cancellationToken = _lifetimeCancellation.Token;
+        await _stateMutationGate.WaitAsync(cancellationToken);
         try
         {
             ThrowIfStateMutationUnavailable();
-            return await _dataManagementService.BackupAsync(
-                _settings,
-                path,
-                _lifetimeCancellation.Token);
+            await _refreshGate.WaitAsync(cancellationToken);
+            try
+            {
+                return await _dataManagementService.BackupAsync(
+                    _settings,
+                    path,
+                    cancellationToken);
+            }
+            finally
+            {
+                _refreshGate.Release();
+            }
         }
         finally
         {
@@ -331,61 +401,97 @@ public sealed class ApplicationSession : IDisposable
         try
         {
             ThrowIfStateMutationUnavailable();
-            var previousSettings = _settings;
-            var previousTodos = _lastTodos
-                ?? PublishTodosAfterCommit(await _todoStore.ListAsync(cancellationToken));
-            var previousDashboardService = _dashboardService;
-            LocalOperationResult? restored = null;
+            await _refreshGate.WaitAsync(cancellationToken);
             try
             {
-                restored = await _dataManagementService.RestoreAsync(path, cancellationToken);
-                var restoredSettings = restored.Settings
-                    ?? throw new InvalidDataException("备份恢复结果缺少设置。");
-                var restoredTodos = restored.Todos
-                    ?? throw new InvalidDataException("备份恢复结果缺少待办。");
-                var replacementService = DashboardSettingsChanged(previousSettings, restoredSettings)
-                    ? _dashboardServiceFactory(restoredSettings)
-                    : null;
-
-                if (previousSettings.StartAtLogin != restoredSettings.StartAtLogin)
-                {
-                    _startupRegistration.Apply(restoredSettings.StartAtLogin);
-                }
-
-                _settings = restoredSettings;
-                if (replacementService is not null)
-                {
-                    _dashboardService = replacementService;
-                }
-
-                PublishSettingsAfterCommit(_settings);
-                var publishedTodos = PublishTodosAfterCommit(restoredTodos);
-                return restored with { Settings = _settings, Todos = publishedTodos };
-            }
-            catch (Exception exception) when (restored is not null)
-            {
+                var previousSettings = _settings;
+                var previousTodos = _lastTodos
+                    ?? PublishTodosAfterCommit(await _todoStore.ListAsync(cancellationToken));
+                var previousDashboardService = _dashboardService;
+                LocalDataRestoreTransaction? restoreTransaction = null;
                 try
                 {
-                    await _settingsStore.SaveAsync(previousSettings, CancellationToken.None);
-                    await _todoStore.ReplaceAsync(previousTodos, CancellationToken.None);
-                    if (previousSettings.StartAtLogin != restored.Settings?.StartAtLogin)
+                    restoreTransaction = await _dataManagementService.BeginRestoreAsync(
+                        path,
+                        cancellationToken);
+                    var restored = restoreTransaction.Result;
+                    var restoredSettings = restored.Settings
+                        ?? throw new InvalidDataException("备份恢复结果缺少设置。");
+                    var restoredTodos = restored.Todos
+                        ?? throw new InvalidDataException("备份恢复结果缺少待办。");
+                    var replacementService = DashboardSettingsChanged(previousSettings, restoredSettings)
+                        ? _dashboardServiceFactory(restoredSettings)
+                        : null;
+
+                    if (previousSettings.StartAtLogin != restoredSettings.StartAtLogin)
                     {
-                        _startupRegistration.Apply(previousSettings.StartAtLogin);
+                        await _startupRegistration.ApplyAsync(
+                            restoredSettings.StartAtLogin,
+                            cancellationToken);
+                    }
+
+                    _settings = restoredSettings;
+                    if (replacementService is not null)
+                    {
+                        _dashboardService = replacementService;
+                    }
+
+                    PublishSettingsAfterCommit(_settings);
+                    var publishedTodos = PublishTodosAfterCommit(restoredTodos);
+                    var result = restored with { Settings = _settings, Todos = publishedTodos };
+                    await restoreTransaction.CommitAsync();
+                    return result;
+                }
+                catch (LocalDataRestoreRollbackException)
+                {
+                    EnterFailedRestoreState();
+                    throw;
+                }
+                catch (Exception exception) when (restoreTransaction is not null)
+                {
+                    var rollbackExceptions = new List<Exception>();
+                    try
+                    {
+                        await restoreTransaction.RollbackAsync();
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        rollbackExceptions.Add(rollbackException);
+                    }
+
+                    if (previousSettings.StartAtLogin != restoreTransaction.Result.Settings?.StartAtLogin)
+                    {
+                        try
+                        {
+                            await _startupRegistration.ApplyAsync(
+                                previousSettings.StartAtLogin,
+                                CancellationToken.None);
+                        }
+                        catch (Exception rollbackException)
+                        {
+                            rollbackExceptions.Add(rollbackException);
+                        }
                     }
 
                     _settings = previousSettings;
                     _dashboardService = previousDashboardService;
                     PublishSettingsAfterCommit(_settings);
                     PublishTodosAfterCommit(previousTodos);
-                }
-                catch (Exception rollbackException)
-                {
-                    throw new InvalidOperationException(
-                        "恢复后的应用状态初始化失败，且自动回滚也失败。",
-                        new AggregateException(exception, rollbackException));
-                }
 
-                throw;
+                    if (rollbackExceptions.Count > 0)
+                    {
+                        EnterFailedRestoreState();
+                        throw new InvalidOperationException(
+                            "恢复后的应用状态初始化失败，且自动回滚也失败。",
+                            new AggregateException([exception, .. rollbackExceptions]));
+                    }
+
+                    throw;
+                }
+            }
+            finally
+            {
+                _refreshGate.Release();
             }
         }
         finally
@@ -432,11 +538,20 @@ public sealed class ApplicationSession : IDisposable
 
     private void ThrowIfStateMutationUnavailable()
     {
+        if (_stateMutationFailure is { } failure)
+        {
+            throw new InvalidOperationException(failure);
+        }
+
         if (_stateShutdownRequested)
         {
             throw new InvalidOperationException("应用正在退出，不能再修改本地状态。");
         }
     }
+
+    private void EnterFailedRestoreState() =>
+        _stateMutationFailure =
+            "本地状态恢复的自动回滚失败。为避免后续修改在重启恢复时丢失，已禁止继续修改；请重启 codexU。";
 
     private async Task<DashboardSnapshot> LoadSnapshotAsync(AgentRuntime runtime)
     {
@@ -472,6 +587,7 @@ public sealed class ApplicationSession : IDisposable
         await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
         try
         {
+            ThrowIfStateMutationUnavailable();
             var snapshot = await ReadSnapshotCoreAsync(runtime);
             return new SnapshotLoadResult(
                 _snapshotPublication.CompleteLoad(),

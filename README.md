@@ -34,10 +34,10 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 版本化费率目录：设置页可按模型和生效日期维护历史费率版本，记录来源/目录版本，导入、导出或恢复内置目录；历史用量按发生日期重放，未来费率不会回写旧数据。内置目录同时覆盖 OpenAI 与 Anthropic 两条版本线，包含 Claude Fable 5 / Opus 5 / Sonnet 5 / Haiku 4.5 等模型；Sonnet 5 的首发优惠价与到期后的标准价各占一行，按用量发生日期自动切换。导入缺少来源与版本标注的旧目录时，按定价特征还原每行自身的出处，而不是统一打上文档级版本。
 - 针对本月等效金额、额度余量和费率覆盖率发送去重通知。
 - 深色/浅色玻璃/跟随系统主题，以及紧凑/展开双模式。
-- Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、开机启动、单实例、自动刷新、紧凑布局和原生主题。
-- 顶部悬浮状态条、Windows 通知、桌面底层模式，以及完整的按显示器工作区/DPI 边界恢复仍属于旧 WPF 功能对等基线，尚未迁移。
+- Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、可校验回滚的开机启动、单实例、自动刷新、紧凑布局、原生主题、Windows 原生额度通知，以及按显示器工作区/DPI 恢复的窗口位置。
+- 顶部悬浮状态条和桌面底层模式仍属于旧 WPF 功能对等基线，尚未迁移。
 - 每日 GitHub Release 更新检查（私有仓库通过进程环境变量读取令牌）、发布页跳转，不静默下载或安装。
-- 聚合 JSON/CSV 导出、设置与待办备份恢复、脱敏诊断包和非破坏式索引重建。
+- 聚合 JSON/CSV 导出；带 SHA-256 清单的设置、待办和每日用量历史备份恢复；包含 Electron 滚动日志的脱敏诊断包；以及非破坏式索引重建。
 - 每用户 Inno Setup 安装包：开始菜单、卸载项和可选桌面快捷方式；开机启动由应用内设置统一管理，Release 可按仓库密钥配置进行 Authenticode 签名。
 - 浏览器开发模式内置可重复的演示数据，不会影响桌面应用中的真实本地数据。
 - Playwright 视觉回归、axe 无障碍扫描与键盘导航测试覆盖深浅主题、主要视图和紧凑布局；失败截图、差异图和 trace 可由 CI 留存。
@@ -48,9 +48,9 @@ Electron 职责边界为：`Electron main → sandbox preload → Vue renderer �
 
 ### Electron 迁移状态
 
-当前 Windows-first 路径已经打通真实 Vue 页面、.NET 数据与设置服务、私有双向 RPC、原生打开/保存/确认对话框、托盘与关闭驻留、全局快捷键、紧凑窗口、原生主题、单实例恢复，以及由 Sidecar 驱动的后台自动刷新。Electron 启动时先校验后端能力并读取宿主所需设置，应用原生状态后再创建 renderer；用量快照由 Application 层统一投影，手动刷新、自动刷新和数据变更不会各自重复发送同类事件。打包态 smoke 会验证 sandbox preload、`app.initialize` 和反向对话框 RPC，并发送宿主状态；整个过程不会打开窗口、对话框、外链或修改系统设置。
+当前 Windows-first 路径已经打通真实 Vue 页面、.NET 数据与设置服务、私有双向 RPC、原生打开/保存/确认对话框、托盘与关闭驻留、全局快捷键、紧凑窗口、原生主题、单实例恢复、Windows 原生额度通知，以及由 Sidecar 驱动的后台自动刷新。开机启动通过相关反向 RPC 写入并回读真实系统状态，失败时设置不会提交；窗口位置按显示器工作区恢复并适配显示器移除与 DPI 变化。Electron 启动时先校验后端能力并读取宿主所需设置，应用原生状态后再创建 renderer；用量快照由 Application 层统一投影，手动刷新、自动刷新和数据变更不会各自重复发送同类事件。Sidecar 或 renderer 异常退出时会有限指数退避恢复，失败信息写入有界、会遮蔽常见凭据和用户目录的滚动日志，并可随诊断包二次脱敏导出。打包态 smoke 会验证 sandbox preload、`app.initialize` 和反向对话框 RPC，并发送宿主状态；整个过程不会打开窗口、对话框、外链或修改系统设置。
 
-Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron Packager 20，生成带限制性 fuses 的 ASAR，携带 Electron/Chromium、项目、Web 与自包含 .NET 运行时许可文件，再依次签名应用与 Sidecar、执行打包态 smoke、构建并安装/运行/卸载测试 Inno Setup，最后生成 ZIP、Setup 和校验和。发布链完成不等于功能已经完全对等；开机启动失败回滚、窗口工作区/DPI 恢复、Windows 通知、顶部状态条与桌面底层模式仍待迁移，因此首个 Electron 版本适合先作为预发布版验证。Linux 适配尚未开始，当前只验证 Windows。
+Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron Packager 20，生成带限制性 fuses 的 ASAR，携带 Electron/Chromium、项目、Web 与自包含 .NET 运行时许可文件，再依次签名应用与 Sidecar、执行打包态 smoke、构建并安装/运行/卸载测试 Inno Setup，最后生成 ZIP、Setup 和校验和。开机启动失败回滚、窗口工作区/DPI 恢复和 Windows 通知现已迁移；顶部状态条与桌面底层模式仍待实现，因此首个 Electron 版本仍适合先作为预发布版验证。Linux 适配尚未开始，当前只验证 Windows。
 
 本机历史 Token 的归一化、active/archive 合并、fork 去重与保守区间说明见 [docs/local-token-ledger.md](docs/local-token-ledger.md)。
 
