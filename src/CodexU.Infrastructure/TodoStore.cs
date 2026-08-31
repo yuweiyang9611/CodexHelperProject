@@ -20,6 +20,8 @@ public sealed class TodoStore
     {
         var directory = applicationDataDirectory
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU");
+        directory = Path.GetFullPath(directory);
+        LocalRestoreJournal.RecoverPending(directory);
         _path = Path.Combine(directory, "todos.json");
         _backupPath = _path + ".bak";
     }

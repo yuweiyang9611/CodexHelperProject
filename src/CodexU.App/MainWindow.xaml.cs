@@ -73,6 +73,7 @@ public partial class MainWindow : Window
     private string? _registeredHotKey;
     private bool _isClosed;
     private volatile bool _stateShutdownRequested;
+    private volatile string? _stateMutationFailure;
     private Rect? _expandedBounds;
     private UpdateCheckResult? _lastUpdateResult;
     private DashboardSnapshot? _lastSnapshot;
@@ -181,7 +182,25 @@ public partial class MainWindow : Window
             var startupRegistrationChanged = previous.StartAtLogin != normalized.StartAtLogin;
             if (startupRegistrationChanged)
             {
-                StartupRegistration.Apply(normalized.StartAtLogin);
+                try
+                {
+                    StartupRegistration.Apply(normalized.StartAtLogin);
+                }
+                catch (Exception applyException)
+                {
+                    try
+                    {
+                        StartupRegistration.Apply(previous.StartAtLogin);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new InvalidOperationException(
+                            "开机启动设置失败，且原生状态自动回滚也失败。",
+                            new AggregateException(applyException, rollbackException));
+                    }
+
+                    throw;
+                }
             }
 
             AppSettings saved;
@@ -189,7 +208,7 @@ public partial class MainWindow : Window
             {
                 saved = await _settingsStore.SaveAsync(normalized);
             }
-            catch
+            catch (Exception saveException)
             {
                 if (startupRegistrationChanged)
                 {
@@ -197,10 +216,11 @@ public partial class MainWindow : Window
                     {
                         StartupRegistration.Apply(previous.StartAtLogin);
                     }
-                    catch
+                    catch (Exception rollbackException)
                     {
-                        // Preserve the original settings-write failure. Startup state is
-                        // checked again the next time the user saves this option.
+                        throw new InvalidOperationException(
+                            "设置写入失败，且开机启动原生状态自动回滚也失败。",
+                            new AggregateException(saveException, rollbackException));
                     }
                 }
 
@@ -230,11 +250,20 @@ public partial class MainWindow : Window
 
     private void ThrowIfStateMutationUnavailable()
     {
+        if (_stateMutationFailure is { } failure)
+        {
+            throw new InvalidOperationException(failure);
+        }
+
         if (_stateShutdownRequested)
         {
             throw new InvalidOperationException("应用正在退出，不能再修改本地状态。");
         }
     }
+
+    private void EnterFailedRestoreState() =>
+        _stateMutationFailure =
+            "本地状态恢复的自动回滚失败。为避免后续修改在重启恢复时丢失，已禁止继续修改；请重启 codexU。";
 
     private void ProjectSettingsAfterCommit(AppSettings settings)
     {
@@ -446,6 +475,7 @@ public partial class MainWindow : Window
         await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
         try
         {
+            ThrowIfStateMutationUnavailable();
             return new CombinedSnapshots(
                 await ReadRuntimeForCombinedAsync(AgentRuntime.Codex),
                 await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode));
@@ -486,6 +516,7 @@ public partial class MainWindow : Window
         await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
         try
         {
+            ThrowIfStateMutationUnavailable();
             return await ReadSnapshotCoreAsync(runtime);
         }
         finally

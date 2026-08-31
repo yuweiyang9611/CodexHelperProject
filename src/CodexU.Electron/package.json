@@ -18,7 +18,7 @@
     "presmoke": "npm run verify:node",
     "smoke": "npm run build && electron . --smoke-test",
     "pretest": "npm run verify:node",
-    "test": "npm run build && node --test test/framing.test.cjs test/host-requests.test.cjs test/host-settings.test.cjs test/lifecycle.test.cjs test/maintenance.test.cjs test/preload.test.cjs test/security.test.cjs test/sidecar-client.test.cjs"
+    "test": "npm run build && node --test test/framing.test.cjs test/host-requests.test.cjs test/host-settings.test.cjs test/lifecycle.test.cjs test/maintenance.test.cjs test/native-notifications.test.cjs test/preload.test.cjs test/security.test.cjs test/sidecar-client.test.cjs test/windows-host.test.cjs"
   },
   "engines": {
     "node": "22.23.2"

@@ -247,6 +247,12 @@ export const useDashboardStore = defineStore('dashboard', () => {
       await refresh()
     } catch (reason) {
       error.value = errorMessage(reason)
+      // Startup registration is a native transaction. If Windows rejects it,
+      // keep the rest of the user's draft but put this switch back on the last
+      // state the backend actually committed.
+      if (settings.value && settingsDraft.value) {
+        settingsDraft.value.startAtLogin = settings.value.startAtLogin
+      }
     } finally {
       isUpdatingSettings.value = false
     }

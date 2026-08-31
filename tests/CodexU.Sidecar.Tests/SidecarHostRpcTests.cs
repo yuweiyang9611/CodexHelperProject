@@ -123,6 +123,52 @@ public sealed class SidecarHostRpcTests
         Assert.Equal(confirmed, await invocation.WaitAsync(TestTimeout));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StartupRegistrationReturnsActualNativeState(bool enabled)
+    {
+        using var output = new MemoryStream();
+        using var transport = new LengthPrefixedJsonTransport(Stream.Null, output);
+        var broker = new SidecarHostRpcBroker(transport);
+        var client = new SidecarHostRpcClient(broker);
+
+        var invocation = client.SetStartupRegistrationAsync(enabled);
+        using var request = await ReadWrittenFrameAsync(output);
+        Assert.Equal("host.startup.set", request.RootElement.GetProperty("method").GetString());
+        Assert.Equal(enabled, request.RootElement.GetProperty("payload").GetProperty("enabled").GetBoolean());
+        using var response = Response(
+            request.RootElement.GetProperty("id").GetString()!,
+            ok: true,
+            payload: enabled);
+
+        broker.HandleResponse(response.RootElement);
+
+        Assert.Equal(enabled, await invocation.WaitAsync(TestTimeout));
+    }
+
+    [Fact]
+    public async Task StartupRegistrationUsesForwardCompatibleBoundedTimeout()
+    {
+        Assert.InRange(
+            SidecarHostRpcClient.DefaultStartupRegistrationTimeout,
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromSeconds(30));
+
+        using var output = new MemoryStream();
+        using var transport = new LengthPrefixedJsonTransport(Stream.Null, output);
+        var broker = new SidecarHostRpcBroker(transport);
+        var client = new SidecarHostRpcClient(broker, TimeSpan.FromMilliseconds(50));
+
+        var invocation = client.SetStartupRegistrationAsync(true);
+        using var request = await ReadWrittenFrameAsync(output);
+        Assert.Equal("host.startup.set", request.RootElement.GetProperty("method").GetString());
+
+        await Assert.ThrowsAsync<TimeoutException>(async () =>
+            await invocation.WaitAsync(TestTimeout));
+        Assert.Equal(0, broker.PendingCount);
+    }
+
     [Fact]
     public async Task HostErrorCompletesMatchingRequestWithCodeAndMessage()
     {
@@ -324,7 +370,8 @@ public sealed class SidecarHostRpcTests
             {
                 "host.dialog.confirm",
                 "host.dialog.openFile",
-                "host.dialog.saveFile"
+                "host.dialog.saveFile",
+                "host.startup.set"
             },
             SidecarHostRpcMethods.Allowed.Order(StringComparer.Ordinal));
     }
@@ -342,7 +389,23 @@ public sealed class SidecarHostRpcTests
     }
 
     [Fact]
-    public async Task ServerRoutesHostResponseWhileRendererRequestIsPending()
+    public void NativeNotificationCapabilityRequiresHostAvailabilitySignal()
+    {
+        var unavailable = SidecarOptions.ResolveHostCapabilities(
+            "windows",
+            isPackaged: true,
+            nativeNotificationsAvailable: false);
+        var available = SidecarOptions.ResolveHostCapabilities(
+            "windows",
+            isPackaged: true,
+            nativeNotificationsAvailable: true);
+
+        Assert.DoesNotContain(HostCapabilityNames.NativeNotifications, unavailable);
+        Assert.Contains(HostCapabilityNames.NativeNotifications, available);
+    }
+
+    [Fact]
+    public async Task StartupRegistrationAwaitsHostResponseWithoutBlockingServerReadLoop()
     {
         using var inputStream = new AsyncByteStream();
         using var outputStream = new AsyncByteStream();
@@ -351,6 +414,7 @@ public sealed class SidecarHostRpcTests
         using var outputReader = new LengthPrefixedJsonTransport(outputStream, Stream.Null);
         var broker = new SidecarHostRpcBroker(serverTransport);
         var client = new SidecarHostRpcClient(broker);
+        var commands = new SidecarHostCommands(new NoOpEventSink(), client);
         var stopped = false;
         var server = new SidecarServer(
             serverTransport,
@@ -360,9 +424,8 @@ public sealed class SidecarHostRpcTests
             async message =>
             {
                 var request = JsonSerializer.Deserialize<IpcRequest>(message, IpcJson.Options)!;
-                var confirmed = await client.ConfirmAsync(
-                    new HostConfirmationRequest("Confirm", "Continue?"));
-                return IpcResponse.Success(request.Id, new { confirmed });
+                await commands.ApplyAsync(true);
+                return IpcResponse.Success(request.Id, new { applied = true });
             },
             () =>
             {
@@ -376,6 +439,8 @@ public sealed class SidecarHostRpcTests
         await inputWriter.WriteFrameAsync(RendererRequest("renderer-1"), IpcJson.Options);
         using var hostRequest = await ReadFrameAsync(outputReader);
         Assert.Equal("hostRequest", hostRequest.RootElement.GetProperty("type").GetString());
+        Assert.Equal("host.startup.set", hostRequest.RootElement.GetProperty("method").GetString());
+        Assert.True(hostRequest.RootElement.GetProperty("payload").GetProperty("enabled").GetBoolean());
         await inputWriter.WriteFrameAsync(
             new
             {
@@ -388,7 +453,7 @@ public sealed class SidecarHostRpcTests
             IpcJson.Options);
         using var rendererResponse = await ReadFrameAsync(outputReader);
         Assert.Equal("renderer-1", rendererResponse.RootElement.GetProperty("id").GetString());
-        Assert.True(rendererResponse.RootElement.GetProperty("payload").GetProperty("confirmed").GetBoolean());
+        Assert.True(rendererResponse.RootElement.GetProperty("payload").GetProperty("applied").GetBoolean());
         await inputWriter.WriteFrameAsync(
             new { version = 1, type = "control", method = "shutdown" },
             IpcJson.Options);

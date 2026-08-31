@@ -71,7 +71,8 @@ public sealed record SidecarOptions(
     string AppVersion,
     string BackendVersion,
     string Platform,
-    bool IsPackaged)
+    bool IsPackaged,
+    bool NativeNotificationsAvailable)
 {
     public static IReadOnlyList<string> SidecarCapabilities { get; } =
     [
@@ -101,11 +102,18 @@ public sealed record SidecarOptions(
         "sidecar"
     ];
 
-    public static IReadOnlyList<string> ResolveHostCapabilities(string platform, bool isPackaged)
+    public static IReadOnlyList<string> ResolveHostCapabilities(
+        string platform,
+        bool isPackaged,
+        bool nativeNotificationsAvailable = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(platform);
 
         var capabilities = new List<string>(SharedHostCapabilities);
+        if (nativeNotificationsAvailable)
+        {
+            capabilities.Add(HostCapabilityNames.NativeNotifications);
+        }
         if (string.Equals(platform, "windows", StringComparison.OrdinalIgnoreCase))
         {
             capabilities.Add(HostCapabilityNames.Tray);
@@ -126,6 +134,7 @@ public sealed record SidecarOptions(
         string? dataDirectory = Environment.GetEnvironmentVariable("CODEXU_DATA_DIRECTORY");
         string? appVersion = null;
         var isPackaged = false;
+        var nativeNotificationsAvailable = false;
         for (var index = 0; index < args.Count; index++)
         {
             switch (args[index])
@@ -139,6 +148,9 @@ public sealed record SidecarOptions(
                     break;
                 case "--packaged":
                     isPackaged = true;
+                    break;
+                case "--native-notifications":
+                    nativeNotificationsAvailable = true;
                     break;
                 default:
                     throw new ArgumentException($"Unknown sidecar argument: {args[index]}");
@@ -161,7 +173,8 @@ public sealed record SidecarOptions(
             string.IsNullOrWhiteSpace(appVersion) ? backendVersion : appVersion.Trim(),
             backendVersion,
             ResolvePlatform(),
-            isPackaged);
+            isPackaged,
+            nativeNotificationsAvailable);
     }
 
     private static string ReadValue(IReadOnlyList<string> args, ref int index)

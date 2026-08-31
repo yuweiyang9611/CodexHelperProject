@@ -194,7 +194,7 @@ test('responds safely to an active host request before shutting down', async () 
   assert.equal((await exitPromise)[0].expected, true);
 });
 
-test('shutdown has one absolute deadline even when kill never produces close', async () => {
+test('shutdown rejects at its absolute deadline and a later call can retry termination', async () => {
   const client = createClient();
   await client.start();
   const child = client.child;
@@ -228,7 +228,10 @@ test('shutdown has one absolute deadline even when kill never produces close', a
   });
 
   try {
-    await Promise.race([client.shutdown(timeoutMs), watchdog]);
+    await assert.rejects(
+      Promise.race([client.shutdown(timeoutMs), watchdog]),
+      /did not exit within the 50 ms shutdown deadline/u,
+    );
     const elapsedMs = Date.now() - startedAt;
     assert.ok(
       elapsedMs < 400,
@@ -236,11 +239,16 @@ test('shutdown has one absolute deadline even when kill never produces close', a
     );
     assert.equal(killCalls, 1);
     assert.equal(child.exitCode, null, 'fixture must still be open after the mocked kill');
+
+    child.stdin.write = originalWrite;
+    child.stdin.end = originalEnd;
+    child.kill = originalKill;
+    await client.shutdown(1_000);
   } finally {
     child.stdin.write = originalWrite;
     child.stdin.end = originalEnd;
     child.kill = originalKill;
-    originalKill();
+    if (child.exitCode === null) originalKill();
   }
 
   assert.equal((await exitPromise)[0].expected, true);

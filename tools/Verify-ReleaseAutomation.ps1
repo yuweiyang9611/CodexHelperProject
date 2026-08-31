@@ -8,6 +8,9 @@ $electronPackager = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU
 $electronLegalVerifier = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\scripts\verify-legal-payload.mjs') -Raw -Encoding utf8
 $electronReleaseIntegrity = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\scripts\release-integrity.mjs') -Raw -Encoding utf8
 $electronMain = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\main.ts') -Raw -Encoding utf8
+$electronWindowsHost = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\windowsHost.ts') -Raw -Encoding utf8
+$electronNativeNotifications = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\nativeNotifications.ts') -Raw -Encoding utf8
+$sidecarHostRpc = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Sidecar\SidecarHostRpc.cs') -Raw -Encoding utf8
 $inventoryGenerator = Get-Content -LiteralPath (Join-Path $projectRoot 'tools\Generate-ThirdPartyInventory.ps1') -Raw -Encoding utf8
 $globalJson = Get-Content -LiteralPath (Join-Path $projectRoot 'global.json') -Raw -Encoding utf8 | ConvertFrom-Json
 [xml]$sidecarProject = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Sidecar\CodexU.Sidecar.csproj') -Raw -Encoding utf8
@@ -75,6 +78,33 @@ Assert-Contains $installer 'UninstallDisplayIcon={app}\CodexU.exe' `
     'Installer uninstall metadata must point to the Electron executable.'
 Assert-Matches $installer '\[Icons\].*?Filename:\s*"\{app\}\\CodexU\.exe"' `
     'Installer shortcuts must launch CodexU.exe.'
+Assert-Matches $installer 'Name:\s*"\{group\}\\codexU";[^\r\n]*AppUserModelID:\s*"io\.github\.yuweiyang9611\.CodexU";[^\r\n]*AppUserModelToastActivatorCLSID:\s*"073466E0-6E09-49FC-A4D3-900BED0DBD46"' `
+    'Installer Start Menu shortcut must register the stable Electron AppUserModelID and toast activator CLSID.'
+Assert-Contains $electronWindowsHost "export const WINDOWS_APP_USER_MODEL_ID = 'io.github.yuweiyang9611.CodexU';" `
+    'Electron and the installer must share the reviewed Windows AppUserModelID.'
+Assert-Contains $electronWindowsHost "export const WINDOWS_TOAST_ACTIVATOR_CLSID = '{073466E0-6E09-49FC-A4D3-900BED0DBD46}';" `
+    'Electron and the installer must share the reviewed Windows toast activator CLSID.'
+Assert-Matches $electronMain 'function\s+initializeWindowsDesktopIdentity.*?configureWindowsDesktopIdentity\(process\.platform,\s*app\)' `
+    'Electron must configure the packaged Windows process identity before advertising native notifications.'
+Assert-Matches $electronMain 'initializePersistentLog\(\);\s*registerWindowsNotificationActivation\(\);\s*registerLifecycleHandlers\(\)' `
+    'Electron must register cold notification activation only after acquiring the single-instance lock.'
+Assert-Matches $electronWindowsHost 'function\s+ensureWindowsNotificationShortcut.*?readShortcutLink.*?writeShortcutLink.*?readShortcutLink' `
+    'Electron must create and read back the real Start Menu AUMID/CLSID shortcut, including for ZIP releases.'
+Assert-Ordered $electronMain @(
+    'initializeWindowsNotificationShortcut();',
+    'nativeNotifications = createNativeNotificationAdapter();',
+    'await startSidecar();'
+) 'Electron must verify the Windows shortcut before advertising notification capability to the Sidecar.'
+Assert-Contains $electronNativeNotifications 'id: notification.id' `
+    'Electron must pass the stable logical notification ID to the operating system.'
+Assert-Matches $electronNativeNotifications "handle\.once\('failed'.*?this\.ownsHandle\(notification\.id,\s*delivery,\s*handle\).*?this\.rememberedIds\.delete\(notification\.id\).*?this\.scheduleRetry\(delivery\)" `
+    'Owned asynchronous native notification failures must clear de-duplication and remain retryable.'
+Assert-Contains $electronMain 'Notification.handleActivation' `
+    'Electron must handle persisted Windows notification activations and cold starts.'
+Assert-Contains $electronMain "app.on('browser-window-focus'" `
+    'Electron must re-read effective Windows startup state when the app regains focus.'
+Assert-Contains $sidecarHostRpc 'DefaultStartupRegistrationTimeout = TimeSpan.FromSeconds(25)' `
+    'Startup reverse RPC must complete before Electron forward requests time out.'
 Assert-Matches $installer '\[Registry\].*?Software\\Microsoft\\Windows\\CurrentVersion\\Run.*?ValueName:\s*"codexU";\s*Flags:\s*deletevalue\s+uninsdeletevalue' `
     'Installer must remove the legacy and Electron startup command during install and uninstall.'
 Assert-Matches $installer 'StartupApproved\\Run.*?ValueName:\s*"codexU";\s*Flags:\s*deletevalue\s+uninsdeletevalue' `
@@ -117,12 +147,25 @@ Assert-NotContains $installer 'Name: "{app}\*"' `
     'Installer must never recursively delete the whole installation directory.'
 Assert-Matches $installer 'function\s+InitializeUninstall\(\):\s*Boolean;.*?--maintenance-shutdown.*?ewWaitUntilTerminated.*?ResultCode\s*=\s*0' `
     'Uninstall must fail closed while waiting for the resident Electron process to shut down.'
-Assert-Contains $electronMain 'writeMaintenanceShutdownFailureMarker(maintenanceMarker)' `
+Assert-Contains $electronMain `
+    'const maintenanceShutdownRequests = new CompletionQueue<string, MaintenanceShutdownOutcome>();' `
+    'Maintenance shutdown requests must retain late markers until the shutdown outcome is known.'
+Assert-Matches $electronMain `
+    '(?s)function\s+completeApplicationShutdown.*?maintenanceShutdownRequests\.complete\(outcome\).*?acknowledgeMaintenanceShutdown' `
+    'Every queued maintenance marker must receive the completed shutdown outcome.'
+Assert-Matches $electronMain `
+    '(?s)function\s+acknowledgeMaintenanceShutdown.*?else\s+writeMaintenanceShutdownFailureMarker\(maintenanceMarker\)' `
     'A failed Sidecar shutdown must explicitly fail the maintenance handshake.'
-Assert-Contains $electronMain "const WINDOWS_LOGIN_ITEM_NAME = 'codexU';" `
+Assert-Contains $electronWindowsHost "export const WINDOWS_LOGIN_ITEM_NAME = 'codexU';" `
     'Electron startup registration must use the installer-owned stable value name.'
-Assert-Contains $electronMain 'name: WINDOWS_LOGIN_ITEM_NAME' `
-    'Electron startup registration must explicitly write the stable value name.'
+Assert-Contains $electronWindowsHost 'name: WINDOWS_LOGIN_ITEM_NAME' `
+    'The shared Windows startup identity must explicitly write the stable value name.'
+Assert-Matches $electronMain 'function\s+applyStartupRegistrationVerified.*?applyWindowsStartupRegistration\(\s*app,\s*createWindowsStartupIdentity\(process\.execPath\),\s*enabled' `
+    'Electron startup registration must use the reviewed shared Windows identity adapter.'
+Assert-Matches $electronWindowsHost 'state\.launchItems\.some\(.*?item\.enabled\)' `
+    'Electron startup state must accept an enabled matching StartupApproved item even when disabled duplicates exist.'
+Assert-Matches $electronWindowsHost 'state\.openAtLogin\s*&&\s*state\.executableWillLaunchAtLogin\s*&&\s*matchingEnabledItem' `
+    'Electron startup state must include the effective Windows StartupApproved state.'
 foreach ($removedWebView2Gate in @(
     'WebView2RuntimeDownloadUrl',
     'Microsoft\EdgeUpdate\Clients',

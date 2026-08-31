@@ -49,6 +49,11 @@ public static class HostCapabilityNames
     public const string StartupRegistration = "startupRegistration";
 }
 
+public static class HostEventNames
+{
+    public const string ShowNativeNotification = "host.notification.show";
+}
+
 public sealed record InitializeResult(
     string AppVersion,
     string Platform,
@@ -61,3 +66,8 @@ public sealed record RuntimeSelection(string Runtime);
 public sealed record WindowVisibilityRequest(bool Visible);
 
 public sealed record AlwaysOnTopRequest(bool Enabled);
+
+public sealed record NativeNotificationRequest(
+    string Id,
+    string Title,
+    string Body);
