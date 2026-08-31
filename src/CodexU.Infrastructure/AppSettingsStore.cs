@@ -18,6 +18,8 @@ public sealed class AppSettingsStore
     {
         var directory = applicationDataDirectory
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU");
+        directory = Path.GetFullPath(directory);
+        LocalRestoreJournal.RecoverPending(directory);
         _settingsPath = Path.Combine(directory, "settings.json");
         _backupPath = _settingsPath + ".bak";
     }
