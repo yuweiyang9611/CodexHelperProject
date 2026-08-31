@@ -182,7 +182,7 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- Electron: electron 43.4.1 [LICENSE]
+- Electron: electron 44.0.0 [LICENSE]
 
 Copyright (c) Electron contributors
 Copyright (c) 2013-2020 GitHub Inc.
