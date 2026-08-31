@@ -11,6 +11,7 @@ export const HOST_REQUEST_METHODS = [
   'host.dialog.saveFile',
   'host.dialog.openFile',
   'host.dialog.confirm',
+  'host.startup.set',
 ] as const;
 
 export type HostRequestMethod = typeof HOST_REQUEST_METHODS[number];
