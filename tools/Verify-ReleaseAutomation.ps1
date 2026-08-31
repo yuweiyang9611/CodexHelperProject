@@ -78,7 +78,7 @@ Assert-Contains $installer 'UninstallDisplayIcon={app}\CodexU.exe' `
     'Installer uninstall metadata must point to the Electron executable.'
 Assert-Matches $installer '\[Icons\].*?Filename:\s*"\{app\}\\CodexU\.exe"' `
     'Installer shortcuts must launch CodexU.exe.'
-Assert-Matches $installer 'Name:\s*"\{group\}\\codexU";[^\r\n]*AppUserModelID:\s*"io\.github\.yuweiyang9611\.CodexU";[^\r\n]*AppUserModelToastActivatorCLSID:\s*"\{\{073466E0-6E09-49FC-A4D3-900BED0DBD46\}"' `
+Assert-Matches $installer 'Name:\s*"\{group\}\\codexU";[^\r\n]*AppUserModelID:\s*"io\.github\.yuweiyang9611\.CodexU";[^\r\n]*AppUserModelToastActivatorCLSID:\s*"073466E0-6E09-49FC-A4D3-900BED0DBD46"' `
     'Installer Start Menu shortcut must register the stable Electron AppUserModelID and toast activator CLSID.'
 Assert-Contains $electronWindowsHost "export const WINDOWS_APP_USER_MODEL_ID = 'io.github.yuweiyang9611.CodexU';" `
     'Electron and the installer must share the reviewed Windows AppUserModelID.'
