@@ -213,12 +213,12 @@ function removeCustomRate(index: number) {
       <div class="maintenance-actions">
         <button :disabled="settingsBusy" @click="store.runLocalOperation('data.exportAggregates', { format: 'json' })">导出 JSON 统计</button>
         <button :disabled="settingsBusy" @click="store.runLocalOperation('data.exportAggregates', { format: 'csv' })">导出 CSV 日报</button>
-        <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.backup')">备份设置与待办</button>
+        <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.backup')">备份设置、待办与历史</button>
         <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.restore')">恢复备份</button>
         <button :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.export')">生成脱敏诊断包</button>
         <button class="warning" :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.rebuildIndex')">安全重建索引</button>
       </div>
-      <p class="setting-hint">聚合报表不包含正文、任务标题、账户邮箱和完整项目路径；恢复备份前会再次确认。</p>
+      <p class="setting-hint">备份包含设置、待办与每日用量历史，并带 SHA-256 完整性校验；恢复前会再次确认。聚合报表不包含正文、任务标题、账户邮箱和完整项目路径。</p>
     </article>
 
     <article v-if="store.settingsDraft" class="inner-card settings-card" aria-labelledby="settings-title">

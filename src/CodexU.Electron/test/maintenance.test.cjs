@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { mkdtempSync } = require('node:fs');
+const { mkdtempSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -35,13 +35,14 @@ test('accepts only the dedicated maintenance marker inside the system temp tree'
   ], tmpdir()), /system temp/);
 });
 
-test('waits for the marked process to be absent and removes the marker', async () => {
+test('acknowledges a maintenance helper that proves there is no resident instance', async () => {
   const isolatedRoot = mkdtempSync(path.join(tmpdir(), 'codexu-maintenance-test-'));
   const marker = path.join(isolatedRoot, 'codexu-maintenance-shutdown.marker');
   resetMaintenanceShutdownMarker(marker);
 
   try {
     writeMaintenanceShutdownMarker(marker, 2147483647);
+    assert.equal(readFileSync(marker, 'ascii'), '2147483647');
     await waitForMaintenanceShutdown(marker, 1_000);
     assert.equal(require('node:fs').existsSync(marker), false);
   } finally {

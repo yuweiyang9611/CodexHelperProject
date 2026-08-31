@@ -35,7 +35,7 @@ public interface IIpcEventSink
 
 public interface IStartupRegistration
 {
-    void Apply(bool enabled);
+    Task ApplyAsync(bool enabled, CancellationToken cancellationToken = default);
 }
 
 public interface IStatusStripCommands

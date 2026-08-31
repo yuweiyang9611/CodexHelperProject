@@ -356,6 +356,23 @@ describe('settings draft merging', () => {
     expect(store.settingsDraft!.uiScalePercent).toBe(130)
     expect(store.isUpdatingSettings).toBe(false)
   })
+
+  it('rolls the startup switch back to the last committed native state on save failure', async () => {
+    routeRequests({
+      'settings.get': appSettings({ checkForUpdates: false, startAtLogin: false }),
+      'settings.update': () => Promise.reject(new Error('Windows 未应用开机启动设置')),
+    })
+    const store = useDashboardStore()
+    await store.initialize()
+    store.settingsDraft!.startAtLogin = true
+    store.settingsDraft!.uiScalePercent = 130
+
+    await store.saveSettings()
+
+    expect(store.error).toBe('Windows 未应用开机启动设置')
+    expect(store.settingsDraft!.startAtLogin).toBe(false)
+    expect(store.settingsDraft!.uiScalePercent).toBe(130)
+  })
 })
 
 describe('status strip controls', () => {
