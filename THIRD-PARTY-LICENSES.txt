@@ -572,7 +572,7 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- npm: pinia 4.0.2 [LICENSE]
+- npm: pinia 4.0.3 [LICENSE]
 
 The MIT License (MIT)
 

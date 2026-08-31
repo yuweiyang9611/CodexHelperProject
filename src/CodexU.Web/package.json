@@ -17,7 +17,7 @@
     "test:a11y": "playwright test tests/e2e/accessibility.spec.ts tests/e2e/keyboard.spec.ts"
   },
   "dependencies": {
-    "pinia": "^4.0.2",
+    "pinia": "^4.0.3",
     "vue": "^3.5.42"
   },
   "devDependencies": {
