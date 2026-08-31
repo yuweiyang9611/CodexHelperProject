@@ -1,4 +1,5 @@
 import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, TodoItem, TodoMutation } from './types'
+import { DEMO_HOST_CAPABILITIES } from './hostCapabilities'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
 
@@ -232,7 +233,13 @@ class HostBridge {
   private async mockRequest<T>(method: string, payload: object): Promise<T> {
     await new Promise((resolve) => window.setTimeout(resolve, 180))
     if (method === 'app.initialize') {
-      return { appVersion: `${__APP_VERSION__}-dev`, platform: 'browser', theme: 'dark' } as T
+      return {
+        appVersion: `${__APP_VERSION__}-dev`,
+        platform: 'browser',
+        theme: 'dark',
+        isPackaged: false,
+        capabilities: [...DEMO_HOST_CAPABILITIES],
+      } as T
     }
     if (method === 'runtime.select') {
       return createDemoSnapshot((payload as { runtime: 'codex' | 'claudeCode' }).runtime) as T

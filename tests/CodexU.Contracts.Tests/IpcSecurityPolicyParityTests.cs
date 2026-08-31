@@ -13,31 +13,34 @@ namespace CodexU.Contracts.Tests;
 /// </summary>
 public sealed class IpcSecurityPolicyParityTests
 {
-    private static readonly string[] DispatchRelativePaths =
-    [
-        "src/CodexU.Application/IpcDispatcher.cs",
-        "src/CodexU.App/MainWindow.Ipc.cs"
-    ];
+    private const string ApplicationDispatchRelativePath =
+        "src/CodexU.Application/IpcDispatcher.cs";
+
+    private const string WpfDispatchRelativePath =
+        "src/CodexU.App/MainWindow.Ipc.cs";
 
     [Fact]
     public void DispatchSwitchHandlesExactlyTheAllowedMethods()
     {
-        var allowed = IpcSecurityPolicy.AllowedMethodNames.ToHashSet(StringComparer.Ordinal);
+        var rendererMethods = IpcSecurityPolicy.AllowedMethodNames.ToHashSet(StringComparer.Ordinal);
+        var electronHostMethods = ElectronHostIpcSecurityPolicy.AllowedMethodNames
+            .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var dispatchRelativePath in DispatchRelativePaths)
-        {
-            var dispatched = ReadDispatchedMethods(dispatchRelativePath);
-            var missingCases = allowed.Except(dispatched).OrderBy(name => name, StringComparer.Ordinal).ToArray();
-            var unreachableCases = dispatched.Except(allowed).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        AssertDispatchMethods(WpfDispatchRelativePath, rendererMethods);
+        AssertDispatchMethods(
+            ApplicationDispatchRelativePath,
+            rendererMethods.Concat(electronHostMethods).ToHashSet(StringComparer.Ordinal));
+    }
 
-            Assert.True(
-                missingCases.Length == 0,
-                $"Allow-listed but not handled in {dispatchRelativePath}: {string.Join(", ", missingCases)}");
-            Assert.True(
-                unreachableCases.Length == 0,
-                $"Handled in {dispatchRelativePath} but not allow-listed, so unreachable: "
-                + string.Join(", ", unreachableCases));
-        }
+    [Fact]
+    public void WpfDispatcherCannotReachElectronHostOnlyMethods()
+    {
+        var dispatched = ReadDispatchedMethods(WpfDispatchRelativePath);
+
+        Assert.Empty(dispatched.Intersect(ElectronHostIpcSecurityPolicy.AllowedMethodNames));
+        Assert.False(IpcSecurityPolicy.IsAllowedMethod("settings.reconcileStartupRegistration"));
+        Assert.True(ElectronHostIpcSecurityPolicy.IsAllowedMethod(
+            "settings.reconcileStartupRegistration"));
     }
 
     [Fact]
@@ -52,10 +55,15 @@ public sealed class IpcSecurityPolicyParityTests
     [Fact]
     public void AllowedMethodsAreUniqueAndNamespaced()
     {
-        var allowed = IpcSecurityPolicy.AllowedMethodNames;
+        var rendererAllowed = IpcSecurityPolicy.AllowedMethodNames;
+        var hostAllowed = ElectronHostIpcSecurityPolicy.AllowedMethodNames;
 
-        Assert.Equal(allowed.Count, allowed.Distinct(StringComparer.Ordinal).Count());
-        Assert.All(allowed, method => Assert.Matches(@"^[a-z][a-zA-Z]*\.[a-zA-Z]+$", method));
+        Assert.Equal(rendererAllowed.Count, rendererAllowed.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(hostAllowed.Count, hostAllowed.Distinct(StringComparer.Ordinal).Count());
+        Assert.Empty(rendererAllowed.Intersect(hostAllowed, StringComparer.Ordinal));
+        Assert.All(
+            rendererAllowed.Concat(hostAllowed),
+            method => Assert.Matches(@"^[a-z][a-zA-Z]*\.[a-zA-Z]+$", method));
     }
 
     [Fact]
@@ -82,6 +90,28 @@ public sealed class IpcSecurityPolicyParityTests
     {
         Assert.All(IpcSecurityPolicy.AllowedMethodNames, method =>
             Assert.True(IpcSecurityPolicy.IsAllowedMethod(method)));
+    }
+
+    [Fact]
+    public void HostCapabilityNamesMatchTheWebContract()
+    {
+        var contractNames = typeof(HostCapabilityNames)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
+            .ToHashSet(StringComparer.Ordinal);
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/CodexU.Web/src/hostCapabilities.ts"));
+        var webNames = Regex.Matches(
+                source,
+                @"^\s+\w+:\s*'(?<capability>[^']+)',?\s*$",
+                RegexOptions.Multiline)
+            .Select(match => match.Groups["capability"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(
+            contractNames.Order(StringComparer.Ordinal),
+            webNames.Order(StringComparer.Ordinal));
     }
 
     [Theory]
@@ -112,6 +142,23 @@ public sealed class IpcSecurityPolicyParityTests
         return Regex.Matches(body, """case\s+"(?<method>[^"]+)"\s*:""")
             .Select(match => match.Groups["method"].Value)
             .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static void AssertDispatchMethods(
+        string dispatchRelativePath,
+        HashSet<string> allowed)
+    {
+        var dispatched = ReadDispatchedMethods(dispatchRelativePath);
+        var missingCases = allowed.Except(dispatched).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var unreachableCases = dispatched.Except(allowed).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+
+        Assert.True(
+            missingCases.Length == 0,
+            $"Allow-listed but not handled in {dispatchRelativePath}: {string.Join(", ", missingCases)}");
+        Assert.True(
+            unreachableCases.Length == 0,
+            $"Handled in {dispatchRelativePath} but not allow-listed, so unreachable: "
+            + string.Join(", ", unreachableCases));
     }
 
     private static string FindRepositoryRoot()

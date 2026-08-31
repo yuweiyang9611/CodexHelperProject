@@ -262,6 +262,45 @@ select:focus-visible,
 .setting-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setting-checks label { min-width: 0; line-height: 1.45; }
 .setting-checks input { flex: none; }
+.settings-group input:disabled[aria-describedby$="-capability-note"],
+.settings-group select:disabled[aria-describedby$="-capability-note"] {
+  opacity: .52;
+  cursor: not-allowed;
+}
+
+.capability-summary,
+.capability-unavailable {
+  border: 1px solid rgba(229, 185, 109, .28);
+  color: #d8bd8d;
+  background: rgba(229, 185, 109, .07);
+}
+
+.capability-summary {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.capability-summary strong { flex: none; color: #e5c995; }
+.settings-group > p.capability-unavailable {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #d8bd8d;
+}
+.app-shell.light .capability-summary,
+.app-shell.light .capability-unavailable {
+  border-color: rgba(118, 83, 15, .28);
+  color: #76530f;
+  background: rgba(255, 231, 178, .46);
+}
+.app-shell.light .capability-summary strong { color: #684608; }
+.app-shell.light .settings-group > p.capability-unavailable { color: #76530f; }
 
 .status-strip-control {
   display: flex;

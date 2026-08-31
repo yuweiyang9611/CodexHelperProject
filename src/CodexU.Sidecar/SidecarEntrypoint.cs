@@ -1,4 +1,5 @@
 using CodexU.Application;
+using CodexU.Contracts;
 
 namespace CodexU.Sidecar;
 
@@ -70,7 +71,8 @@ public sealed record SidecarOptions(
     string AppVersion,
     string BackendVersion,
     string Platform,
-    bool IsPackaged)
+    bool IsPackaged,
+    bool NativeNotificationsAvailable)
 {
     public static IReadOnlyList<string> SidecarCapabilities { get; } =
     [
@@ -82,7 +84,7 @@ public sealed record SidecarOptions(
         "gracefulShutdown"
     ];
 
-    public static IReadOnlyList<string> HostCapabilities { get; } =
+    private static IReadOnlyList<string> SharedHostCapabilities { get; } =
     [
         "usage",
         "runtime",
@@ -94,9 +96,36 @@ public sealed record SidecarOptions(
         "diagnostics",
         "rateCatalog",
         "todos",
-        "nativeDialogs",
+        HostCapabilityNames.NativeDialogs,
+        HostCapabilityNames.AlwaysOnTop,
+        HostCapabilityNames.CompactMode,
         "sidecar"
     ];
+
+    public static IReadOnlyList<string> ResolveHostCapabilities(
+        string platform,
+        bool isPackaged,
+        bool nativeNotificationsAvailable = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(platform);
+
+        var capabilities = new List<string>(SharedHostCapabilities);
+        if (nativeNotificationsAvailable)
+        {
+            capabilities.Add(HostCapabilityNames.NativeNotifications);
+        }
+        if (string.Equals(platform, "windows", StringComparison.OrdinalIgnoreCase))
+        {
+            capabilities.Add(HostCapabilityNames.Tray);
+            capabilities.Add(HostCapabilityNames.GlobalHotKey);
+            if (isPackaged)
+            {
+                capabilities.Add(HostCapabilityNames.StartupRegistration);
+            }
+        }
+
+        return capabilities;
+    }
 
     public static SidecarOptions Parse(IReadOnlyList<string> args)
     {
@@ -105,6 +134,7 @@ public sealed record SidecarOptions(
         string? dataDirectory = Environment.GetEnvironmentVariable("CODEXU_DATA_DIRECTORY");
         string? appVersion = null;
         var isPackaged = false;
+        var nativeNotificationsAvailable = false;
         for (var index = 0; index < args.Count; index++)
         {
             switch (args[index])
@@ -118,6 +148,9 @@ public sealed record SidecarOptions(
                     break;
                 case "--packaged":
                     isPackaged = true;
+                    break;
+                case "--native-notifications":
+                    nativeNotificationsAvailable = true;
                     break;
                 default:
                     throw new ArgumentException($"Unknown sidecar argument: {args[index]}");
@@ -140,7 +173,8 @@ public sealed record SidecarOptions(
             string.IsNullOrWhiteSpace(appVersion) ? backendVersion : appVersion.Trim(),
             backendVersion,
             ResolvePlatform(),
-            isPackaged);
+            isPackaged,
+            nativeNotificationsAvailable);
     }
 
     private static string ReadValue(IReadOnlyList<string> args, ref int index)

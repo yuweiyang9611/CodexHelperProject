@@ -280,7 +280,7 @@ export interface InitializeResult {
   appVersion: string
   platform: string
   theme: string
-  mockData: boolean
+  isPackaged: boolean
   capabilities: string[]
 }
 

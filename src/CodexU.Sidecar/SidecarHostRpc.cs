@@ -13,11 +13,14 @@ public static class SidecarHostRpcMethods
 
     public const string Confirm = "host.dialog.confirm";
 
+    public const string SetStartupRegistration = "host.startup.set";
+
     public static FrozenSet<string> Allowed { get; } = FrozenSet.Create(
         StringComparer.Ordinal,
         PickSaveFile,
         PickOpenFile,
-        Confirm);
+        Confirm,
+        SetStartupRegistration);
 }
 
 public sealed record SidecarHostRequest(
@@ -103,7 +106,8 @@ public sealed class SidecarHostRpcBroker
     public async Task<JsonElement?> InvokeAsync(
         string method,
         object payload,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? requestTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(method);
         ArgumentNullException.ThrowIfNull(payload);
@@ -114,6 +118,12 @@ public sealed class SidecarHostRpcBroker
 
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfStopped();
+        var resolvedRequestTimeout = requestTimeout ?? _requestTimeout;
+        if (resolvedRequestTimeout <= TimeSpan.Zero
+            && resolvedRequestTimeout != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(nameof(requestTimeout));
+        }
         var normalizedPayload = JsonSerializer.SerializeToElement(payload, IpcJson.Options);
         if (normalizedPayload.ValueKind != JsonValueKind.Object)
         {
@@ -133,7 +143,7 @@ public sealed class SidecarHostRpcBroker
             ThrowIfStopped();
         }
 
-        using var timeoutCancellation = CreateTimeoutCancellation();
+        using var timeoutCancellation = CreateTimeoutCancellation(resolvedRequestTimeout);
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeoutCancellation.Token,
@@ -152,7 +162,7 @@ public sealed class SidecarHostRpcBroker
                   && Volatile.Read(ref _stopped) == 0)
         {
             throw new TimeoutException(
-                $"Host RPC '{method}' timed out after {_requestTimeout}.",
+                $"Host RPC '{method}' timed out after {resolvedRequestTimeout}.",
                 exception);
         }
         finally
@@ -336,10 +346,10 @@ public sealed class SidecarHostRpcBroker
         return true;
     }
 
-    private CancellationTokenSource CreateTimeoutCancellation() =>
-        _requestTimeout == Timeout.InfiniteTimeSpan
+    private static CancellationTokenSource CreateTimeoutCancellation(TimeSpan requestTimeout) =>
+        requestTimeout == Timeout.InfiniteTimeSpan
             ? new CancellationTokenSource()
-            : new CancellationTokenSource(_requestTimeout);
+            : new CancellationTokenSource(requestTimeout);
 
     private void CancelPending(string id, PendingHostRequest pending)
     {
@@ -377,12 +387,33 @@ public interface ISidecarHostRpcClient
     Task<bool> ConfirmAsync(
         HostConfirmationRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<bool> SetStartupRegistrationAsync(
+        bool enabled,
+        CancellationToken cancellationToken = default);
 }
 
-public sealed class SidecarHostRpcClient(SidecarHostRpcBroker broker) : ISidecarHostRpcClient
+public sealed class SidecarHostRpcClient : ISidecarHostRpcClient
 {
-    private readonly SidecarHostRpcBroker _broker =
-        broker ?? throw new ArgumentNullException(nameof(broker));
+    public static readonly TimeSpan DefaultStartupRegistrationTimeout = TimeSpan.FromSeconds(25);
+
+    private readonly SidecarHostRpcBroker _broker;
+    private readonly TimeSpan _startupRegistrationTimeout;
+
+    public SidecarHostRpcClient(
+        SidecarHostRpcBroker broker,
+        TimeSpan? startupRegistrationTimeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(broker);
+        var resolvedTimeout = startupRegistrationTimeout ?? DefaultStartupRegistrationTimeout;
+        if (resolvedTimeout <= TimeSpan.Zero || resolvedTimeout > TimeSpan.FromSeconds(30))
+        {
+            throw new ArgumentOutOfRangeException(nameof(startupRegistrationTimeout));
+        }
+
+        _broker = broker;
+        _startupRegistrationTimeout = resolvedTimeout;
+    }
 
     public async Task<string?> PickSaveFileAsync(
         HostFileDialogRequest request,
@@ -423,6 +454,23 @@ public sealed class SidecarHostRpcClient(SidecarHostRpcBroker broker) : ISidecar
         }
 
         throw InvalidPayload(SidecarHostRpcMethods.Confirm, "a boolean");
+    }
+
+    public async Task<bool> SetStartupRegistrationAsync(
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = await _broker.InvokeAsync(
+            SidecarHostRpcMethods.SetStartupRegistration,
+            new { enabled },
+            cancellationToken,
+            _startupRegistrationTimeout);
+        if (payload is { ValueKind: JsonValueKind.True or JsonValueKind.False })
+        {
+            return payload.Value.GetBoolean();
+        }
+
+        throw InvalidPayload(SidecarHostRpcMethods.SetStartupRegistration, "a boolean");
     }
 
     private static string? ReadOptionalPath(JsonElement? payload)

@@ -6,6 +6,7 @@ import {
   newestBuiltInRateFor,
   nextUnoverriddenModel,
 } from '../builtInRates'
+import { HOST_CAPABILITY } from '../hostCapabilities'
 import { useDashboardStore } from '../stores/dashboard'
 import type { DashboardSnapshot, ModelCreditRate } from '../types'
 
@@ -39,6 +40,23 @@ const configuredRateCount = computed(() => store.settingsDraft?.customModelRates
 const isPinnedRateCatalog = computed(() => store.settingsDraft?.isRateCatalogPinned ?? false)
 const rateEntryLimit = computed(() => isPinnedRateCatalog.value ? 1000 : 200)
 const settingsBusy = computed(() => store.isRunningLocalOperation || store.isUpdatingSettings)
+const supportsNativeNotifications = computed(() => store.hasHostCapability(HOST_CAPABILITY.nativeNotifications))
+const supportsStatusStrip = computed(() => store.hasHostCapability(HOST_CAPABILITY.statusStripControl))
+const supportsDesktopMode = computed(() => store.hasHostCapability(HOST_CAPABILITY.desktopMode))
+const supportsStartupRegistration = computed(() => store.hasHostCapability(HOST_CAPABILITY.startupRegistration))
+const supportsTray = computed(() => store.hasHostCapability(HOST_CAPABILITY.tray))
+const supportsGlobalHotKey = computed(() => store.hasHostCapability(HOST_CAPABILITY.globalHotKey))
+const unavailableDesktopCapabilities = computed(() => [
+  !supportsStatusStrip.value ? '顶部状态条' : null,
+  !supportsDesktopMode.value ? '桌面底层模式' : null,
+  !supportsStartupRegistration.value ? '开机自动启动' : null,
+  !supportsTray.value ? '系统托盘' : null,
+  !supportsGlobalHotKey.value ? '全局快捷键' : null,
+].filter((item): item is string => item !== null))
+const unavailableCapabilities = computed(() => [
+  !supportsNativeNotifications.value ? '系统额度通知' : null,
+  ...unavailableDesktopCapabilities.value,
+].filter((item): item is string => item !== null))
 const rateValidationMessage = computed(() => {
   const rateCount = isPinnedRateCatalog.value ? configuredRateCount.value : customOverrideCount.value
   if (rateCount > rateEntryLimit.value) {
@@ -195,18 +213,22 @@ function removeCustomRate(index: number) {
       <div class="maintenance-actions">
         <button :disabled="settingsBusy" @click="store.runLocalOperation('data.exportAggregates', { format: 'json' })">导出 JSON 统计</button>
         <button :disabled="settingsBusy" @click="store.runLocalOperation('data.exportAggregates', { format: 'csv' })">导出 CSV 日报</button>
-        <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.backup')">备份设置与待办</button>
+        <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.backup')">备份设置、待办与历史</button>
         <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.restore')">恢复备份</button>
         <button :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.export')">生成脱敏诊断包</button>
         <button class="warning" :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.rebuildIndex')">安全重建索引</button>
       </div>
-      <p class="setting-hint">聚合报表不包含正文、任务标题、账户邮箱和完整项目路径；恢复备份前会再次确认。</p>
+      <p class="setting-hint">备份包含设置、待办与每日用量历史，并带 SHA-256 完整性校验；恢复前会再次确认。聚合报表不包含正文、任务标题、账户邮箱和完整项目路径。</p>
     </article>
 
     <article v-if="store.settingsDraft" class="inner-card settings-card" aria-labelledby="settings-title">
       <div class="inner-heading">
         <div><span>个性化</span><h3 id="settings-title">应用设置</h3></div>
         <em>设置会保存在本机</em>
+      </div>
+      <div v-if="unavailableCapabilities.length" id="host-capability-summary" class="capability-summary" role="note">
+        <strong>当前宿主能力</strong>
+        <span>{{ unavailableCapabilities.join('、') }}暂未接入。相关控件已禁用，原有设置值会保留。</span>
       </div>
       <div class="settings-groups">
         <fieldset class="settings-group">
@@ -240,38 +262,44 @@ function removeCustomRate(index: number) {
         <fieldset class="settings-group">
           <legend>通知与额度</legend>
           <p>选择需要提醒的额度风险；金额填 0 可关闭对应提醒。</p>
+          <p v-if="!supportsNativeNotifications" id="native-notifications-capability-note" class="capability-unavailable">
+            当前宿主尚未接入系统通知；下列阈值与开关会保留，但暂时不会触发提醒。
+          </p>
           <div class="settings-grid">
-            <label>5h 提醒阈值 %<input v-model.number="store.settingsDraft.fiveHourAlertPercent" type="number" min="1" max="99" /></label>
-            <label>7d 提醒阈值 %<input v-model.number="store.settingsDraft.sevenDayAlertPercent" type="number" min="1" max="99" /></label>
-            <label>本月金额提醒（美元，0 为关闭）<input v-model.number="store.settingsDraft.monthlyAmountAlert" type="number" min="0" max="1000000000" step="1" /></label>
-            <label>最低费率覆盖率 %<input v-model.number="store.settingsDraft.minimumRateCoverageAlertPercent" type="number" min="0" max="100" step="1" /></label>
+            <label>5h 提醒阈值 %<input v-model.number="store.settingsDraft.fiveHourAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="1" max="99" /></label>
+            <label>7d 提醒阈值 %<input v-model.number="store.settingsDraft.sevenDayAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="1" max="99" /></label>
+            <label>本月金额提醒（美元，0 为关闭）<input v-model.number="store.settingsDraft.monthlyAmountAlert" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="0" max="1000000000" step="1" /></label>
+            <label>最低费率覆盖率 %<input v-model.number="store.settingsDraft.minimumRateCoverageAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="0" max="100" step="1" /></label>
           </div>
           <div class="setting-checks">
-            <label><input v-model="store.settingsDraft.notificationsEnabled" type="checkbox" />启用额度通知</label>
-            <label><input v-model="store.settingsDraft.quotaForecastAlertsEnabled" type="checkbox" />额度耗尽预警</label>
+            <label><input v-model="store.settingsDraft.notificationsEnabled" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="checkbox" />启用额度通知</label>
+            <label><input v-model="store.settingsDraft.quotaForecastAlertsEnabled" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="checkbox" />额度耗尽预警</label>
           </div>
         </fieldset>
 
         <fieldset class="settings-group">
           <legend>桌面行为</legend>
           <p>控制快捷键、开机启动、主窗口和顶部状态条。</p>
+          <p v-if="unavailableDesktopCapabilities.length" id="desktop-capability-note" class="capability-unavailable">
+            当前宿主暂不支持：{{ unavailableDesktopCapabilities.join('、') }}。对应设置值会保留，但暂不生效。
+          </p>
           <div class="settings-grid">
-            <label>全局快捷键<select v-model="store.settingsDraft.globalHotKey"><option>Ctrl+U</option><option>Ctrl+Shift+U</option><option>Ctrl+Alt+U</option><option>Ctrl+Shift+C</option><option>Ctrl+Alt+C</option></select></label>
-            <label>状态条额度口径<select v-model="store.settingsDraft.statusStripQuotaMode"><option value="remaining">显示剩余</option><option value="used">显示已用</option></select></label>
+            <label>全局快捷键<select v-model="store.settingsDraft.globalHotKey" :disabled="!supportsGlobalHotKey" :aria-describedby="!supportsGlobalHotKey ? 'desktop-capability-note' : undefined"><option>Ctrl+U</option><option>Ctrl+Shift+U</option><option>Ctrl+Alt+U</option><option>Ctrl+Shift+C</option><option>Ctrl+Alt+C</option></select></label>
+            <label>状态条额度口径<select v-model="store.settingsDraft.statusStripQuotaMode" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined"><option value="remaining">显示剩余</option><option value="used">显示已用</option></select></label>
           </div>
           <div class="setting-checks">
-            <label><input v-model="store.settingsDraft.statusStripEnabled" type="checkbox" />启用顶部状态条</label>
-            <label><input v-model="store.settingsDraft.statusStripShowTodayTokens" type="checkbox" />状态条显示今日 Token</label>
-            <label><input v-model="store.settingsDraft.statusStripPositionLocked" type="checkbox" />锁定状态条位置</label>
-            <label><input v-model="store.settingsDraft.startAtLogin" type="checkbox" />开机自动启动</label>
-            <label><input v-model="store.settingsDraft.desktopMode" type="checkbox" />启动后置于桌面底层</label>
-            <label><input v-model="store.settingsDraft.closeToTray" type="checkbox" />关闭主窗口时隐藏到托盘</label>
+            <label><input v-model="store.settingsDraft.statusStripEnabled" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />启用顶部状态条</label>
+            <label><input v-model="store.settingsDraft.statusStripShowTodayTokens" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />状态条显示今日 Token</label>
+            <label><input v-model="store.settingsDraft.statusStripPositionLocked" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />锁定状态条位置</label>
+            <label><input v-model="store.settingsDraft.startAtLogin" :disabled="!supportsStartupRegistration" :aria-describedby="!supportsStartupRegistration ? 'desktop-capability-note' : undefined" type="checkbox" />开机自动启动</label>
+            <label><input v-model="store.settingsDraft.desktopMode" :disabled="!supportsDesktopMode" :aria-describedby="!supportsDesktopMode ? 'desktop-capability-note' : undefined" type="checkbox" />启动后置于桌面底层</label>
+            <label><input v-model="store.settingsDraft.closeToTray" :disabled="!supportsTray" :aria-describedby="!supportsTray ? 'desktop-capability-note' : undefined" type="checkbox" />关闭主窗口时隐藏到托盘</label>
           </div>
           <div class="status-strip-control" aria-labelledby="status-strip-control-title">
             <div>
               <strong id="status-strip-control-title">状态条预览与找回</strong>
               <span>
-                {{ store.statusStripState?.visible ? '正在显示' : '当前未显示' }}
+                {{ !supportsStatusStrip ? '当前不可用' : (store.statusStripState?.visible ? '正在显示' : '当前未显示') }}
                 · {{ store.statusStripState?.positionMode ?? '状态未知' }}
                 · {{ store.statusStripState?.displayName ?? '显示器未知' }}
               </span>
@@ -280,10 +308,10 @@ function removeCustomRate(index: number) {
               </small>
             </div>
             <div class="status-strip-actions">
-              <button type="button" :disabled="store.isControllingStatusStrip || settingsBusy" @click="store.previewStatusStrip()">
+              <button type="button" :disabled="!supportsStatusStrip || store.isControllingStatusStrip || settingsBusy" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" @click="store.previewStatusStrip()">
                 {{ store.isControllingStatusStrip ? '处理中…' : '立即预览' }}
               </button>
-              <button type="button" :disabled="store.isControllingStatusStrip || settingsBusy" @click="store.recoverStatusStrip()">找回状态条</button>
+              <button type="button" :disabled="!supportsStatusStrip || store.isControllingStatusStrip || settingsBusy" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" @click="store.recoverStatusStrip()">找回状态条</button>
             </div>
           </div>
         </fieldset>

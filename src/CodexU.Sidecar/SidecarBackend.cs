@@ -11,6 +11,7 @@ public sealed class SidecarBackend : IDisposable
     private readonly GitHubUpdateService _updateService;
     private readonly SidecarHostEnvironment _hostEnvironment;
     private readonly SidecarBackgroundRefreshService _backgroundRefresh;
+    private readonly SidecarNativeNotificationBridge? _nativeNotifications;
     private int _stopping;
     private bool _disposed;
 
@@ -20,7 +21,8 @@ public sealed class SidecarBackend : IDisposable
         IpcRequestProcessor requestProcessor,
         GitHubUpdateService updateService,
         SidecarHostEnvironment hostEnvironment,
-        SidecarBackgroundRefreshService backgroundRefresh)
+        SidecarBackgroundRefreshService backgroundRefresh,
+        SidecarNativeNotificationBridge? nativeNotifications)
     {
         _session = session;
         _dispatcher = dispatcher;
@@ -28,7 +30,12 @@ public sealed class SidecarBackend : IDisposable
         _updateService = updateService;
         _hostEnvironment = hostEnvironment;
         _backgroundRefresh = backgroundRefresh;
+        _nativeNotifications = nativeNotifications;
         _session.SettingsChanged += OnSettingsChanged;
+        if (_nativeNotifications is not null)
+        {
+            _session.SnapshotChanged += OnSnapshotChanged;
+        }
     }
 
     public IpcRequestProcessor RequestProcessor { get; }
@@ -61,7 +68,10 @@ public sealed class SidecarBackend : IDisposable
                 options.Platform,
                 settings.Theme,
                 options.IsPackaged,
-                SidecarOptions.HostCapabilities,
+                SidecarOptions.ResolveHostCapabilities(
+                    options.Platform,
+                    options.IsPackaged,
+                    options.NativeNotificationsAvailable),
                 eventSink);
             var session = new ApplicationSession(
                 CreateDashboardService(settings, options.ApplicationDataDirectory),
@@ -81,15 +91,26 @@ public sealed class SidecarBackend : IDisposable
                 commands,
                 commands,
                 commands);
-            var processor = new IpcRequestProcessor(dispatcher, hostEnvironment);
+            var processor = new IpcRequestProcessor(
+                dispatcher,
+                hostEnvironment,
+                IpcRequestRoute.ElectronHost);
             var backgroundRefresh = new SidecarBackgroundRefreshService(session, eventSink);
+            var nativeNotifications = options.NativeNotificationsAvailable
+                ? new SidecarNativeNotificationBridge(
+                    eventSink,
+                    new QuotaNotificationProjector(
+                        windowIdentities: new PersistentQuotaWindowIdentityProvider(
+                            options.ApplicationDataDirectory)))
+                : null;
             var backend = new SidecarBackend(
                 session,
                 dispatcher,
                 processor,
                 updateService,
                 hostEnvironment,
-                backgroundRefresh);
+                backgroundRefresh,
+                nativeNotifications);
             backgroundRefresh.Start();
             return backend;
         }
@@ -129,6 +150,10 @@ public sealed class SidecarBackend : IDisposable
 
         _disposed = true;
         _session.SettingsChanged -= OnSettingsChanged;
+        if (_nativeNotifications is not null)
+        {
+            _session.SnapshotChanged -= OnSnapshotChanged;
+        }
         _backgroundRefresh.StopScheduling();
         _session.CancelLifetime();
         try
@@ -147,6 +172,9 @@ public sealed class SidecarBackend : IDisposable
 
     private void OnSettingsChanged(AppSettings settings) =>
         _hostEnvironment.UpdateTheme(settings.Theme);
+
+    private void OnSnapshotChanged(DashboardSnapshot snapshot) =>
+        _nativeNotifications?.Publish(snapshot, _session.CurrentSettings);
 
     private static IDashboardService CreateDashboardService(
         AppSettings settings,

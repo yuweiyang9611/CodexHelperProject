@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using CodexU.Core;
 
 namespace CodexU.Infrastructure;
@@ -35,6 +36,31 @@ public sealed class DailyUsageHistoryStore
 
     public string PathFor(AgentRuntime runtime) =>
         Path.Combine(_directory, $"daily-usage-{FileSegment(runtime)}-v{CurrentVersion}.jsonl");
+
+    /// <summary>
+    /// Backup restore deliberately preserves unknown future rows, but history files
+    /// must remain text: accepting arbitrary binary data would leave the reader with
+    /// a permanently poisoned managed file. Individual malformed/torn JSONL rows stay
+    /// allowed because normal reads already skip them and they may be the only copy of
+    /// surrounding valid history.
+    /// </summary>
+    internal static void ValidateBackupContent(ReadOnlySpan<byte> content)
+    {
+        try
+        {
+            var text = new UTF8Encoding(
+                encoderShouldEmitUTF8Identifier: false,
+                throwOnInvalidBytes: true).GetString(content);
+            if (text.Contains('\0', StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("用量历史包含无效的 NUL 字符。");
+            }
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new InvalidDataException("用量历史不是有效的 UTF-8 文本。", exception);
+        }
+    }
 
     /// <summary>
     /// Totals depend on which workspace and subagent filters were active when they
