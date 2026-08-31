@@ -233,8 +233,7 @@ public sealed class SidecarHostStateTests
 
     private sealed class NoOpStartupRegistration : IStartupRegistration
     {
-        public void Apply(bool enabled)
-        {
-        }
+        public Task ApplyAsync(bool enabled, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }

@@ -86,10 +86,14 @@ public sealed class IpcDispatcher : IDisposable
         _session.ProjectionFailed += OnProjectionFailed;
     }
 
-    public async Task<object?> DispatchAsync(IpcRequest request)
+    public async Task<object?> DispatchAsync(
+        IpcRequest request,
+        IpcRequestRoute requestRoute = IpcRequestRoute.Renderer)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (!IpcSecurityPolicy.IsAllowedMethod(request.Method))
+        if (!IpcSecurityPolicy.IsAllowedMethod(request.Method)
+            && (requestRoute != IpcRequestRoute.ElectronHost
+                || !ElectronHostIpcSecurityPolicy.IsAllowedMethod(request.Method)))
         {
             throw new NotSupportedException($"不允许的 IPC 方法：{request.Method}");
         }
@@ -137,6 +141,11 @@ public sealed class IpcDispatcher : IDisposable
                     throw new ArgumentException("设置更新缺少 patch。");
                 }
                 return await _session.UpdateSettingsAsync(settings => MergeSettingsPatch(settings, settingsPatch));
+
+            case "settings.reconcileStartupRegistration":
+                return await _session.ReconcileStartupRegistrationAsync(
+                    GetRequiredBoolean(request.Payload, "expected"),
+                    GetRequiredBoolean(request.Payload, "actual"));
 
             case "statusStrip.getState":
                 return (_statusStripCommands
@@ -268,7 +277,7 @@ public sealed class IpcDispatcher : IDisposable
             case "data.backup":
                 var backupPath = await _userInteraction.PickSaveFileAsync(
                     JsonSaveRequest(
-                        "备份 codexU 设置和待办",
+                        "备份 codexU 设置、待办和每日用量历史",
                         $"codexU-backup-{DateTimeOffset.Now:yyyyMMdd}.json",
                         "codexU 备份"),
                     _session.LifetimeToken);
@@ -278,7 +287,7 @@ public sealed class IpcDispatcher : IDisposable
 
             case "data.restore":
                 var restorePath = await _userInteraction.PickOpenFileAsync(
-                    JsonOpenRequest("恢复 codexU 设置和待办", "codexU 备份"),
+                    JsonOpenRequest("恢复 codexU 设置、待办和每日用量历史", "codexU 备份"),
                     _session.LifetimeToken);
                 if (restorePath is null)
                 {
@@ -287,7 +296,7 @@ public sealed class IpcDispatcher : IDisposable
                 if (!await _userInteraction.ConfirmAsync(
                         new HostConfirmationRequest(
                             "恢复 codexU 备份",
-                            "恢复会替换当前设置和待办。是否继续？",
+                            "恢复会替换当前设置和待办；schema 2 备份还会替换每日用量历史。当前 Codex 可执行文件路径和本机开机启动状态将保留。是否继续？",
                             IsWarning: true),
                         _session.LifetimeToken))
                 {
@@ -461,5 +470,16 @@ public sealed class IpcDispatcher : IDisposable
         }
 
         return value.GetString()!;
+    }
+
+    private static bool GetRequiredBoolean(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var value)
+            || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw new ArgumentException($"缺少布尔字段：{name}");
+        }
+
+        return value.GetBoolean();
     }
 }

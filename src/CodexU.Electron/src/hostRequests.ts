@@ -65,6 +65,11 @@ export interface HostDialogApi {
 export interface HostDialogHandlerOptions {
   forceSafeCancellation?: boolean;
   platform?: NodeJS.Platform;
+  startupRegistration?: HostStartupRegistrationApi;
+}
+
+export interface HostStartupRegistrationApi {
+  setEnabled(enabled: boolean): boolean;
 }
 
 export class HostRequestHandlerError extends Error {
@@ -159,6 +164,28 @@ export function createHostRequestHandler(
           noLink: true,
         }));
         return result.response === 1;
+      }
+
+      case 'host.startup.set': {
+        assertExactProperties(request.payload, ['enabled'], request.method);
+        if (typeof request.payload.enabled !== 'boolean') {
+          invalid('enabled must be a boolean value.');
+        }
+        if (options.forceSafeCancellation || !options.startupRegistration) {
+          throw new HostRequestHandlerError(
+            'host_unsupported',
+            'Startup registration is unavailable in this Electron host.',
+          );
+        }
+
+        const actual = options.startupRegistration.setEnabled(request.payload.enabled);
+        if (actual !== request.payload.enabled) {
+          throw new HostRequestHandlerError(
+            'startup_registration_mismatch',
+            'Windows did not apply the requested startup registration state.',
+          );
+        }
+        return actual;
       }
     }
   };

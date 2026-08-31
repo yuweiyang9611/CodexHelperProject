@@ -209,12 +209,27 @@ export class SidecarClient extends EventEmitter {
     if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
       return Promise.reject(new RangeError('Sidecar shutdown timeout must be a positive number.'));
     }
+    if (this.state === 'idle' || this.state === 'closed' || !this.child) {
+      return Promise.resolve();
+    }
+    if (this.shutdownOperation) return this.shutdownOperation;
+
     const deadlineMs = Date.now() + timeoutMs;
-    this.shutdownOperation ??= this.shutdownCore(deadlineMs);
-    return this.shutdownOperation;
+    const operation = this.shutdownCore(deadlineMs, timeoutMs);
+    const tracked = operation.then(
+      () => {
+        if (this.shutdownOperation === tracked) this.shutdownOperation = undefined;
+      },
+      (reason: unknown) => {
+        if (this.shutdownOperation === tracked) this.shutdownOperation = undefined;
+        throw reason;
+      },
+    );
+    this.shutdownOperation = tracked;
+    return tracked;
   }
 
-  private async shutdownCore(deadlineMs: number): Promise<void> {
+  private async shutdownCore(deadlineMs: number, timeoutMs: number): Promise<void> {
     if (this.state === 'idle' || this.state === 'closed' || !this.child) return;
     const child = this.child;
 
@@ -225,7 +240,11 @@ export class SidecarClient extends EventEmitter {
       this.shutdownAck = createDeferred<void>();
 
       try {
-        await settleBeforeDeadline(this.sendGracefulShutdownSequence(), deadlineMs);
+        await settleBeforeDeadline(
+          this.sendGracefulShutdownSequence(),
+          deadlineMs,
+          Math.max(0, timeoutMs - 1_000),
+        );
       } catch {
         // The process may already have closed. The close path below is authoritative.
       }
@@ -247,9 +266,11 @@ export class SidecarClient extends EventEmitter {
       );
     }
 
-    if (!this.isClosed() && !child.killed) {
+    if (!this.isClosed()) {
       try {
-        child.kill();
+        // SIGKILL is also accepted by Node on Windows and gives repeated shutdown
+        // attempts a real termination action even after child.killed became true.
+        child.kill('SIGKILL');
       } catch {
         // A failed termination signal must not extend the caller's deadline.
       }
@@ -260,6 +281,10 @@ export class SidecarClient extends EventEmitter {
         this.closeSignal?.promise ?? Promise.resolve(),
         deadlineMs,
       );
+    }
+
+    if (!this.isClosed()) {
+      throw new Error(`Sidecar did not exit within the ${timeoutMs} ms shutdown deadline.`);
     }
   }
 
@@ -539,9 +564,9 @@ function parseHostRequest(message: JsonObject): SidecarHostRequest {
 }
 
 function validateHostResponsePayload(method: SidecarHostRequest['method'], payload: unknown): void {
-  if (method === 'host.dialog.confirm') {
+  if (method === 'host.dialog.confirm' || method === 'host.startup.set') {
     if (typeof payload !== 'boolean') {
-      throw new TypeError('The confirmation host handler must return a boolean.');
+      throw new TypeError(`The ${method} host handler must return a boolean.`);
     }
     return;
   }
