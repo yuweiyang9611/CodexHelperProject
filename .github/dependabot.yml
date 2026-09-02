@@ -38,7 +38,6 @@ updates:
           - "vitest"
           - "@vitest/*"
           - "vue-tsc"
-          - "typescript"
           - "happy-dom"
       playwright:
         dependency-type: development
