@@ -97,18 +97,19 @@ public sealed class UsageMathTests
     {
         var result = UsageCredits.Calculate(
         [
-            new ModelTokenUsage(
+            new DatedModelTokenUsage(
+                new DateOnly(2026, 9, 9),
                 "gpt-5.6-sol",
                 new TokenBreakdown(1_000_000, 200_000, 100_000, 20_000, 1_100_000))
         ]);
 
-        Assert.Equal(177.5d, result.CreditsUsed, precision: 6);
+        Assert.Equal(132d, result.CreditsUsed, precision: 6);
         Assert.Equal(0, result.UnratedTokens);
         var model = Assert.Single(result.ByModel);
-        Assert.Equal(100d, model.InputCredits, precision: 6);
-        Assert.Equal(2.5d, model.CachedInputCredits, precision: 6);
-        Assert.Equal(75d, model.OutputCredits, precision: 6);
-        Assert.Equal(22.5d, model.CachedSavingsCredits, precision: 6);
+        Assert.Equal(80d, model.InputCredits, precision: 6);
+        Assert.Equal(2d, model.CachedInputCredits, precision: 6);
+        Assert.Equal(50d, model.OutputCredits, precision: 6);
+        Assert.Equal(18d, model.CachedSavingsCredits, precision: 6);
     }
 
     [Fact]
@@ -125,28 +126,119 @@ public sealed class UsageMathTests
     }
 
     [Theory]
-    [InlineData("gpt-5.6-sol", 125d, 12.5d, 750d)]
-    [InlineData("gpt-5.6-terra", 62.5d, 6.25d, 375d)]
-    [InlineData("gpt-5.6-luna", 25d, 2.5d, 150d)]
+    [InlineData("gpt-6-astra", 250d, 25d, 1_250d)]
+    [InlineData("gpt-5.6", 100d, 10d, 500d)]
+    [InlineData("gpt-5.6-sol", 100d, 10d, 500d)]
+    [InlineData("gpt-5.6-terra", 50d, 5d, 300d)]
+    [InlineData("gpt-5.6-luna", 5d, 0.5d, 30d)]
+    [InlineData("gpt-5.6-cyber", 312.5d, 31.25d, 1_875d)]
+    [InlineData("gpt-daybreak-blue-latest", 100d, 10d, 500d)]
+    [InlineData("gpt-daybreak-red-latest", 312.5d, 31.25d, 1_875d)]
     [InlineData("gpt-5.5", 125d, 12.5d, 750d)]
     [InlineData("gpt-5.5-cyber", 500d, 50d, 3_000d)]
     [InlineData("gpt-5.4", 62.5d, 6.25d, 375d)]
-    [InlineData("gpt-5.4-mini", 18.75d, 1.875d, 113d)]
+    [InlineData("gpt-5.4-mini", 18.75d, 1.875d, 112.5d)]
     [InlineData("gpt-5.3-codex", 43.75d, 4.375d, 350d)]
     [InlineData("gpt-5.2", 43.75d, 4.375d, 350d)]
     [InlineData("gpt-image-2.0-image", 200d, 50d, 750d)]
     [InlineData("gpt-image-2.0-text", 125d, 31.25d, 250d)]
-    public void FindRate_MatchesReferenceTable(
+    public void FindRate_MatchesCurrentBuiltInCatalog(
         string model,
         double input,
         double cachedInput,
         double output)
     {
-        var rate = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(model));
+        var rate = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            model,
+            new DateOnly(2026, 9, 9),
+            null));
 
         Assert.Equal(input, rate.InputCreditsPerMillion);
         Assert.Equal(cachedInput, rate.CachedInputCreditsPerMillion);
         Assert.Equal(output, rate.OutputCreditsPerMillion);
+    }
+
+    [Fact]
+    public void BuiltInCatalog_ReplaysOpenAiPriceChangesOnTheirOfficialDates()
+    {
+        var terraBefore = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-terra",
+            new DateOnly(2026, 7, 29),
+            null));
+        var terraAfter = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-terra",
+            new DateOnly(2026, 7, 30),
+            null));
+        var lunaBefore = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-luna",
+            new DateOnly(2026, 7, 29),
+            null));
+        var lunaAfter = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-luna",
+            new DateOnly(2026, 7, 30),
+            null));
+        var solBefore = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-sol",
+            new DateOnly(2026, 8, 20),
+            null));
+        var solAfter = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.6-sol",
+            new DateOnly(2026, 8, 21),
+            null));
+        var miniBefore = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.4-mini",
+            new DateOnly(2026, 3, 16),
+            null));
+        var miniAfter = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-5.4-mini",
+            new DateOnly(2026, 3, 17),
+            null));
+        var daybreakBlueBeforePromotion = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-daybreak-blue-latest",
+            new DateOnly(2026, 8, 20),
+            null));
+        var daybreakBlueAfterPromotion = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "gpt-daybreak-blue-latest",
+            new DateOnly(2026, 8, 21),
+            null));
+
+        Assert.Equal(62.5d, terraBefore.InputCreditsPerMillion);
+        Assert.Equal(50d, terraAfter.InputCreditsPerMillion);
+        Assert.Equal(25d, lunaBefore.InputCreditsPerMillion);
+        Assert.Equal(5d, lunaAfter.InputCreditsPerMillion);
+        Assert.Equal(125d, solBefore.InputCreditsPerMillion);
+        Assert.Equal(750d, solBefore.OutputCreditsPerMillion);
+        Assert.Equal(100d, solAfter.InputCreditsPerMillion);
+        Assert.Equal(500d, solAfter.OutputCreditsPerMillion);
+        Assert.Equal(113d, miniBefore.OutputCreditsPerMillion);
+        Assert.Equal(112.5d, miniAfter.OutputCreditsPerMillion);
+        Assert.Equal(125d, daybreakBlueBeforePromotion.InputCreditsPerMillion);
+        Assert.Equal(100d, daybreakBlueAfterPromotion.InputCreditsPerMillion);
+    }
+
+    [Fact]
+    public void BuiltInCatalog_DoesNotPriceNewOpenAiModelsBeforeRelease()
+    {
+        Assert.Null(UsageCredits.FindRate(
+            "gpt-5.6-cyber",
+            new DateOnly(2026, 8, 6),
+            null));
+        Assert.Null(UsageCredits.FindRate(
+            "gpt-daybreak-blue-latest",
+            new DateOnly(2026, 8, 6),
+            null));
+        Assert.NotNull(UsageCredits.FindRate(
+            "gpt-5.6-cyber",
+            new DateOnly(2026, 8, 7),
+            null));
+        Assert.Null(UsageCredits.FindRate(
+            "gpt-6-astra",
+            new DateOnly(2026, 9, 2),
+            null));
+        Assert.NotNull(UsageCredits.FindRate(
+            "gpt-6-astra",
+            new DateOnly(2026, 9, 3),
+            null));
     }
 
     [Fact]
@@ -271,6 +363,69 @@ public sealed class UsageMathTests
     }
 
     [Fact]
+    public void FindRate_PreservesOpenAiFamilyPrefixesAcrossOfficialAliases()
+    {
+        var familyRate = new ModelCreditRate(
+            "gpt-5.6",
+            7,
+            0.7,
+            70,
+            MatchMode: "prefix");
+        var daybreakRate = new ModelCreditRate(
+            "gpt-daybreak",
+            8,
+            0.8,
+            80,
+            MatchMode: "prefix");
+
+        foreach (var model in new[] { "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-cyber" })
+        {
+            var rate = UsageCredits.FindRate(
+                model,
+                new DateOnly(2026, 9, 9),
+                [familyRate],
+                completeRateCatalog: true);
+
+            Assert.Equal(7, rate?.InputCreditsPerMillion);
+        }
+
+        var daybreak = UsageCredits.FindRate(
+            "gpt-daybreak-red-latest",
+            new DateOnly(2026, 9, 9),
+            [daybreakRate],
+            completeRateCatalog: true);
+        Assert.Equal(8, daybreak?.InputCreditsPerMillion);
+    }
+
+    [Fact]
+    public void ExportedCatalog_PreservesFamilyPrefixPrecedenceOverInheritedBuiltIns()
+    {
+        var document = UsageCredits.CreateCatalogDocument(
+        [
+            new ModelCreditRate("gpt-5.6", 7, 0.7, 70, MatchMode: "prefix"),
+            new ModelCreditRate("gpt-daybreak", 8, 0.8, 80, MatchMode: "prefix")
+        ]);
+
+        Assert.Contains(document.Rates, rate =>
+            rate.Model == "gpt-5.6" && rate.MatchMode == "prefix");
+        Assert.Equal(7, UsageCredits.FindRate(
+            "gpt-5.6-terra",
+            new DateOnly(2026, 9, 9),
+            document.Rates,
+            completeRateCatalog: true)?.InputCreditsPerMillion);
+        Assert.Equal(7, UsageCredits.FindRate(
+            "gpt-5.6-cyber",
+            new DateOnly(2026, 9, 9),
+            document.Rates,
+            completeRateCatalog: true)?.InputCreditsPerMillion);
+        Assert.Equal(8, UsageCredits.FindRate(
+            "gpt-daybreak-red-latest",
+            new DateOnly(2026, 9, 9),
+            document.Rates,
+            completeRateCatalog: true)?.InputCreditsPerMillion);
+    }
+
+    [Fact]
     public void FindRate_NormalizesLatestAfterTheCodexAlias()
     {
         var rate = UsageCredits.FindRate("gpt-5.2-codex-latest");
@@ -347,6 +502,19 @@ public sealed class UsageMathTests
         });
     }
 
+    [Fact]
+    public void BuiltInCatalog_IdentifiesCurrentOfficialOpenAiCatalog()
+    {
+        Assert.Equal("2026.09.1", UsageCredits.BuiltInCatalog.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 9, 9), UsageCredits.BuiltInCatalog.PublishedOn);
+        Assert.Contains("OpenAI API Standard", UsageCredits.BuiltInCatalog.Source, StringComparison.Ordinal);
+
+        var astra = Assert.Single(UsageCredits.BuiltInRates, rate => rate.Model == "gpt-6-astra");
+        Assert.Equal("2026.09.1", astra.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 9, 3), astra.EffectiveFrom);
+        Assert.Contains("OpenAI API", astra.Source, StringComparison.Ordinal);
+    }
+
     [Theory]
     // A dated snapshot id prices exactly like its alias, and built-in rows are matched
     // exactly — so without collapsing the suffix these would all go unrated, which is
@@ -355,14 +523,27 @@ public sealed class UsageMathTests
     [InlineData("claude-haiku-4-5-20251001", "claude-haiku-4-5")]
     [InlineData("claude-sonnet-5-latest", "claude-sonnet-5")]
     [InlineData("gpt-5.2-20260101", "gpt-5.2")]
+    [InlineData("gpt-6-astra-2026-09-03", "gpt-6-astra")]
+    [InlineData("gpt-5.6-2026-07-09", "gpt-5.6-sol")]
+    [InlineData("gpt-5.6-latest", "gpt-5.6-sol")]
+    [InlineData("gpt-daybreak-blue-latest", "gpt-daybreak-blue")]
+    [InlineData("gpt-daybreak-red-latest", "gpt-daybreak-red")]
     public void NormalizeModel_CollapsesDatedSnapshotIdsOntoTheirAlias(string model, string expected) =>
         Assert.Equal(expected, UsageCredits.NormalizeModel(model));
+
+    [Fact]
+    public void NormalizeRatePattern_DoesNotCollapseAnExplicitFamilyPrefix()
+    {
+        Assert.Equal("gpt-5.6", UsageCredits.NormalizeRatePattern(" GPT_5.6 ", "prefix"));
+        Assert.Equal("gpt-5.6-sol", UsageCredits.NormalizeRatePattern("gpt-5.6", "exact"));
+    }
 
     [Theory]
     // Only a plausible calendar date is a snapshot suffix.
     [InlineData("model-99999999")]
     [InlineData("model-20261301")]
     [InlineData("model-20260132")]
+    [InlineData("model-2026-02-30")]
     [InlineData("model-2026051")]
     public void NormalizeModel_KeepsTrailingDigitsThatAreNotADate(string model) =>
         Assert.Equal(model, UsageCredits.NormalizeModel(model));
@@ -629,7 +810,7 @@ public sealed class UsageMathTests
             customRates);
 
         Assert.NotNull(beforeAnyCustomRate);
-        Assert.Equal(UsageCredits.CurrentCatalogVersion, beforeAnyCustomRate.CatalogVersion);
+        Assert.Equal("2026.07.1", beforeAnyCustomRate.CatalogVersion);
         Assert.NotNull(duringFirstCustomVersion);
         Assert.Equal("custom-v1", duringFirstCustomVersion.CatalogVersion);
         Assert.Equal(10, duringFirstCustomVersion.InputCreditsPerMillion);
@@ -719,6 +900,19 @@ public sealed class UsageMathTests
         Assert.Equal("used", settings.StatusStripQuotaMode);
         var rate = Assert.Single(settings.CustomModelRates!);
         Assert.Equal(new ModelCreditRate("claude-sonnet", 3, 4, 5), rate);
+    }
+
+    [Fact]
+    public void SettingsNormalize_PreservesAnOpenAiFamilyPrefix()
+    {
+        var settings = new AppSettings(CustomModelRates:
+        [
+            new ModelCreditRate(" GPT_5.6 ", 1, 0.1, 2, MatchMode: "prefix")
+        ]).Normalize();
+
+        var rate = Assert.Single(settings.CustomModelRates!);
+        Assert.Equal("gpt-5.6", rate.Model);
+        Assert.Equal("prefix", rate.MatchMode);
     }
 
     [Fact]

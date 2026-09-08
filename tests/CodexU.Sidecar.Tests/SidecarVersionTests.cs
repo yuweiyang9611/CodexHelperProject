@@ -6,10 +6,10 @@ public sealed class SidecarVersionTests
     public void NormalizePreservesPrereleaseAndRemovesBuildMetadata()
     {
         var version = SidecarVersion.Normalize(
-            " 0.6.0-beta.1+ca08992178ce ",
+            " 0.6.0-beta.2+ca08992178ce ",
             new Version(0, 6, 0, 0));
 
-        Assert.Equal("0.6.0-beta.1", version);
+        Assert.Equal("0.6.0-beta.2", version);
     }
 
     [Theory]

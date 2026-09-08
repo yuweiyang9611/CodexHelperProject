@@ -250,7 +250,7 @@ public sealed record AppSettings(
     }
 
     private static ModelCreditRate NormalizeCustomRate(ModelCreditRate rate) => new(
-        UsageCredits.NormalizeModel(rate.Model),
+        UsageCredits.NormalizeRatePattern(rate.Model, rate.MatchMode),
         NormalizeRate(rate.InputCreditsPerMillion),
         NormalizeRate(rate.CachedInputCreditsPerMillion),
         NormalizeRate(rate.OutputCreditsPerMillion),

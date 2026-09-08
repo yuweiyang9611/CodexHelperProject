@@ -48,7 +48,7 @@ public sealed class RateCatalogFileServiceTests
             Assert.Equal(UsageCredits.CurrentCatalogVersion, exportedDocument.BaseCatalogVersion);
             Assert.Equal(UsageCredits.CurrentCatalogVersion, imported.BaseCatalogVersion);
             Assert.Contains(imported.Rates, rate =>
-                rate.Model == "gpt-5.6-sol"
+                rate.Model == "gpt-6-astra"
                 && rate.CatalogVersion == UsageCredits.CurrentCatalogVersion
                 && rate.MatchMode == "exact");
             Assert.Null(UsageCredits.FindRate(
@@ -77,6 +77,45 @@ public sealed class RateCatalogFileServiceTests
                     Assert.Equal("vendor pricing", second.Source);
                     Assert.Equal(20, second.InputCreditsPerMillion);
                 });
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAndImportAsync_PreservesPrefixOverridesOverInheritedBuiltIns()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var path = Path.Combine(root, "prefix-rates.json");
+            var service = new RateCatalogFileService();
+            var rates = new[]
+            {
+                new ModelCreditRate("gpt-5.6", 7, 0.7, 70, MatchMode: "prefix"),
+                new ModelCreditRate("gpt-daybreak", 8, 0.8, 80, MatchMode: "prefix")
+            };
+
+            await service.ExportAsync(rates, path);
+            var imported = await service.ImportAsync(path);
+
+            Assert.Equal(7, UsageCredits.FindRate(
+                "gpt-5.6-terra",
+                new DateOnly(2026, 9, 9),
+                imported.Rates,
+                completeRateCatalog: true)?.InputCreditsPerMillion);
+            Assert.Equal(7, UsageCredits.FindRate(
+                "gpt-5.6-cyber",
+                new DateOnly(2026, 9, 9),
+                imported.Rates,
+                completeRateCatalog: true)?.InputCreditsPerMillion);
+            Assert.Equal(8, UsageCredits.FindRate(
+                "gpt-daybreak-red-latest",
+                new DateOnly(2026, 9, 9),
+                imported.Rates,
+                completeRateCatalog: true)?.InputCreditsPerMillion);
         }
         finally
         {

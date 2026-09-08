@@ -5,6 +5,7 @@ import {
   builtInModelNames as builtInModelList,
   newestBuiltInRateFor,
   nextUnoverriddenModel,
+  normalizeRatePattern,
 } from '../builtInRates'
 import { HOST_CAPABILITY } from '../hostCapabilities'
 import { useDashboardStore } from '../stores/dashboard'
@@ -66,7 +67,7 @@ const rateValidationMessage = computed(() => {
   }
   const seen = new Set<string>()
   for (const rate of store.settingsDraft?.customModelRates ?? []) {
-    const model = normalizeRateModel(rate.model)
+    const model = normalizeRatePattern(rate.model, rate.matchMode)
     if (!model) return '每条自定义费率都必须填写模型名称。'
     const values: unknown[] = [
       rate.inputCreditsPerMillion,
@@ -101,16 +102,9 @@ function amountMoney(value?: number | null) {
   return currencyAmount(value, 'US$')
 }
 
-function normalizeRateModel(model: string) {
-  let normalized = model.trim().toLowerCase().replaceAll('_', '-').replaceAll(' ', '-')
-  if (normalized.endsWith('-latest')) normalized = normalized.slice(0, -'-latest'.length)
-  if (normalized === 'gpt-5.2-codex') return 'gpt-5.2'
-  return normalized
-}
-
 function rateIdentity(rate: ModelCreditRate) {
   return [
-    normalizeRateModel(rate.model),
+    normalizeRatePattern(rate.model, rate.matchMode),
     rate.effectiveFrom || '',
     rate.inputCreditsPerMillion,
     rate.cachedInputCreditsPerMillion,
@@ -124,11 +118,11 @@ function rateIdentity(rate: ModelCreditRate) {
 const builtInModelNames = computed(() => builtInModelList(store.rateCatalog?.builtInRates))
 
 /**
- * Copies the official rate for a model into the row being edited.
+ * Copies the current built-in rate for a model into the row being edited.
  *
  * A blank row is a bad starting point: the user has to already know that
  * claude-opus-5 is 125 / 12.5 / 625 to fill it in, and a wrong digit silently
- * misprices every future month. Starting from the current official figure makes
+ * misprices every future month. Starting from the current built-in figure makes
  * an override an edit rather than a recall exercise.
  */
 function applyBuiltInDefaults(rate: ModelCreditRate) {
@@ -149,7 +143,7 @@ function addCustomRate() {
   ].join('-')
   store.settingsDraft.customModelRates ??= []
   // Seeded with the first built-in model not already overridden, at its current
-  // official rate — so the row starts from a correct figure the user edits,
+  // built-in rate — so the row starts from a known figure the user edits,
   // rather than from zeros that would price everything at nothing if saved.
   const model = nextUnoverriddenModel(store.rateCatalog?.builtInRates, store.settingsDraft.customModelRates)
   const builtIn = newestBuiltInRateFor(store.rateCatalog?.builtInRates, model)
@@ -356,7 +350,7 @@ function removeCustomRate(index: number) {
           <!-- Free text with suggestions, not a select: an override for a model the
                built-in catalog has never heard of is the main reason to add a row
                at all, so the list must not be a whitelist. Choosing a known model
-               fills in its current official rate. -->
+               fills in its current built-in rate. -->
           <label><span>模型</span><input v-model="rate.model" :disabled="isPinnedRateCatalog" maxlength="100" list="built-in-rate-models" placeholder="例如 claude-sonnet-4" @change="applyBuiltInDefaults(rate)" /></label>
           <label><span>生效日期</span><input v-model="rate.effectiveFrom" :disabled="isPinnedRateCatalog" type="date" /></label>
           <label><span>普通输入 / 1M</span><input v-model.number="rate.inputCreditsPerMillion" :disabled="isPinnedRateCatalog" type="number" min="0" max="1000000" step="0.001" /></label>
@@ -372,7 +366,8 @@ function removeCustomRate(index: number) {
         <datalist id="built-in-rate-models">
           <option v-for="name in builtInModelNames" :key="name" :value="name" />
         </datalist>
-        <p class="setting-hint">新增一行会带出该模型当前生效的官方费率作为起点；改写模型名可重新带出对应默认值。自定义费率会覆盖内置值，留空或填 0 表示该模型不计费。</p>
+        <p class="setting-hint">新增一行会带出该模型当前生效的内置费率作为起点；改写模型名可重新带出对应默认值。自定义费率会覆盖内置值，留空或填 0 表示该模型不计费。</p>
+        <p class="setting-hint">标注官方来源的 OpenAI 行按 API Standard 短上下文价目折算等值。当前本地日志不能可靠区分单次输入超过 272K、Batch/Flex/Fast 或区域处理，因此这些档位不会被猜价；显示金额不是 API 账单或订阅实际扣费。</p>
         <p class="setting-hint">计算会按用量发生日期选择当日已生效的最新版本；自定义费率优先。生效日期留空表示适用于全部历史。“精确模型”最安全；仅当同一费率明确覆盖整个模型家族时才选择“前缀家族”。未知模型仍保留在“未核算 Token”中。</p>
         <p v-if="store.settingsDirty" class="setting-hint">导入、导出或恢复目录前，请先保存或放弃当前页面的更改，避免草稿被覆盖或导出旧数据。</p>
         <p v-if="rateValidationMessage" class="setting-error" role="alert">{{ rateValidationMessage }}</p>
