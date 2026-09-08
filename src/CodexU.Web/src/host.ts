@@ -287,10 +287,10 @@ class HostBridge {
       return {
         builtIn: {
           schemaVersion: 1,
-          catalogVersion: '2026.07.1',
-          source: '用户提供的 OpenAI Credits 参考表',
-          publishedOn: '2026-07-14',
-          rateCount: 11,
+          catalogVersion: '2026.09.1',
+          source: '内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）',
+          publishedOn: '2026-09-09',
+          rateCount: 30,
         },
         // A representative slice of the real catalog rather than an empty list:
         // the rate editor seeds a new row from these, so an empty array would
@@ -302,6 +302,16 @@ class HostBridge {
           { model: 'claude-sonnet-5', inputCreditsPerMillion: 75, cachedInputCreditsPerMillion: 7.5, outputCreditsPerMillion: 375, effectiveFrom: '2026-09-01', source: 'Anthropic 公布的 Claude API 价目（Sonnet 5 首发优惠到期）', catalogVersion: 'anthropic-2026.09.1', matchMode: 'exact' },
           { model: 'claude-haiku-4-5', inputCreditsPerMillion: 25, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 125, effectiveFrom: null, source: 'Anthropic 公布的 Claude API 价目', catalogVersion: 'anthropic-2026.07.1', matchMode: 'exact' },
           { model: 'gpt-5.2', inputCreditsPerMillion: 43.75, cachedInputCreditsPerMillion: 4.375, outputCreditsPerMillion: 350, effectiveFrom: null, source: '用户提供的 OpenAI Credits 参考表', catalogVersion: '2026.07.1', matchMode: 'exact' },
+          { model: 'gpt-5.4-mini', inputCreditsPerMillion: 18.75, cachedInputCreditsPerMillion: 1.875, outputCreditsPerMillion: 112.5, effectiveFrom: '2026-03-17', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.03.1', matchMode: 'exact' },
+          { model: 'gpt-5.6-sol', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 750, effectiveFrom: null, source: '用户提供的 OpenAI Credits 参考表', catalogVersion: '2026.07.1', matchMode: 'exact' },
+          { model: 'gpt-5.6-terra', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 300, effectiveFrom: '2026-07-30', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.07.2', matchMode: 'exact' },
+          { model: 'gpt-5.6-luna', inputCreditsPerMillion: 5, cachedInputCreditsPerMillion: 0.5, outputCreditsPerMillion: 30, effectiveFrom: '2026-07-30', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.07.2', matchMode: 'exact' },
+          { model: 'gpt-5.6-cyber', inputCreditsPerMillion: 312.5, cachedInputCreditsPerMillion: 31.25, outputCreditsPerMillion: 1875, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
+          { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 750, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
+          { model: 'gpt-daybreak-red', inputCreditsPerMillion: 312.5, cachedInputCreditsPerMillion: 31.25, outputCreditsPerMillion: 1875, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
+          { model: 'gpt-5.6-sol', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
+          { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
+          { model: 'gpt-6-astra', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-03', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.1', matchMode: 'exact' },
         ],
       } as T
     }
@@ -375,14 +385,40 @@ class HostBridge {
   }
 }
 
+function demoSolRateOn(date: Date) {
+  const dateKey = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+  return dateKey >= '2026-08-21'
+    ? {
+        input: 100,
+        cachedInput: 10,
+        output: 500,
+        catalogVersion: '2026.08.2',
+        source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）',
+        effectiveFrom: '2026-08-21',
+      }
+    : {
+        input: 125,
+        cachedInput: 12.5,
+        output: 750,
+        catalogVersion: '2026.07.1',
+        source: '用户提供的 OpenAI Credits 参考表',
+        effectiveFrom: null,
+      }
+}
+
 function period(tokens: number, quality: 'detailed' | 'unavailable' = 'detailed') {
+  const rate = demoSolRateOn(demoNow())
   const inputTokens = Math.round(tokens * 0.67)
   const cachedInputTokens = Math.round(tokens * 0.43)
   const outputTokens = Math.round(tokens * 0.33)
   const uncachedInputTokens = inputTokens - cachedInputTokens
-  const creditsUsed = uncachedInputTokens / 1_000_000 * 125
-    + cachedInputTokens / 1_000_000 * 12.5
-    + outputTokens / 1_000_000 * 750
+  const creditsUsed = uncachedInputTokens / 1_000_000 * rate.input
+    + cachedInputTokens / 1_000_000 * rate.cachedInput
+    + outputTokens / 1_000_000 * rate.output
   const breakdown = {
     inputTokens,
     cachedInputTokens,
@@ -400,10 +436,10 @@ function period(tokens: number, quality: 'detailed' | 'unavailable' = 'detailed'
     billableCacheWrite1hTokens: 0,
     billableCacheWriteTokens: 0,
   }
-  const inputCredits = uncachedInputTokens / 1_000_000 * 125
-  const cachedInputCredits = cachedInputTokens / 1_000_000 * 12.5
-  const outputCredits = outputTokens / 1_000_000 * 750
-  const cachedSavingsCredits = cachedInputTokens / 1_000_000 * (125 - 12.5)
+  const inputCredits = uncachedInputTokens / 1_000_000 * rate.input
+  const cachedInputCredits = cachedInputTokens / 1_000_000 * rate.cachedInput
+  const outputCredits = outputTokens / 1_000_000 * rate.output
+  const cachedSavingsCredits = cachedInputTokens / 1_000_000 * (rate.input - rate.cachedInput)
   return {
     tokens,
     breakdown,
@@ -419,9 +455,9 @@ function period(tokens: number, quality: 'detailed' | 'unavailable' = 'detailed'
       cachedSavingsCredits,
       totalCredits: creditsUsed,
       rateVersions: [{
-        catalogVersion: '2026.07.1',
-        source: '用户提供的 OpenAI Credits 参考表',
-        effectiveFrom: null,
+        catalogVersion: rate.catalogVersion,
+        source: rate.source,
+        effectiveFrom: rate.effectiveFrom,
         tokens: breakdown,
         inputCredits,
         cachedInputCredits,
@@ -449,10 +485,14 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
     date.setDate(today.getDate() - (181 - index))
     const wave = Math.max(0, Math.sin(index * 0.31) * 0.65 + ((index * 37) % 100) / 165 - 0.18)
     const tokens = index % 11 === 0 ? 0 : Math.round(wave * 2_800_000)
+    const rate = demoSolRateOn(date)
     return {
       date: date.toISOString().slice(0, 10),
       tokens,
-      creditsUsed: tokens / 1_000_000 * 282.875,
+      creditsUsed: tokens / 1_000_000 * (
+        0.24 * rate.input
+        + 0.43 * rate.cachedInput
+        + 0.33 * rate.output),
       quality: 'detailed' as const,
     }
   })

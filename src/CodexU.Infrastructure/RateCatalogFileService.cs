@@ -229,7 +229,7 @@ public sealed class RateCatalogFileService
                 throw new InvalidDataException("模型名称不能为空且不能超过 100 个字符。");
             }
 
-            if (!keys.Add((UsageCredits.NormalizeModel(rate.Model), rate.EffectiveFrom)))
+            if (!keys.Add((UsageCredits.NormalizeRatePattern(rate.Model, rate.MatchMode), rate.EffectiveFrom)))
             {
                 throw new InvalidDataException($"费率目录包含重复的模型与生效日期：{rate.Model} / {rate.EffectiveFrom?.ToString("yyyy-MM-dd") ?? "全部历史"}。");
             }

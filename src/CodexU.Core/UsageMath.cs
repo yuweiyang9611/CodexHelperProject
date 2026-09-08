@@ -80,18 +80,27 @@ public static class UsageCredits
     public const int MaximumCatalogRateCount = 1_000;
     public const string CustomCatalogVersion = "custom";
     public const string CustomCatalogSource = "codexU 用户自定义";
+    private const string Catalog2026031Version = "2026.03.1";
     private const string Catalog2026071Version = "2026.07.1";
     private const string Catalog2026071Source = "用户提供的 OpenAI Credits 参考表";
+    private const string Catalog2026072Version = "2026.07.2";
+    private const string Catalog2026081Version = "2026.08.1";
+    private const string Catalog2026082Version = "2026.08.2";
+    private const string Catalog2026091Version = "2026.09.1";
+    private const string OpenAiStandardSource = "OpenAI API 官方 Standard 短上下文价目与 Changelog";
+    private const string OpenAiSolPromotionSource =
+        "OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）";
     // Shown in the settings page for the built-in catalog as a whole. The per-row
     // Source still names each vendor's own table; this only has to stop claiming the
     // combined catalog is OpenAI-only now that it spans more than one lineage.
-    private const string BuiltInCatalogSource = "内置费率目录（OpenAI Credits 参考表 + Anthropic 公布价目）";
+    private const string BuiltInCatalogSource =
+        "内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）";
     private const string CatalogAnthropic2026071Version = "anthropic-2026.07.1";
     private const string CatalogAnthropic2026071Source = "Anthropic 公布的 Claude API 价目";
     private const string CatalogAnthropic2026091Version = "anthropic-2026.09.1";
     private const string CatalogAnthropic2026091Source = "Anthropic 公布的 Claude API 价目（Sonnet 5 首发优惠到期）";
-    public const string CurrentCatalogVersion = Catalog2026071Version;
-    public const string CurrentCatalogSource = Catalog2026071Source;
+    public const string CurrentCatalogVersion = Catalog2026091Version;
+    public const string CurrentCatalogSource = BuiltInCatalogSource;
 
     // Cache writes are priced as a fixed multiple of the model's base input rate
     // rather than quoted per model, so they live here instead of on ModelCreditRate.
@@ -130,6 +139,24 @@ public static class UsageCredits
         BuiltIn(Catalog2026071Version, Catalog2026071Source, null, "gpt-image-2.0-image", 200d, 50d, 750d),
         BuiltIn(Catalog2026071Version, Catalog2026071Source, null, "gpt-image-2.0-text", 125d, 31.25d, 250d),
 
+        // OpenAI publishes API prices in USD per million tokens. Credits are the
+        // application's stable intermediate unit (25 credits = US$1), so these
+        // rows convert the official Standard, short-context prices at ingestion.
+        // Keep the original undated rows above: dated rows replay each price change
+        // without rewriting usage that predates the official effective date.
+        OpenAiApi(Catalog2026031Version, OpenAiStandardSource, new DateOnly(2026, 3, 17), "gpt-5.4-mini", 0.75d, 0.075d, 4.5d),
+        OpenAiApi(Catalog2026072Version, OpenAiStandardSource, new DateOnly(2026, 7, 30), "gpt-5.6-terra", 2d, 0.2d, 12d),
+        OpenAiApi(Catalog2026072Version, OpenAiStandardSource, new DateOnly(2026, 7, 30), "gpt-5.6-luna", 0.2d, 0.02d, 1.2d),
+        OpenAiApi(Catalog2026081Version, OpenAiStandardSource, new DateOnly(2026, 8, 7), "gpt-5.6-cyber", 12.5d, 1.25d, 75d),
+        // Daybreak aliases are intentionally rows rather than permanent canonical
+        // mappings: OpenAI says each alias can retarget, so future changes append a
+        // dated row and do not reprice historical requests made through the alias.
+        OpenAiApi(Catalog2026081Version, OpenAiStandardSource, new DateOnly(2026, 8, 7), "gpt-daybreak-blue", 5d, 0.5d, 30d),
+        OpenAiApi(Catalog2026081Version, OpenAiStandardSource, new DateOnly(2026, 8, 7), "gpt-daybreak-red", 12.5d, 1.25d, 75d),
+        OpenAiApi(Catalog2026082Version, OpenAiSolPromotionSource, new DateOnly(2026, 8, 21), "gpt-5.6-sol", 4d, 0.4d, 20d),
+        OpenAiApi(Catalog2026082Version, OpenAiSolPromotionSource, new DateOnly(2026, 8, 21), "gpt-daybreak-blue", 4d, 0.4d, 20d),
+        OpenAiApi(Catalog2026091Version, OpenAiStandardSource, new DateOnly(2026, 9, 3), "gpt-6-astra", 10d, 1d, 50d),
+
         // Anthropic list prices converted at CreditsPerDollar. Cached input is the
         // published 0.1x cache-read multiple, matching the OpenAI rows above.
         // Only the alias is registered: NormalizeModel collapses a dated snapshot
@@ -167,7 +194,10 @@ public static class UsageCredits
         Rates.FirstOrDefault(rate => MatchesBuiltInPricing(rate, candidate));
 
     private static bool MatchesBuiltInPricing(ModelCreditRate rate, ModelCreditRate candidate) =>
-        string.Equals(NormalizeModel(rate.Model), NormalizeModel(candidate.Model), StringComparison.Ordinal)
+        string.Equals(
+            NormalizeRatePattern(rate.Model, rate.MatchMode),
+            NormalizeRatePattern(candidate.Model, candidate.MatchMode),
+            StringComparison.Ordinal)
         && rate.EffectiveFrom == candidate.EffectiveFrom
         && string.Equals(rate.MatchMode, candidate.MatchMode, StringComparison.OrdinalIgnoreCase)
         && rate.InputCreditsPerMillion.Equals(candidate.InputCreditsPerMillion)
@@ -178,7 +208,7 @@ public static class UsageCredits
         RateCatalogSchemaVersion,
         CurrentCatalogVersion,
         BuiltInCatalogSource,
-        new DateOnly(2026, 7, 14),
+        new DateOnly(2026, 9, 9),
         Rates.Count);
 
     public static RateCatalogSnapshot CatalogSnapshot => new(BuiltInCatalog, Rates);
@@ -245,7 +275,8 @@ public static class UsageCredits
         bool completeRateCatalog = false)
     {
         var normalized = NormalizeModel(model);
-        var custom = FindMatchingRate(normalized, usageDate, customRates, allowPrefix: true);
+        var unaliased = NormalizeRatePattern(model, "prefix");
+        var custom = FindMatchingRate(normalized, unaliased, usageDate, customRates, allowPrefix: true);
         if (custom is not null)
         {
             return custom;
@@ -273,7 +304,7 @@ public static class UsageCredits
             return null;
         }
 
-        return FindMatchingRate(normalized, usageDate, Rates, allowPrefix: false);
+        return FindMatchingRate(normalized, unaliased, usageDate, Rates, allowPrefix: false);
     }
 
     /// <summary>
@@ -329,19 +360,26 @@ public static class UsageCredits
 
     private static ModelCreditRate? FindMatchingRate(
         string normalized,
+        string unaliased,
         DateOnly usageDate,
         IReadOnlyList<ModelCreditRate>? rates,
         bool allowPrefix) => rates?
         .Where(rate => rate.EffectiveFrom is null || rate.EffectiveFrom <= usageDate)
-        .OrderByDescending(rate => NormalizeModel(rate.Model).Length)
+        // Exported/pinned catalogs contain inherited built-in rows alongside user
+        // overrides. Preserve the live custom-before-built-in contract after that
+        // round trip before applying the usual most-specific-pattern rule.
+        .OrderBy(rate => allowPrefix && IsBuiltInRate(rate))
+        .ThenByDescending(rate => NormalizeRatePattern(rate.Model, rate.MatchMode).Length)
         .ThenByDescending(rate => rate.EffectiveFrom ?? DateOnly.MinValue)
         .FirstOrDefault(rate =>
         {
-            var rateModel = NormalizeModel(rate.Model);
+            var rateModel = NormalizeRatePattern(rate.Model, rate.MatchMode);
             return string.Equals(normalized, rateModel, StringComparison.Ordinal)
                 || allowPrefix
                     && string.Equals(rate.MatchMode, "prefix", StringComparison.OrdinalIgnoreCase)
-                    && normalized.StartsWith(rateModel + "-", StringComparison.Ordinal);
+                    && (string.Equals(unaliased, rateModel, StringComparison.Ordinal)
+                        || normalized.StartsWith(rateModel + "-", StringComparison.Ordinal)
+                        || unaliased.StartsWith(rateModel + "-", StringComparison.Ordinal));
         });
 
     public static RateCatalogDocument CreateCatalogDocument(
@@ -355,7 +393,7 @@ public static class UsageCredits
             ? new Dictionary<(string Model, DateOnly? EffectiveFrom), ModelCreditRate>(
                 ModelRateVersionKeyComparer.Instance)
             : Rates.ToDictionary(
-                rate => (NormalizeModel(rate.Model), rate.EffectiveFrom),
+                rate => (NormalizeRatePattern(rate.Model, rate.MatchMode), rate.EffectiveFrom),
                 ModelRateVersionKeyComparer.Instance);
         var customKeys = new HashSet<(string Model, DateOnly? EffectiveFrom)>(ModelRateVersionKeyComparer.Instance);
         var hasCustomRates = false;
@@ -366,7 +404,7 @@ public static class UsageCredits
                 throw new ArgumentException("费率目录不能包含 null 项。", nameof(customRates));
             }
 
-            var normalizedModel = NormalizeModel(customRate.Model);
+            var normalizedModel = NormalizeRatePattern(customRate.Model, customRate.MatchMode);
             var key = (normalizedModel, customRate.EffectiveFrom);
             if (!customKeys.Add(key))
             {
@@ -429,7 +467,7 @@ public static class UsageCredits
         }
 
         var rates = resolvedRates.Values
-            .OrderBy(rate => NormalizeModel(rate.Model), StringComparer.Ordinal)
+            .OrderBy(rate => NormalizeRatePattern(rate.Model, rate.MatchMode), StringComparer.Ordinal)
             .ThenBy(rate => rate.EffectiveFrom ?? DateOnly.MinValue)
             .ToArray();
         if (completeSnapshot && rates.Length == 0)
@@ -474,7 +512,23 @@ public static class UsageCredits
         return trimmed;
     }
 
-    public static string NormalizeModel(string? model)
+    public static string NormalizeModel(string? model) =>
+        ResolveModelAlias(NormalizeModelSyntax(model));
+
+    /// <summary>
+    /// Normalizes a persisted rate key without changing the meaning of a family
+    /// prefix. Exact rows resolve official aliases, while prefix rows keep the
+    /// user's literal family (for example <c>gpt-5.6</c>).
+    /// </summary>
+    public static string NormalizeRatePattern(string? model, string? matchMode)
+    {
+        var normalized = NormalizeModelSyntax(model);
+        return string.Equals(matchMode, "prefix", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : ResolveModelAlias(normalized);
+    }
+
+    private static string NormalizeModelSyntax(string? model)
     {
         if (string.IsNullOrWhiteSpace(model))
         {
@@ -493,41 +547,66 @@ public static class UsageCredits
         // would need its own row and any id released later would silently go unrated.
         normalized = StripDatedSnapshotSuffix(normalized);
 
-        return normalized switch
+        return normalized;
+    }
+
+    private static string ResolveModelAlias(string normalized) =>
+        normalized switch
         {
             "gpt-5.2-codex" => "gpt-5.2",
+            "gpt-5.6" => "gpt-5.6-sol",
             "gpt-5.3-codex-spark" => "gpt-5.3-codex-spark",
             _ => normalized
         };
-    }
 
     /// <summary>
-    /// Drops a trailing <c>-YYYYMMDD</c> snapshot suffix. Only a plausible calendar
-    /// date is removed, so an id that merely ends in eight digits keeps them.
+    /// Drops a trailing <c>-YYYYMMDD</c> or <c>-YYYY-MM-DD</c> snapshot suffix.
+    /// OpenAI uses the dashed form while Anthropic commonly uses the compact form.
+    /// Only a valid calendar date is removed, so an id that merely ends in digits
+    /// keeps them.
     /// </summary>
     private static string StripDatedSnapshotSuffix(string normalized)
     {
-        const int SuffixLength = 9; // "-" plus eight digits.
-        if (normalized.Length <= SuffixLength || normalized[^SuffixLength] != '-')
+        const int CompactSuffixLength = 9; // "-" plus eight digits.
+        if (normalized.Length > CompactSuffixLength
+            && normalized[^CompactSuffixLength] == '-')
         {
-            return normalized;
-        }
-
-        var digits = normalized.AsSpan(normalized.Length - 8);
-        foreach (var character in digits)
-        {
-            if (!char.IsAsciiDigit(character))
+            var compact = normalized.AsSpan(normalized.Length - 8);
+            if (TryReadSnapshotDate(compact[..4], compact.Slice(4, 2), compact.Slice(6, 2)))
             {
-                return normalized;
+                return normalized[..^CompactSuffixLength];
             }
         }
 
-        var year = int.Parse(digits[..4]);
-        var month = int.Parse(digits.Slice(4, 2));
-        var day = int.Parse(digits.Slice(6, 2));
-        return year >= 2000 && month is >= 1 and <= 12 && day is >= 1 and <= 31
-            ? normalized[..^SuffixLength]
-            : normalized;
+        const int DashedSuffixLength = 11; // "-YYYY-MM-DD".
+        if (normalized.Length > DashedSuffixLength)
+        {
+            var dashed = normalized.AsSpan(normalized.Length - DashedSuffixLength);
+            if (dashed[0] == '-' && dashed[5] == '-' && dashed[8] == '-'
+                && TryReadSnapshotDate(dashed.Slice(1, 4), dashed.Slice(6, 2), dashed.Slice(9, 2)))
+            {
+                return normalized[..^DashedSuffixLength];
+            }
+        }
+
+        return normalized;
+    }
+
+    private static bool TryReadSnapshotDate(
+        ReadOnlySpan<char> yearText,
+        ReadOnlySpan<char> monthText,
+        ReadOnlySpan<char> dayText)
+    {
+        if (!int.TryParse(yearText, out var year)
+            || !int.TryParse(monthText, out var month)
+            || !int.TryParse(dayText, out var day)
+            || year < 2000
+            || month is < 1 or > 12)
+        {
+            return false;
+        }
+
+        return day >= 1 && day <= DateTime.DaysInMonth(year, month);
     }
 
     public static DateTimeOffset? FromUnixTime(long? value)
@@ -558,6 +637,23 @@ public static class UsageCredits
         double cachedInput,
         double output) =>
         new(model, input, cachedInput, output, effectiveFrom, source, catalogVersion, "exact");
+
+    private static ModelCreditRate OpenAiApi(
+        string catalogVersion,
+        string source,
+        DateOnly effectiveFrom,
+        string model,
+        double inputDollars,
+        double cachedInputDollars,
+        double outputDollars) =>
+        BuiltIn(
+            catalogVersion,
+            source,
+            effectiveFrom,
+            model,
+            inputDollars * CreditsPerDollar,
+            cachedInputDollars * CreditsPerDollar,
+            outputDollars * CreditsPerDollar);
 
     // Cache writes bill at a multiple of the model's base input rate. A source that
     // does not report the 5m/1h split leaves both slices at zero, so this adds
