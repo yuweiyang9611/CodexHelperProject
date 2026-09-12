@@ -239,14 +239,15 @@ public sealed class LocalDataManagementService(
             var journal = await LocalRestoreJournal.PrepareAsync(
                 _dataDirectory,
                 payload.IncludesHistory,
-                cancellationToken);
+                cancellationToken,
+                payload.HistoryPaths.Contains(UsageHistoryLedger.RelativePath));
             try
             {
                 var settings = await settingsStore.SaveAsync(payload.Settings, cancellationToken);
                 var todos = await todoStore.ReplaceAsync(payload.Todos, cancellationToken);
                 if (payload.IncludesHistory)
                 {
-                    await RestoreHistoryAsync(payload.History, cancellationToken);
+                    await RestoreHistoryAsync(payload.History, cancellationToken, payload.HistoryPaths);
                 }
 
                 // Caches are reconstructible, unlike the restored ledger. Never let
@@ -263,7 +264,7 @@ public sealed class LocalDataManagementService(
                 var transaction = new LocalDataRestoreTransaction(
                     result,
                     journal,
-                    () => _dataOperationGate.Release());
+                    () => { UsageReadContext.Invalidate(_dataDirectory); _dataOperationGate.Release(); });
                 leaseTransferred = true;
                 return transaction;
             }
@@ -297,6 +298,7 @@ public sealed class LocalDataManagementService(
         {
             if (!leaseTransferred)
             {
+                UsageReadContext.Invalidate(_dataDirectory);
                 _dataOperationGate.Release();
             }
         }
@@ -405,21 +407,26 @@ public sealed class LocalDataManagementService(
         return new LocalOperationResult(true, $"脱敏诊断包已生成：{path}", path);
     }
 
-    public Task<LocalOperationResult> RebuildSessionIndexAsync(CancellationToken cancellationToken = default)
+    public async Task<LocalOperationResult> RebuildSessionIndexAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var claudeIndex = Path.Combine(_dataDirectory, "claude-session-index-v1.json");
-        if (File.Exists(claudeIndex)) File.Move(claudeIndex, claudeIndex + ".rebuild-" + Guid.NewGuid().ToString("N"));
-        var index = Path.Combine(_dataDirectory, "session-index-v1.json");
-        if (!File.Exists(index))
+        await _dataOperationGate.WaitAsync(cancellationToken);
+        try
         {
-            return Task.FromResult(new LocalOperationResult(true, "本地 session 索引尚未生成；下一次刷新会创建。"));
-        }
+            UsageReadContext.Invalidate(_dataDirectory);
+            var claudeIndex = Path.Combine(_dataDirectory, "claude-session-index-v1.json");
+            if (File.Exists(claudeIndex)) File.Move(claudeIndex, claudeIndex + ".rebuild-" + Guid.NewGuid().ToString("N"));
+            var index = Path.Combine(_dataDirectory, "session-index-v1.json");
+            if (!File.Exists(index))
+            {
+                return new LocalOperationResult(true, "本地 session 索引尚未生成；下一次刷新会创建。");
+            }
 
-        Directory.CreateDirectory(_dataDirectory);
-        var backup = Path.Combine(_dataDirectory, $"session-index.rebuild-{DateTimeOffset.Now:yyyyMMddHHmmss}.json");
-        File.Move(index, backup, overwrite: false);
-        return Task.FromResult(new LocalOperationResult(true, "旧索引已安全备份；下一次刷新将完整重建。", backup));
+            Directory.CreateDirectory(_dataDirectory);
+            var backup = Path.Combine(_dataDirectory, $"session-index.rebuild-{DateTimeOffset.Now:yyyyMMddHHmmss}.json");
+            File.Move(index, backup, overwrite: false);
+            return new LocalOperationResult(true, "旧索引已安全备份；下一次刷新将完整重建。", backup);
+        }
+        finally { _dataOperationGate.Release(); }
     }
 
     private string EnsureAllowedDestination(string path, string extension)
@@ -571,7 +578,7 @@ public sealed class LocalDataManagementService(
 
         var settings = (backup.Settings with { CodexExecutable = null }).Validate().Normalize();
         TodoStore.ValidateReplacement(backup.Todos);
-        return new RestorePayload(settings, backup.Todos, new Dictionary<string, byte[]>(), IncludesHistory: false);
+        return new RestorePayload(settings, backup.Todos, new Dictionary<string, byte[]>(), IncludesHistory: false, []);
     }
 
     private RestorePayload ValidateCurrentBackup(BackupDocument backup)
@@ -585,7 +592,8 @@ public sealed class LocalDataManagementService(
         }
 
         var allowedPaths = new HashSet<string>(
-            [SettingsBackupPath, TodosBackupPath, .. HistoryBackupPaths],
+            [SettingsBackupPath, TodosBackupPath, .. (backup.SchemaVersion == 2
+                ? new[] { CodexHistoryBackupPath, ClaudeHistoryBackupPath } : HistoryBackupPaths)],
             StringComparer.Ordinal);
         if (backup.Manifest.Files is null || backup.Manifest.Files.Count is < 2 or > 5)
         {
@@ -683,7 +691,8 @@ public sealed class LocalDataManagementService(
             }
         }
 
-        return new RestorePayload(settings, todos, history, IncludesHistory: true);
+        return new RestorePayload(settings, todos, history, IncludesHistory: true,
+            backup.SchemaVersion == 2 ? [CodexHistoryBackupPath, ClaudeHistoryBackupPath] : HistoryBackupPaths);
     }
 
     private void ValidateLedgerContent(byte[] content)
@@ -735,9 +744,11 @@ public sealed class LocalDataManagementService(
 
     private async Task RestoreHistoryAsync(
         IReadOnlyDictionary<string, byte[]> history,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? historyPaths = null)
     {
-        foreach (var relativePath in HistoryBackupPaths)
+        UsageReadContext.Invalidate(_dataDirectory);
+        foreach (var relativePath in historyPaths ?? HistoryBackupPaths)
         {
             var targetPath = ManagedPathFor(relativePath);
             if (!history.TryGetValue(relativePath, out var content))
@@ -954,7 +965,8 @@ public sealed class LocalDataManagementService(
         AppSettings Settings,
         IReadOnlyList<TodoItem> Todos,
         IReadOnlyDictionary<string, byte[]> History,
-        bool IncludesHistory);
+        bool IncludesHistory,
+        IReadOnlyList<string> HistoryPaths);
 
 }
 

@@ -160,7 +160,7 @@ public sealed class LocalDataManagementServiceTests
     }
 
     [Fact]
-    public async Task RestoreAsync_Schema2WithoutHistoryRemovesHistoryCreatedAfterBackup()
+    public async Task RestoreAsync_Schema3WithoutHistoryRemovesHistoryCreatedAfterBackup()
     {
         var root = CreateRoot();
         try
