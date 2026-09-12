@@ -35,3 +35,6 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+# The final child intentionally failed. Do not leak its exit code into the
+# GitHub Actions PowerShell wrapper after all assertions have passed.
+exit 0
