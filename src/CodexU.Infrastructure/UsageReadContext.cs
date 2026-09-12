@@ -10,6 +10,7 @@ public sealed class UsageReadContext
     internal long LedgerDeserialized;
     internal long LedgerWrites;
     internal long SourceComparisons;
+    internal long ReconstructionBuilds;
     internal sealed class LedgerMemory
     {
         internal string? Stamp;

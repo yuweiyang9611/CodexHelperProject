@@ -4,6 +4,28 @@ namespace CodexU.Infrastructure;
 
 public sealed partial class CodexSessionReader
 {
+    private sealed class WorkspaceEnrichment
+    {
+        internal string? Workspace;
+        internal ParsedSessionFile? Parsed;
+    }
+    private sealed class WorkspaceEnrichments
+    {
+        internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<ParsedSessionFile, WorkspaceEnrichment> Values = new();
+    }
+    private PhysicalSessionFile EnrichWorkspace(PhysicalSessionFile file, IReadOnlyDictionary<string, string> map)
+    {
+        if (file.Parsed.Workspace is not null || !map.TryGetValue(file.Parsed.SessionId ?? "", out var workspace)) return file;
+        var entry = UsageReadContext.For(indexDirectory).Get("codex-workspaces", () => new WorkspaceEnrichments())
+            .Values.GetValue(file.Parsed, _ => new WorkspaceEnrichment());
+        if (entry.Parsed is null || entry.Workspace != workspace)
+        {
+            entry.Workspace = workspace;
+            entry.Parsed = file.Parsed with { Workspace = workspace };
+        }
+        return file with { Parsed = entry.Parsed };
+    }
+
     private static bool CanReplaceHistory(ParsedSessionFile previous, ParsedSessionFile next) =>
         next.Offset >= previous.Offset
         && next.TokenEvents.Count >= previous.TokenEvents.Count

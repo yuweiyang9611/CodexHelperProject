@@ -16,6 +16,7 @@ public sealed partial class CodexSessionReader
             && cache.Inputs.Zip(files).All(p => p.First.Path == p.Second.Path
                 && p.First.LastWriteTimeUtcTicks == p.Second.LastWriteTimeUtcTicks && ReferenceEquals(p.First.Parsed, p.Second.Parsed))) return cache.Result;
         cache.Inputs = files.ToArray();
+        UsageReadContext.For(indexDirectory).ReconstructionBuilds++;
         return cache.Result = ReconstructSessions(files) with
         {
             DisputedSources = files.Where(f => f.Parsed.SessionId is not null).GroupBy(f => f.Parsed.SessionId!, StringComparer.Ordinal)

@@ -214,6 +214,10 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             await File.WriteAllLinesAsync(original, [Meta("session", ""), CodexLine(100)]);
             CodexSessionReader Reader() => new(paths, indexDirectory: root, defaultWorkspace: repo, historyEnabled: true);
             Assert.Equal(100, (await Reader().ReadAsync()).Tokens.Lifetime.Tokens);
+            var context = UsageReadContext.For(root);
+            var builds = context.ReconstructionBuilds;
+            Assert.Equal(100, (await Reader().ReadAsync()).Tokens.Lifetime.Tokens);
+            Assert.Equal(builds, context.ReconstructionBuilds);
             Directory.CreateDirectory(paths.ArchivedSessionsDirectory);
             await File.WriteAllLinesAsync(Path.Combine(paths.ArchivedSessionsDirectory, "rollout-conflict.jsonl"),
                 [Meta("session", repo), CodexLine(900), CodexLine(1000)]);

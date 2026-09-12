@@ -154,15 +154,7 @@ public sealed partial class CodexSessionReader(
         }
 
         var workspaceMap = await ReadWorkspaceMapAsync(paths.StateDatabase, cancellationToken);
-        physicalFiles = physicalFiles.Select(file => file.Parsed.Workspace is not null
-            || !workspaceMap.ContainsKey(file.Parsed.SessionId ?? "") ? file : file with
-            {
-                Parsed = file.Parsed with
-                {
-                    Workspace = file.Parsed.Workspace
-                ?? workspaceMap.GetValueOrDefault(file.Parsed.SessionId ?? "")
-                }
-            }).ToList();
+        physicalFiles = physicalFiles.Select(file => EnrichWorkspace(file, workspaceMap)).ToList();
         // Preserve raw normalized session identities before reconstruction. Missing parents
         // remain available for fork-prefix comparison after their source file disappears.
         var liveReconstruction = ReconstructCached(physicalFiles, "live");
