@@ -18,6 +18,7 @@ internal sealed class BoundedLineReader
     private int _bufferOffset;
     private int _bufferLength;
     private bool _isFirstLine = true;
+    public long ConsumedBytes { get; private set; }
 
     public BoundedLineReader(
         Stream stream,
@@ -49,7 +50,7 @@ internal sealed class BoundedLineReader
                 if (_bufferLength == 0)
                 {
                     return hasBytes
-                        ? CreateResult(bytes.WrittenSpan, isTooLong)
+                        ? CreateResult(bytes.WrittenSpan, isTooLong) with { IsTerminated = false }
                         : BoundedLineReadResult.EndOfStream;
                 }
             }
@@ -73,12 +74,14 @@ internal sealed class BoundedLineReader
             }
 
             _bufferOffset += segmentLength;
+            ConsumedBytes += segmentLength;
             if (newlineIndex < 0)
             {
                 continue;
             }
 
             _bufferOffset++;
+            ConsumedBytes++;
             return CreateResult(bytes.WrittenSpan, isTooLong);
         }
     }
@@ -110,7 +113,7 @@ internal sealed class BoundedLineReader
     }
 }
 
-internal readonly record struct BoundedLineReadResult(string? Line, bool IsTooLong, bool IsEndOfStream)
+internal readonly record struct BoundedLineReadResult(string? Line, bool IsTooLong, bool IsEndOfStream, bool IsTerminated = true)
 {
     public static BoundedLineReadResult EndOfStream { get; } = new(null, false, true);
 }

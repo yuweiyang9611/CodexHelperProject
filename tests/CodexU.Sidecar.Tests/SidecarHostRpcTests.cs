@@ -363,15 +363,16 @@ public sealed class SidecarHostRpcTests
         Assert.Contains(HostCapabilityNames.CompactMode, capabilities);
         Assert.Contains(HostCapabilityNames.StartupRegistration, capabilities);
         Assert.DoesNotContain(HostCapabilityNames.NativeNotifications, capabilities);
-        Assert.DoesNotContain(HostCapabilityNames.StatusStripControl, capabilities);
-        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, capabilities);
+        Assert.Contains(HostCapabilityNames.StatusStripControl, capabilities);
+        Assert.Contains(HostCapabilityNames.DesktopMode, capabilities);
         Assert.Equal(
             new[]
             {
                 "host.dialog.confirm",
                 "host.dialog.openFile",
                 "host.dialog.saveFile",
-                "host.startup.set"
+                "host.startup.set",
+                "host.statusStrip.control"
             },
             SidecarHostRpcMethods.Allowed.Order(StringComparer.Ordinal));
     }

@@ -27,7 +27,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 本地待办：优先级、日期、筛选、编辑、完成、删除、清理，以及最近线程一键转待办。
 - 设置与诊断：`CODEX_HOME`、Codex 可执行文件、工作区/子代理过滤、刷新频率和数据源状态。
 - Claude Code 本地适配器：聚合 `%USERPROFILE%\.claude\projects` transcript 的 token、模型、工具和 Skill，读取本地任务。transcript 中的 HTTP 429 记录会作为近 7 天的限流次数单独提示，它只表明当时已用满，不能据此推算余量。
-- 用量历史留存：所有统计原本每次刷新都从源 transcript 重算，源日志被轮转或清理后那段历史就永久消失了。现在每次刷新会把当天及窗口内每一天的实测结果（含缓存写入分档与点数）按运行时写入 `%LOCALAPPDATA%\codexU\history\daily-usage-<runtime>-v1.jsonl`。统计口径受工作区与子代理过滤影响，因此每行带作用域指纹；改过滤器只会另起一组记录，**不会覆盖或删除**既有作用域的历史。写入失败只记诊断，不影响刷新。
+- 用量历史留存：Codex 与 Claude 的规范化贡献保存到 `%LOCALAPPDATA%\codexU\history\usage-ledger-v2.sqlite`，保留全部已读取日期、会话身份、工作区、每日模型及 Token 分项。源日志删除、读失败或截断时保留上次有效贡献；无法确认的改写保留旧版本并标记冲突。账本不保存对话正文、工具参数或凭据。
 - Claude 额度采集：Claude Code 不在本机记录额度余量，唯一可机读的来源是 statusLine 命令收到的 JSON。`tools/claude-statusline-snapshot.mjs` 既照常输出状态行，又把 `rate_limits` 的 5 小时/7 天窗口写成应用读取的快照，详见下文「Claude 额度接入」。未接入时额度显示为 `--` 并说明接入方式。
 - API 等价收益：内部先按模型及缓存/未缓存/输出费率计算点数，再按可配置的“每 1,000 点美元金额”显示；收益卡同时展示订阅月费、净等价值、回本倍数、三类消耗、缓存节省和本月投影。标注官方来源的 OpenAI 内置行采用 API Standard 短上下文价目作为等值基准；本地日志不能可靠识别长上下文及 Batch/Flex/Fast/区域处理，所以显示结果不是 API 账单或订阅实际扣费。所有金额统一使用美元，默认 1,000 点 = US$40；订阅月费优先根据本机套餐标识自动推算，无法识别时使用设置页中的手动备用值（默认 US$200）。套餐名按运行时分表解析——同名套餐在两家厂商价格不同（Claude Pro 为 US$20，ChatGPT Pro 为 US$200），按席位议价的 Team/Enterprise 不做推算而是回退到手动值。
 - 缓存写入按来源可观测字段计价：Claude transcript 的 5 分钟档为基础输入价的 1.25 倍、1 小时档为 2 倍；Codex 本地日志目前不提供 OpenAI 缓存写入拆分，因此这部分仍随普通输入估算，不伪造缓存写入明细。
@@ -35,7 +35,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 针对本月等效金额、额度余量和费率覆盖率发送去重通知。
 - 深色/浅色玻璃/跟随系统主题，以及紧凑/展开双模式。
 - Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、可校验回滚的开机启动、单实例、自动刷新、紧凑布局、原生主题、Windows 原生额度通知，以及按显示器工作区/DPI 恢复的窗口位置。
-- 顶部悬浮状态条和桌面底层模式仍属于旧 WPF 功能对等基线，尚未迁移。
+- Electron 顶部状态条：额度、Token、待办及刷新状态，支持折叠、刷新、打开主界面/待办、拖动、锁定、预览与找回；兼容旧 WPF 位置文件。独立桌面仪表盘通过专用 Electron 子进程与 .NET Win32 桥接附着 Explorer，失败时隐藏副本并显示原因。
 - 每日 GitHub Release 更新检查（私有仓库通过进程环境变量读取令牌）、发布页跳转，不静默下载或安装。
 - 聚合 JSON/CSV 导出；带 SHA-256 清单的设置、待办和每日用量历史备份恢复；包含 Electron 滚动日志的脱敏诊断包；以及非破坏式索引重建。
 - 每用户 Inno Setup 安装包：开始菜单、卸载项和可选桌面快捷方式；开机启动由应用内设置统一管理，Release 可按仓库密钥配置进行 Authenticode 签名。
@@ -50,7 +50,9 @@ Electron 职责边界为：`Electron main → sandbox preload → Vue renderer �
 
 当前 Windows-first 路径已经打通真实 Vue 页面、.NET 数据与设置服务、私有双向 RPC、原生打开/保存/确认对话框、托盘与关闭驻留、全局快捷键、紧凑窗口、原生主题、单实例恢复、Windows 原生额度通知，以及由 Sidecar 驱动的后台自动刷新。开机启动通过相关反向 RPC 写入并回读真实系统状态，失败时设置不会提交；窗口位置按显示器工作区恢复并适配显示器移除与 DPI 变化。Electron 启动时先校验后端能力并读取宿主所需设置，应用原生状态后再创建 renderer；用量快照由 Application 层统一投影，手动刷新、自动刷新和数据变更不会各自重复发送同类事件。Sidecar 或 renderer 异常退出时会有限指数退避恢复，失败信息写入有界、会遮蔽常见凭据和用户目录的滚动日志，并可随诊断包二次脱敏导出。打包态 smoke 会验证 sandbox preload、`app.initialize` 和反向对话框 RPC，并发送宿主状态；整个过程不会打开窗口、对话框、外链或修改系统设置。
 
-Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron Packager 20，生成带限制性 fuses 的 ASAR，携带 Electron/Chromium、项目、Web 与自包含 .NET 运行时许可文件，再依次签名应用与 Sidecar、执行打包态 smoke、构建并安装/运行/卸载测试 Inno Setup，最后生成 ZIP、Setup 和校验和。开机启动失败回滚、窗口工作区/DPI 恢复和 Windows 通知现已迁移；顶部状态条与桌面底层模式仍待实现，因此首个 Electron 版本仍适合先作为预发布版验证。Linux 适配尚未开始，当前只验证 Windows。
+Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron Packager 20，生成带限制性 fuses 的 ASAR，携带 Electron/Chromium、项目、Web 与自包含 .NET 运行时许可文件，再依次签名应用与 Sidecar、执行打包态 smoke、构建并安装/运行/卸载测试 Inno Setup，最后生成 ZIP、Setup 和校验和。开机启动失败回滚、窗口工作区/DPI 恢复和 Windows 通知现已迁移；状态条与独立桌面仪表盘已接入；Windows 10/11 的 Explorer 重启、Win+D 和混合 DPI 矩阵仍须在专用环境验收，因此继续按预发布版验证。Linux 适配尚未开始，当前只验证 Windows。
+
+用量历史、工作区口径、旧数据限制和验收记录见 [docs/usage-history-and-desktop.md](docs/usage-history-and-desktop.md)。
 
 本机历史 Token 的归一化、active/archive 合并、fork 去重与保守区间说明见 [docs/local-token-ledger.md](docs/local-token-ledger.md)。
 

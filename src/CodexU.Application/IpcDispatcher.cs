@@ -148,9 +148,9 @@ public sealed class IpcDispatcher : IDisposable
                     GetRequiredBoolean(request.Payload, "actual"));
 
             case "statusStrip.getState":
-                return (_statusStripCommands
+                return await (_statusStripCommands
                     ?? throw new InvalidOperationException("状态条控制器尚未初始化。"))
-                    .GetState();
+                    .GetStateAsync();
 
             case "statusStrip.preview":
                 if (!request.Payload.TryGetProperty("patch", out var previewPatch))
@@ -158,14 +158,14 @@ public sealed class IpcDispatcher : IDisposable
                     throw new ArgumentException("状态条预览缺少设置 patch。");
                 }
                 var previewSettings = MergeSettingsPatch(_session.CurrentSettings, previewPatch).Validate().Normalize();
-                return (_statusStripCommands
+                return await (_statusStripCommands
                     ?? throw new InvalidOperationException("状态条控制器尚未初始化。"))
-                    .Preview(previewSettings);
+                    .PreviewAsync(previewSettings);
 
             case "statusStrip.recover":
-                return (_statusStripCommands
+                return await (_statusStripCommands
                     ?? throw new InvalidOperationException("状态条控制器尚未初始化。"))
-                    .Recover();
+                    .RecoverAsync();
 
             case "rates.getCatalog":
                 return UsageCredits.CatalogSnapshot;
@@ -296,7 +296,7 @@ public sealed class IpcDispatcher : IDisposable
                 if (!await _userInteraction.ConfirmAsync(
                         new HostConfirmationRequest(
                             "恢复 codexU 备份",
-                            "恢复会替换当前设置和待办；schema 2 备份还会替换每日用量历史。当前 Codex 可执行文件路径和本机开机启动状态将保留。是否继续？",
+                            "恢复会替换当前设置和待办；schema 2/3 备份还会替换用量历史。当前 Codex 可执行文件路径和本机开机启动状态将保留。是否继续？",
                             IsWarning: true),
                         _session.LifetimeToken))
                 {

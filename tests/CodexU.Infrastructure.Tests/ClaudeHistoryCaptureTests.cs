@@ -47,18 +47,10 @@ public sealed class ClaudeHistoryCaptureTests
                 paths,
                 customRates: rates,
                 applicationDataDirectory: appData).ReadAsync();
-            Assert.Equal(0, afterRotation.Tokens.Lifetime.Tokens);
-
-            var store = new DailyUsageHistoryStore(appData);
-            var recorded = await store.LoadAsync(
-                AgentRuntime.ClaudeCode,
-                DailyUsageHistoryStore.ScopeFingerprint(null));
-
-            Assert.Equal(3, recorded.Count);
-            Assert.Equal(recorded.OrderBy(day => day.Date).Select(day => day.Date), recorded.Select(day => day.Date));
-            Assert.All(recorded, day => Assert.True(day.Tokens.VisibleTotalTokens > 0));
-            // Credits were priced while the source existed and survive without it.
-            Assert.True(recorded.Sum(day => day.CreditsUsed) > 0);
+            Assert.Equal(live.Tokens.Lifetime.Tokens, afterRotation.Tokens.Lifetime.Tokens);
+            Assert.Equal(live.Tokens.Lifetime.CreditsUsed, afterRotation.Tokens.Lifetime.CreditsUsed);
+            Assert.Equal(3, afterRotation.DailyUsage.Count(day => day.Tokens > 0));
+            Assert.Equal(1, afterRotation.History!.RetainedSources);
         }
         finally
         {

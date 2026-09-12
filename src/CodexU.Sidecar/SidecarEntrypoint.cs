@@ -118,6 +118,8 @@ public sealed record SidecarOptions(
         {
             capabilities.Add(HostCapabilityNames.Tray);
             capabilities.Add(HostCapabilityNames.GlobalHotKey);
+            capabilities.Add(HostCapabilityNames.StatusStripControl);
+            capabilities.Add(HostCapabilityNames.DesktopMode);
             if (isPackaged)
             {
                 capabilities.Add(HostCapabilityNames.StartupRegistration);

@@ -286,9 +286,10 @@ function removeCustomRate(index: number) {
             <label><input v-model="store.settingsDraft.statusStripShowTodayTokens" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />状态条显示今日 Token</label>
             <label><input v-model="store.settingsDraft.statusStripPositionLocked" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />锁定状态条位置</label>
             <label><input v-model="store.settingsDraft.startAtLogin" :disabled="!supportsStartupRegistration" :aria-describedby="!supportsStartupRegistration ? 'desktop-capability-note' : undefined" type="checkbox" />开机自动启动</label>
-            <label><input v-model="store.settingsDraft.desktopMode" :disabled="!supportsDesktopMode" :aria-describedby="!supportsDesktopMode ? 'desktop-capability-note' : undefined" type="checkbox" />启动后置于桌面底层</label>
+            <label><input v-model="store.settingsDraft.desktopMode" :disabled="!supportsDesktopMode" :aria-describedby="!supportsDesktopMode ? 'desktop-capability-note' : undefined" type="checkbox" />{{ store.hostCapabilities.includes('sidecar') ? '显示独立桌面仪表盘' : '启动后置于桌面底层' }}</label>
             <label><input v-model="store.settingsDraft.closeToTray" :disabled="!supportsTray" :aria-describedby="!supportsTray ? 'desktop-capability-note' : undefined" type="checkbox" />关闭主窗口时隐藏到托盘</label>
           </div>
+          <p v-if="store.desktopState" role="status">桌面仪表盘：{{ store.desktopState.message }}</p>
           <div class="status-strip-control" aria-labelledby="status-strip-control-title">
             <div>
               <strong id="status-strip-control-title">状态条预览与找回</strong>

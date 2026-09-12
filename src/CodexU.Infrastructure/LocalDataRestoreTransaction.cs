@@ -95,7 +95,7 @@ internal sealed class LocalRestoreJournal
 
     private const string JournalTemporaryFileName = ".restore-transaction-v1.json.tmp";
     private const int CurrentSchemaVersion = 1;
-    private const long MaximumCheckpointFileBytes = 24L * 1024 * 1024;
+    private const long MaximumCheckpointFileBytes = 256L * 1024 * 1024;
     private const long MaximumJournalBytes = 64 * 1024;
 
     private static readonly object RecoverySync = new();
@@ -115,7 +115,8 @@ internal sealed class LocalRestoreJournal
     private static readonly RestoreTarget[] HistoryTargets =
     [
         new("history/daily-usage-codex-v1.jsonl", "04.bin"),
-        new("history/daily-usage-claude-code-v1.jsonl", "05.bin")
+        new("history/daily-usage-claude-code-v1.jsonl", "05.bin"),
+        new(UsageHistoryLedger.RelativePath, "06.bin")
     ];
 
     private readonly string _dataDirectory;
@@ -243,7 +244,7 @@ internal sealed class LocalRestoreJournal
 
     private void RestoreCheckpoint()
     {
-        var targets = Targets(_document.IncludesHistory);
+        var targets = Targets(_document.IncludesHistory, _document.Files.Any(file => file.Path == UsageHistoryLedger.RelativePath));
         var entries = ValidateDocument(_document, targets);
 
         // Validate every staged byte before changing any live file. A damaged
@@ -283,7 +284,15 @@ internal sealed class LocalRestoreJournal
                     Path.Combine(_stagingDirectory, target.SnapshotFileName),
                     temporaryPath,
                     entry.Size);
-                File.Move(temporaryPath, targetPath, overwrite: true);
+                // Windows scanners can briefly deny replacing a just-written file.
+                // Keep the journal authoritative and retry only bounded OS sharing/access errors.
+                for (var attempt = 0; ; attempt++)
+                {
+                    try { File.Move(temporaryPath, targetPath, overwrite: true); break; }
+                    catch (Exception e) when (attempt < 3 && OperatingSystem.IsWindows()
+                        && (e is IOException or UnauthorizedAccessException) && (e.HResult & 0xffff) is 5 or 32 or 33)
+                    { Thread.Sleep(50 * (attempt + 1)); }
+                }
             }
             finally
             {
@@ -394,7 +403,8 @@ internal sealed class LocalRestoreJournal
         {
             var document = JsonSerializer.Deserialize<JournalDocument>(stream, JsonOptions)
                 ?? throw new InvalidDataException("恢复事务 journal 内容为空。");
-            _ = ValidateDocument(document, Targets(document.IncludesHistory));
+            _ = ValidateDocument(document, Targets(document.IncludesHistory,
+                document.Files?.Any(file => file.Path == UsageHistoryLedger.RelativePath) == true));
             return document;
         }
         catch (JsonException exception)
@@ -503,8 +513,8 @@ internal sealed class LocalRestoreJournal
         destination.Flush(flushToDisk: true);
     }
 
-    private static IReadOnlyList<RestoreTarget> Targets(bool includesHistory) =>
-        includesHistory ? [.. BaseTargets, .. HistoryTargets] : BaseTargets;
+    private static IReadOnlyList<RestoreTarget> Targets(bool includesHistory, bool includeLedger = true) =>
+        includesHistory ? [.. BaseTargets, .. HistoryTargets.Where(target => includeLedger || target.RelativePath != UsageHistoryLedger.RelativePath)] : BaseTargets;
 
     private static string TargetPath(string dataDirectory, string relativePath) =>
         Path.Combine(

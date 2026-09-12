@@ -19,6 +19,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isUpdatingSettings = ref(false)
   const operationStatus = ref<string | null>(null)
   const statusStripState = ref<StatusStripControlState | null>(null)
+  const desktopState = ref<{ attached: boolean; message: string } | null>(null)
   const isControllingStatusStrip = ref(false)
   const appVersion = ref('development')
   const hostPlatform = ref('unknown')
@@ -163,6 +164,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       host.on('statusStrip.stateChanged', (payload) => {
         if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)) return
         statusStripState.value = payload as StatusStripControlState
+      })
+      host.on('desktop.stateChanged', (payload) => {
+        desktopState.value = payload as { attached: boolean; message: string }
       })
       host.on('window.compactChanged', (payload) => {
         const enabled = Boolean((payload as { enabled?: boolean })?.enabled)
@@ -457,6 +461,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   return {
+    desktopState,
     snapshot, settings, settingsDraft, settingsDirty, todos, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
     hostPlatform, hostIsPackaged, hostCapabilities, hasHostCapability,
     isLoading, isRefreshing, error, runtime, compactMode,

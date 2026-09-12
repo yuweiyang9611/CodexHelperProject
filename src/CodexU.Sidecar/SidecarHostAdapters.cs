@@ -156,6 +156,9 @@ public sealed class SidecarHostCommands(
         _hostRpcClient.ConfirmAsync(request, cancellationToken);
 
     public StatusStripControlState GetState() => UnavailableStatusStripState(new AppSettings());
+    public Task<StatusStripControlState> GetStateAsync() => _hostRpcClient.StatusStripAsync("getState");
+    public Task<StatusStripControlState> PreviewAsync(AppSettings settings) => _hostRpcClient.StatusStripAsync("preview", settings);
+    public Task<StatusStripControlState> RecoverAsync() => _hostRpcClient.StatusStripAsync("recover");
 
     public StatusStripControlState Preview(AppSettings settings) => UnavailableStatusStripState(settings);
 

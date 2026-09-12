@@ -35,7 +35,8 @@ public sealed class DashboardService(
                 showSubagents,
                 customRates,
                 completeRateCatalog,
-                applicationDataDirectory),
+                applicationDataDirectory,
+                incrementalIndexEnabled),
             new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)));
     }
 
@@ -82,7 +83,7 @@ public sealed class DashboardService(
             local.Goals,
             local.TaskLifecycle,
             local.IndexStatus,
-            diagnostics.Distinct().ToArray());
+            diagnostics.Distinct().ToArray(), History: local.History);
         return await WithForecastsAsync(snapshot, primary, secondary, cancellationToken);
     }
 
@@ -177,7 +178,7 @@ public sealed class DashboardService(
         local.Goals,
         local.TaskLifecycle,
         local.IndexStatus,
-        local.Diagnostics);
+        local.Diagnostics, History: local.History);
 
     private async Task<AppServerSnapshot> ReadAppServerSafelyAsync(CancellationToken cancellationToken)
     {

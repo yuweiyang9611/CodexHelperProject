@@ -276,34 +276,7 @@ public sealed class CodexSqliteReader(
         return thread.ArchivedAt?.ToLocalTime() >= cutoff || thread.UpdatedAt?.ToLocalTime() >= cutoff;
     }
 
-    private bool MatchesWorkspace(string cwd)
-    {
-        if (string.IsNullOrWhiteSpace(defaultWorkspace))
-        {
-            return true;
-        }
-
-        try
-        {
-            if (string.IsNullOrWhiteSpace(cwd))
-            {
-                return false;
-            }
-
-            var workspacePath = Path.GetFullPath(defaultWorkspace);
-            var candidatePath = Path.GetFullPath(cwd);
-            var relative = Path.GetRelativePath(workspacePath, candidatePath);
-            return string.Equals(relative, ".", StringComparison.Ordinal)
-                || (!Path.IsPathRooted(relative)
-                    && !string.Equals(relative, "..", StringComparison.Ordinal)
-                    && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                    && !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
-        }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-    }
+    private bool MatchesWorkspace(string cwd) => WorkspaceScope.Contains(defaultWorkspace, cwd);
 
     private static bool IsSubagent(string source) =>
         source.Contains("subagent", StringComparison.OrdinalIgnoreCase)

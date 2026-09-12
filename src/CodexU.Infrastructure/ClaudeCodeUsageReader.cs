@@ -3,50 +3,25 @@ using CodexU.Core;
 
 namespace CodexU.Infrastructure;
 
-public sealed class ClaudeCodeUsageReader(
+public sealed partial class ClaudeCodeUsageReader(
     CodexPaths paths,
     string? defaultWorkspace = null,
     bool showSubagents = false,
     IReadOnlyList<ModelCreditRate>? customRates = null,
     bool completeRateCatalog = false,
-    string? applicationDataDirectory = null) : ILocalUsageReader
+    string? applicationDataDirectory = null,
+    bool incrementalIndexEnabled = true) : ILocalUsageReader
 {
-    private const int MaximumTranscriptLineBytes = BoundedLineReader.DefaultMaximumLineBytes;
     private const long MaximumTaskFileLength = 2 * 1024 * 1024;
 
     public async Task<LocalUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(paths.ClaudeDirectory))
-        {
-            return Empty($"未找到 Claude Code 数据目录：{paths.ClaudeDirectory}");
-        }
-
-        string[] transcriptFiles;
-        try
-        {
-            transcriptFiles = Directory
-                .EnumerateFiles(paths.ClaudeDirectory, "*.jsonl", SearchOption.AllDirectories)
-                .Where(path => path.Contains($"{Path.DirectorySeparatorChar}projects{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return Empty($"无法枚举 Claude Code transcript：{exception.Message}");
-        }
-
         var now = DateTimeOffset.Now;
         var todayDate = DateOnly.FromDateTime(now.Date);
         var sevenDayStart = todayDate.AddDays(-6);
-        var monthStart = new DateOnly(now.Year, now.Month, 1);
-        var today = new PeriodAccumulator(customRates, completeRateCatalog);
-        var sevenDays = new PeriodAccumulator(customRates, completeRateCatalog);
-        var month = new PeriodAccumulator(customRates, completeRateCatalog);
         var lifetime = new PeriodAccumulator(customRates, completeRateCatalog);
-        var daily = new Dictionary<DateOnly, PeriodAccumulator>();
-        var projects = new Dictionary<string, ProjectAccumulator>(StringComparer.OrdinalIgnoreCase);
         var tools = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var modelTotals = new Dictionary<string, (long Tokens, int Events)>(StringComparer.OrdinalIgnoreCase);
         var parsedFiles = 0;
         var skippedFiles = 0;
         var skippedLines = 0;
@@ -55,124 +30,29 @@ public sealed class ClaudeCodeUsageReader(
         var rateLimitHits = 0;
         var diagnostics = new List<string>();
 
-        foreach (var file in transcriptFiles)
+        var attributed = new List<AttributedUsage>();
+        var (sources, indexStatus, conflicts, retained, history) = await ReadSourcesAsync(diagnostics, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(defaultWorkspace) && sources.Values.Any(s => s.Events.Any(e => e.Workspace is null)))
+            diagnostics.Add("工作区覆盖不足：部分 Claude 消息缺少项目归属，已从指定工作区统计排除");
+        skippedFiles = conflicts;
+        parsedFiles = sources.Count;
+        foreach (var (sourceId, source) in sources)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            skippedLines += source.SkippedLines;
+            foreach (var item in source.Events)
             {
-                var fileInfo = new FileInfo(file);
-                var fallbackTimestamp = new DateTimeOffset(fileInfo.LastWriteTime);
-                var threadId = Path.GetFileNameWithoutExtension(file);
-                await using var stream = new FileStream(
-                    file,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete,
-                    32 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var reader = new BoundedLineReader(stream, MaximumTranscriptLineBytes);
-                while (true)
-                {
-                    var read = await reader.ReadAsync(cancellationToken);
-                    if (read.IsEndOfStream)
-                    {
-                        break;
-                    }
+                if (!WorkspaceScope.Contains(defaultWorkspace, item.Workspace)) continue;
+                assistantMessages++;
+                var date = DateOnly.FromDateTime(item.Timestamp.ToLocalTime().Date);
+                if (item.Throttled && date >= sevenDayStart && date <= todayDate) rateLimitHits++;
+                foreach (var pair in item.Tools) tools[pair.Key] = tools.GetValueOrDefault(pair.Key) + pair.Value;
+                foreach (var pair in item.Skills) skills[pair.Key] = skills.GetValueOrDefault(pair.Key) + pair.Value;
+                if (item.Tokens is not { } tokens || item.Model is not { } model) continue;
+                usageEvents++;
+                var bucket = new UsageBucket(date, model, tokens);
+                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, 1, item.Branch, history?.Kind(sourceId) ?? "live"));
+                lifetime.Add(bucket);
 
-                    if (read.IsTooLong)
-                    {
-                        skippedLines++;
-                        if (skippedLines <= 5)
-                        {
-                            diagnostics.Add($"跳过 Claude transcript 超限行：{Path.GetFileName(file)} · 单行超过 4 MiB");
-                        }
-                        continue;
-                    }
-
-                    var line = read.Line!;
-                    if (string.IsNullOrWhiteSpace(line))
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        using var document = JsonDocument.Parse(line);
-                        var root = document.RootElement;
-                        if (!IsAssistantMessage(root, out var message))
-                        {
-                            continue;
-                        }
-
-                        var cwd = ReadString(root, "cwd") ?? ReadString(root, "projectPath");
-                        if (!IsInWorkspace(cwd, defaultWorkspace))
-                        {
-                            continue;
-                        }
-
-                        assistantMessages++;
-
-                        // The only rate-limit evidence Claude Code leaves behind. It
-                        // says the limit was already reached, never how much is left,
-                        // so it supplements the quota rings rather than filling them.
-                        if (ReadLong(root, "apiErrorStatus") == 429)
-                        {
-                            var throttledAt = ReadTimestamp(root) ?? fallbackTimestamp;
-                            if (DateOnly.FromDateTime(throttledAt.ToLocalTime().Date) >= sevenDayStart)
-                            {
-                                rateLimitHits++;
-                            }
-                        }
-
-                        CountTools(message, tools, skills);
-                        if (!TryReadUsage(root, message, out var model, out var tokens))
-                        {
-                            continue;
-                        }
-
-                        var timestamp = ReadTimestamp(root) ?? fallbackTimestamp;
-                        var date = DateOnly.FromDateTime(timestamp.ToLocalTime().Date);
-                        usageEvents++;
-                        var bucket = new UsageBucket(date, model, tokens);
-                        lifetime.Add(bucket);
-                        if (!daily.TryGetValue(date, out var dailyPeriod))
-                        {
-                            dailyPeriod = new PeriodAccumulator(customRates, completeRateCatalog);
-                            daily.Add(date, dailyPeriod);
-                        }
-                        dailyPeriod.Add(bucket);
-                        if (date >= monthStart && date <= todayDate) month.Add(bucket);
-                        if (date >= sevenDayStart && date <= todayDate) sevenDays.Add(bucket);
-                        if (date == todayDate) today.Add(bucket);
-
-                        var normalizedModel = UsageCredits.NormalizeModel(model);
-                        var previousModel = modelTotals.GetValueOrDefault(normalizedModel);
-                        modelTotals[normalizedModel] = (previousModel.Tokens + tokens.VisibleTotalTokens, previousModel.Events + 1);
-
-                        var projectPath = NormalizeProjectPath(cwd, file);
-                        if (!projects.TryGetValue(projectPath, out var project))
-                        {
-                            project = new ProjectAccumulator(projectPath, customRates, completeRateCatalog);
-                            projects.Add(projectPath, project);
-                        }
-                        project.Add(threadId, timestamp, bucket, ReadString(root, "gitBranch"));
-                    }
-                    catch (JsonException exception)
-                    {
-                        skippedLines++;
-                        if (skippedLines <= 5)
-                        {
-                            diagnostics.Add($"跳过 Claude transcript 无效行：{Path.GetFileName(file)} · {exception.Message}");
-                        }
-                    }
-                }
-
-                parsedFiles++;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                skippedFiles++;
-                diagnostics.Add($"跳过 Claude transcript：{Path.GetFileName(file)} · {exception.Message}");
             }
         }
 
@@ -200,41 +80,31 @@ public sealed class ClaudeCodeUsageReader(
         }
         if (skippedLines > 0)
         {
+            diagnostics.Add("Claude transcript 包含无效行或超限行（单行超过 4 MiB），已跳过");
             diagnostics.Add($"Claude transcripts：{skippedLines} 行无效或过大，已跳过且保留同文件内其余统计");
         }
 
-        // Record what this run measured before the numbers are reduced to a chart.
-        // The transcripts behind them are rotated and cleaned by Claude Code, so a
-        // day not captured here is gone for good once its source disappears.
-        diagnostics.Add(await RecordHistorySafelyAsync(daily, quality, todayDate, cancellationToken));
-
         var taskItems = ReadTasksSafely(showSubagents, diagnostics);
+        var projection = await UsageHistoryProjection.BuildAsync(AgentRuntime.ClaudeCode, attributed,
+            applicationDataDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
+            defaultWorkspace, quality, customRates, completeRateCatalog, retained, conflicts, cancellationToken);
         return new LocalUsageSnapshot(
             account,
             primary,
             secondary,
-            new TokenSummary(
-                today.ToPeriod(quality),
-                sevenDays.ToPeriod(quality),
-                month.ToPeriod(quality),
-                lifetimePeriod),
+            projection.Tokens,
             taskItems,
-            BuildDailyUsage(daily, now, quality),
-            projects.Values
-                .Select(project => project.ToUsage(quality))
-                .OrderByDescending(project => project.Tokens)
-                .Take(20)
-                .ToArray(),
+            projection.Daily,
+            projection.Projects,
             Rank(tools, ToolCategory),
             Rank(skills, _ => "Skill"),
             [new RankedUsage("claude-transcript", "Claude transcript", assistantMessages, null, null, "Local")],
-            modelTotals.Select(pair => new ModelUsage(pair.Key, pair.Value.Tokens, pair.Value.Events))
-                .OrderByDescending(item => item.Tokens)
-                .ToArray(),
+            projection.Models,
             [],
             TaskLifecycleStats.Empty,
-            new IndexStatus(false, 0, 0, parsedFiles, transcriptFiles.Length, DateTimeOffset.Now),
-            diagnostics.Distinct().ToArray());
+            indexStatus,
+            diagnostics.Distinct().ToArray(),
+            projection.History);
     }
 
     private static bool IsAssistantMessage(JsonElement root, out JsonElement message)
@@ -517,65 +387,6 @@ public sealed class ClaudeCodeUsageReader(
         }
     }
 
-    private async Task<string> RecordHistorySafelyAsync(
-        Dictionary<DateOnly, PeriodAccumulator> daily,
-        DataQuality quality,
-        DateOnly today,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Only days the source actually reported, and only inside the window the
-            // chart covers — persisting a stray older date would record a day whose
-            // totals were never complete.
-            var earliest = today.AddDays(-181);
-            var days = daily
-                .Where(pair => pair.Key >= earliest && pair.Key <= today)
-                .OrderBy(pair => pair.Key)
-                .Select(pair =>
-                {
-                    var period = pair.Value.ToPeriod(quality);
-                    return new DailyUsageRecord(
-                        pair.Key,
-                        period.Breakdown,
-                        period.CreditsUsed,
-                        period.UnratedTokens,
-                        period.Quality);
-                })
-                .ToArray();
-
-            return await new DailyUsageHistoryStore(applicationDataDirectory)
-                .SaveAsync(AgentRuntime.ClaudeCode, days, HistoryScope(), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            return $"用量历史写入失败：{exception.Message}";
-        }
-    }
-
-    // Deliberately not folding in showSubagents: it governs the task board, never the
-    // daily totals recorded here, so including it forked the history on a checkbox
-    // that changes none of the numbers being stored.
-    private string HistoryScope() =>
-        DailyUsageHistoryStore.ScopeFingerprint(defaultWorkspace);
-
-    private static IReadOnlyList<DailyUsage> BuildDailyUsage(
-        Dictionary<DateOnly, PeriodAccumulator> source,
-        DateTimeOffset now,
-        DataQuality quality)
-    {
-        var end = DateOnly.FromDateTime(now.Date);
-        var start = end.AddDays(-181);
-        var result = new List<DailyUsage>(182);
-        for (var date = start; date <= end; date = date.AddDays(1))
-        {
-            var period = source.GetValueOrDefault(date)?.ToPeriod(quality);
-            result.Add(new DailyUsage(date, period?.Tokens ?? 0, period?.CreditsUsed ?? 0, quality));
-        }
-        return result;
-    }
-
     private static RankedUsage[] Rank(Dictionary<string, int> source, Func<string, string> category) => source
         .OrderByDescending(pair => pair.Value)
         .Take(10)
@@ -590,32 +401,6 @@ public sealed class ClaudeCodeUsageReader(
         "skill" => "Skill",
         _ => "Other"
     };
-
-    private static string NormalizeProjectPath(string? cwd, string transcriptFile)
-    {
-        if (!string.IsNullOrWhiteSpace(cwd))
-        {
-            try { return Path.GetFullPath(cwd); }
-            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { }
-        }
-        return Path.GetDirectoryName(transcriptFile) ?? "Claude Code";
-    }
-
-    private static bool IsInWorkspace(string? cwd, string? workspace)
-    {
-        if (string.IsNullOrWhiteSpace(workspace)) return true;
-        if (string.IsNullOrWhiteSpace(cwd)) return false;
-        try
-        {
-            var root = Path.GetFullPath(workspace).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var candidate = Path.GetFullPath(cwd).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-    }
 
     private static DateTimeOffset? ReadTimestamp(JsonElement value)
     {
@@ -700,53 +485,4 @@ public sealed class ClaudeCodeUsageReader(
         }
     }
 
-    private sealed class ProjectAccumulator(
-        string path,
-        IReadOnlyList<ModelCreditRate>? configuredRates,
-        bool completeRateCatalog)
-    {
-        private readonly HashSet<string> _threads = new(StringComparer.OrdinalIgnoreCase);
-        private readonly PeriodAccumulator _usage = new(configuredRates, completeRateCatalog);
-        private DateTimeOffset? _lastActive;
-        private string? _branch;
-
-        public void Add(string threadId, DateTimeOffset timestamp, UsageBucket usage, string? branch)
-        {
-            _threads.Add(threadId);
-            _usage.Add(usage);
-
-            // Transcripts record gitBranch per message; the newest one describes where
-            // the project sits now, matching how the Codex reader reports it. Decide
-            // this before moving _lastActive, so the comparison cannot read the value
-            // it is about to overwrite.
-            var isNewest = _lastActive is null || timestamp >= _lastActive;
-            if (isNewest && !string.IsNullOrWhiteSpace(branch))
-            {
-                _branch = branch;
-            }
-            if (_lastActive is null || timestamp > _lastActive)
-            {
-                _lastActive = timestamp;
-            }
-        }
-
-        public ProjectUsage ToUsage(DataQuality quality)
-        {
-            var usage = _usage.ToPeriod(quality);
-            return new ProjectUsage(
-                path,
-                Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-                path,
-                usage.Tokens,
-                _threads.Count,
-                _lastActive,
-                _branch,
-                // Claude attributes usage per message, so this is measured rather than
-                // apportioned. A project whose models carry no rate prices to zero;
-                // report that as unknown, because zero beside real tokens reads as
-                // "this was free".
-                usage.CreditsUsed > 0 ? usage.CreditsUsed : null,
-                quality);
-        }
-    }
 }

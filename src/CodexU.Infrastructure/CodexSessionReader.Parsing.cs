@@ -28,6 +28,7 @@ public sealed partial class CodexSessionReader
         var tokenEvents = seed?.TokenEvents.ToList() ?? [];
         var tokenCounterState = seed?.TokenCounterState ?? TokenCounterState.Empty;
         var sessionId = seed?.SessionId;
+        var workspace = seed?.Workspace;
         var forkedFromId = seed?.ForkedFromId;
         var currentModel = seed?.CurrentModel ?? "unknown";
         var tokenEventCount = seed?.TokenEventCount ?? 0;
@@ -92,6 +93,7 @@ public sealed partial class CodexSessionReader
                     && string.Equals(type, "session_meta", StringComparison.OrdinalIgnoreCase))
                 {
                     sessionId = GetString(payload, "id");
+                    workspace = WorkspaceScope.Normalize(GetString(payload, "cwd"));
                     forkedFromId = GetString(payload, "forked_from_id");
                     if (TryReadThreadSpawnParentId(payload, out var discoveredParentId))
                     {
@@ -237,7 +239,8 @@ public sealed partial class CodexSessionReader
             forkReplayPhase,
             sessionId,
             forkedFromId,
-            tokenEvents);
+            tokenEvents,
+            workspace);
     }
 
     private static SessionTokenEventFingerprint Fingerprint(

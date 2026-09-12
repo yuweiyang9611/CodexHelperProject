@@ -198,7 +198,10 @@ public sealed record DailyUsage(
     DateOnly Date,
     long Tokens,
     double CreditsUsed,
-    DataQuality Quality);
+    DataQuality Quality,
+    string Source = "live");
+
+public sealed record UsageHistoryStatus(int RetainedSources, int Conflicts, int LegacyDays);
 
 public sealed record ProjectUsage(
     string Id,
@@ -213,11 +216,8 @@ public sealed record ProjectUsage(
     bool CostIsEstimated = false)
 {
     /// <summary>
-    /// Null cost means unknown, never free. Codex attributes threads and tokens in
-    /// SQLite but prices usage from session logs keyed only by date and model, so
-    /// the two cannot be joined per project — its cost is apportioned by token
-    /// share and flagged. Showing an unpriced project as US$0.00 beside real tokens
-    /// reads as "this cost nothing", which is the opposite of "we cannot tell".
+    /// Null cost means unknown. Model usage is priced within each project;
+    /// projects without a rated contribution must not appear to have zero cost.
     /// </summary>
     public bool HasKnownCost => CreditsUsed is > 0;
 }
@@ -249,7 +249,8 @@ public sealed record DashboardSnapshot(
     IndexStatus IndexStatus,
     IReadOnlyList<string> Diagnostics,
     QuotaForecast? PrimaryForecast = null,
-    QuotaForecast? SecondaryForecast = null)
+    QuotaForecast? SecondaryForecast = null,
+    UsageHistoryStatus? History = null)
 {
     public static DashboardSnapshot Empty(AgentRuntime runtime, params string[] diagnostics) => new(
         runtime,
@@ -316,7 +317,8 @@ public sealed record LocalUsageSnapshot(
     IReadOnlyList<GoalItem> Goals,
     TaskLifecycleStats TaskLifecycle,
     IndexStatus IndexStatus,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    UsageHistoryStatus? History = null);
 
 public sealed record AppServerSnapshot(
     AccountSnapshot? Account,

@@ -24,6 +24,8 @@ import {
   type Rectangle,
 } from 'electron';
 import { createHostRequestHandler } from './hostRequests';
+import { StatusStripHost, type SurfaceData } from './statusStrip';
+import { DesktopWidgetHost, startDesktopWidget } from './desktopWidget';
 import {
   DEFAULT_HOST_SETTINGS,
   nativeActivationAction,
@@ -50,6 +52,7 @@ import {
   EVENT_CHANNEL,
   REQUEST_CHANNEL,
   assertRequiredSidecarCapabilities,
+  isRecord,
   type SidecarEvent,
 } from './protocol';
 import {
@@ -116,6 +119,9 @@ if (smokeTest) app.disableHardwareAcceleration();
 let mainWindow: BrowserWindow | undefined;
 let sidecar: SidecarClient | undefined;
 let sidecarExecutablePath: string | undefined;
+let statusStrip: StatusStripHost | undefined;
+let desktopWidget: DesktopWidgetHost | undefined;
+let surfaceSettings: SurfaceData = {};
 let tray: Tray | undefined;
 let persistentLog: PersistentLog | undefined;
 let nativeNotifications: NativeNotificationAdapter | undefined;
@@ -156,7 +162,35 @@ const rendererReady = new Promise<void>((resolve) => {
   resolveRendererReady = resolve;
 });
 
-startElectronHost();
+if (process.argv.includes('--desktop-widget')) {
+  void startDesktopWidget(resolveRendererRoot()).catch(error => { console.error(error); app.exit(1); });
+} else startElectronHost();
+
+function updateSurfaces(data: SurfaceData): void {
+  for (const key of ['presentation', 'theme', 'statusStripEnabled', 'statusStripPositionLocked',
+    'statusStripShowTodayTokens', 'statusStripQuotaMode', 'desktopMode', 'todayAmount', 'layout', 'refreshing', 'refreshError']) {
+    if (key in data) surfaceSettings[key] = data[key];
+  }
+  statusStrip?.update(surfaceSettings);
+  desktopWidget?.update(surfaceSettings);
+}
+
+async function handleSurfaceAction(action: string): Promise<unknown> {
+  if (action === 'open' || action === 'todos') {
+    showAndFocusMainWindow();
+    if (action === 'todos') mainWindow?.webContents.send(EVENT_CHANNEL, 'window.navigate', { tab: 'todos' });
+    return true;
+  }
+  if (!sidecar) throw new Error('后端暂不可用，请稍后重试。');
+  if (action === 'refresh') {
+    updateSurfaces({ refreshing: true, refreshError: '' });
+    try { return await sidecar.request('usage.refresh', {}, 120_000); }
+    finally { updateSurfaces({ refreshing: false }); }
+  }
+  if (action === 'lock') return sidecar.request('settings.update', { patch: {
+    statusStripPositionLocked: !surfaceSettings.statusStripPositionLocked } });
+  throw new Error('Unsupported surface action.');
+}
 
 function startElectronHost(): void {
   let maintenanceShutdownMarker: string | undefined;
@@ -322,6 +356,23 @@ async function bootstrap(): Promise<void> {
   }
 
   initializeWindowsNotificationShortcut();
+  if (!smokeTest && process.platform === 'win32') {
+    statusStrip = new StatusStripHost(process.env.CODEXU_DATA_DIRECTORY
+      || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'codexU'), handleSurfaceAction);
+    desktopWidget = new DesktopWidgetHost(sidecarExecutablePath, handleSurfaceAction, message => {
+      runtimeLog('warn', 'desktop-widget', message);
+      forwardRendererEvent({ version: 1, type: 'event', method: 'desktop.stateChanged', payload: { attached: false, message } });
+      forwardRendererEvent({ version: 1, type: 'event', method: 'app.projectionWarning',
+        payload: { area: 'desktop', message } });
+    }, (attached, message) => {
+      forwardRendererEvent({ version: 1, type: 'event', method: 'desktop.stateChanged', payload: { attached, message } });
+      runtimeLog('info', 'desktop-widget.state', message);
+    });
+    ipcMain.handle('codexu:surface', async (event, action: unknown) => {
+      if (!statusStrip?.owns(event) || typeof action !== 'string') throw new Error('Untrusted surface.');
+      return statusStrip.request(action);
+    });
+  }
   nativeNotifications = createNativeNotificationAdapter();
   await startSidecar();
   if (smokeTest && (tray !== undefined || registeredGlobalHotKey !== undefined
@@ -384,6 +435,16 @@ async function startSidecar(): Promise<void> {
   const executablePath = sidecarExecutablePath;
   if (!executablePath) throw new Error('Sidecar executable path has not been resolved.');
 
+  const nativeHostRequest = createHostRequestHandler(dialog, () => mainWindow, {
+      // Smoke tests exercise the full reverse-RPC path without ever presenting
+      // native UI or making a destructive confirmation choice.
+      forceSafeCancellation: smokeTest,
+      startupRegistration: shouldApplyStartupRegistration(
+        process.platform,
+        app.isPackaged,
+        smokeTest,
+      ) ? { setEnabled: applyStartupRegistrationVerified } : undefined,
+    });
   const client = new SidecarClient({
     executablePath,
     arguments: resolveSidecarArguments(),
@@ -393,16 +454,11 @@ async function startSidecar(): Promise<void> {
       CODEXU_PARENT_PID: String(process.pid),
       ...(persistentLog ? { CODEXU_ELECTRON_LOG_DIRECTORY: path.dirname(persistentLog.filePath) } : {}),
     },
-    hostRequestHandler: createHostRequestHandler(dialog, () => mainWindow, {
-      // Smoke tests exercise the full reverse-RPC path without ever presenting
-      // native UI or making a destructive confirmation choice.
-      forceSafeCancellation: smokeTest,
-      startupRegistration: shouldApplyStartupRegistration(
-        process.platform,
-        app.isPackaged,
-        smokeTest,
-      ) ? { setEnabled: applyStartupRegistrationVerified } : undefined,
-    }),
+    hostRequestHandler: request => request.method === 'host.statusStrip.control'
+      ? smokeTest ? Promise.resolve({ configuredEnabled: false, visible: false, positionLocked: false,
+        hasManualPosition: false, positionMode: 'disabled', displayName: 'smoke', message: 'Native surfaces disabled in smoke mode.' })
+        : statusStrip?.control(request.payload) ?? Promise.reject(new Error('Status strip unavailable.'))
+      : nativeHostRequest(request),
   });
   let candidateFailure: Error | undefined;
   activeSidecars.add(client);
@@ -430,9 +486,11 @@ async function startSidecar(): Promise<void> {
   try {
     const handshake = await client.start();
     assertRequiredSidecarCapabilities(handshake.capabilities);
+    const rawSettings = await client.request('settings.get', {});
+    if (typeof rawSettings === 'object' && rawSettings !== null) updateSurfaces(rawSettings as SurfaceData);
     const initialSettings = await reconcileStartupRegistrationState(
       client,
-      parseHostSettings(await client.request('settings.get', {})),
+      parseHostSettings(rawSettings),
     );
     await applyHostSettings(initialSettings, client);
     if (shutdownStarted || allowQuit) {
@@ -509,7 +567,13 @@ function registerLifecycleHandlers(): void {
   });
 
   app.on('will-quit', () => disposeNativeShell());
-  nativeTheme.on('updated', () => updateWindowBackground());
+  nativeTheme.on('updated', () => {
+    updateWindowBackground();
+    if (surfaceSettings.theme === 'system') {
+      const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+      statusStrip?.update({ theme }); desktopWidget?.update({ theme });
+    }
+  });
 
   process.once('SIGINT', () => requestQuit(0));
   process.once('SIGTERM', () => requestQuit(0));
@@ -752,6 +816,16 @@ function isTrustedSender(event: IpcMainInvokeEvent): boolean {
 }
 
 function handleSidecarEvent(source: SidecarClient, event: SidecarEvent): void {
+  if (!smokeTest) {
+    if (event.method === 'usage.refreshStarted') updateSurfaces({ refreshing: true, refreshError: '' });
+    if (event.method === 'usage.snapshotChanged') updateSurfaces({ refreshing: false, refreshError: '' });
+    if (event.method === 'usage.refreshFailed') updateSurfaces({ refreshing: false, refreshError:
+      isRecord(event.payload) ? String(event.payload.message || '刷新失败') : '刷新失败' });
+  }
+  if (event.method === 'host.surface.update') {
+    if (!smokeTest && typeof event.payload === 'object' && event.payload) updateSurfaces(event.payload as SurfaceData);
+    return;
+  }
   if (shouldSuppressHostEventInSmoke(smokeTest, event.method)) {
     failAndQuit(new Error(`Smoke test rejected native host event: ${event.method}`));
     return;
@@ -811,6 +885,7 @@ async function applyChangedSettings(source: SidecarClient, event: SidecarEvent):
     const settings = parseHostSettings(event.payload);
     if (sidecar !== source) return;
     await applyHostSettings(settings, source);
+    updateSurfaces(event.payload as SurfaceData);
     if (sidecar === source) forwardRendererEvent(event);
   } catch (reason) {
     if (shutdownStarted || allowQuit) return;
@@ -1109,6 +1184,8 @@ function applyStartupRegistrationVerified(enabled: boolean): boolean {
 }
 
 function disposeNativeShell(): void {
+  statusStrip?.dispose(); statusStrip = undefined;
+  desktopWidget?.dispose(); desktopWidget = undefined;
   if (sidecarRecoveryTimer) clearTimeout(sidecarRecoveryTimer);
   if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
   sidecarRecoveryTimer = undefined;
