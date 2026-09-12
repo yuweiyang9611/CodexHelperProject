@@ -1,5 +1,5 @@
 import { BrowserWindow, screen, type IpcMainInvokeEvent } from 'electron';
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 export interface SurfaceData {
@@ -21,7 +21,8 @@ export class StatusStripHost {
   private previewTimer?: NodeJS.Timeout;
   private preview?: SurfaceData;
   private saveTimer?: NodeJS.Timeout;
-  private readonly displayChanged = () => this.fit();
+  private userMoving = false;
+  private readonly displayChanged = () => { if (!this.manual) this.placeDefault(); this.fit(); };
 
   constructor(private readonly root: string, private readonly action: (name: string) => Promise<unknown>) {
     screen.on('display-removed', this.displayChanged);
@@ -47,10 +48,13 @@ export class StatusStripHost {
       this.send();
       this.previewTimer = setTimeout(() => { this.previewTimer = undefined; this.preview = undefined; this.update(this.data); }, 10_000);
     } else if (payload.action === 'recover') {
+      if (this.saveTimer) clearTimeout(this.saveTimer);
+      this.saveTimer = undefined;
+      this.userMoving = false;
+      for (const suffix of ['', '.bak', '.tmp']) rmSync(path.join(this.root, 'status-strip-placement.json' + suffix), { force: true });
       this.manual = false;
       await this.ensure();
       this.placeDefault();
-      this.persist();
       if (!this.data.statusStripEnabled) {
         if (this.previewTimer) clearTimeout(this.previewTimer);
         this.previewTimer = setTimeout(() => { this.previewTimer = undefined; this.update(this.data); }, 10_000);
@@ -69,13 +73,15 @@ export class StatusStripHost {
   }
   dispose(): void {
     if (this.previewTimer) clearTimeout(this.previewTimer);
-    if (this.saveTimer) clearTimeout(this.saveTimer);
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.persist(); }
     screen.removeListener('display-removed', this.displayChanged);
     screen.removeListener('display-metrics-changed', this.displayChanged);
     this.window?.destroy(); this.window = undefined;
   }
   private async ensure(): Promise<void> {
     if (this.window && !this.window.isDestroyed()) { this.window.showInactive(); return; }
+    this.manual = false;
+    this.userMoving = false;
     const window = new BrowserWindow({ width: 430, height: 46, frame: false, show: false,
       resizable: false, skipTaskbar: true, alwaysOnTop: true, autoHideMenuBar: true,
       webPreferences: { preload: path.join(__dirname, 'surfacePreload.js'), sandbox: true,
@@ -84,11 +90,16 @@ export class StatusStripHost {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.on('render-process-gone', () => { window.destroy(); this.window = undefined; });
-    window.on('will-move', event => { if (this.data.statusStripPositionLocked) event.preventDefault(); });
+    window.on('will-move', event => {
+      if (this.data.statusStripPositionLocked) { event.preventDefault(); return; }
+      this.userMoving = true;
+    });
     window.on('moved', () => {
+      if (!this.userMoving) return;
+      this.userMoving = false;
       this.manual = true;
       if (this.saveTimer) clearTimeout(this.saveTimer);
-      this.saveTimer = setTimeout(() => this.persist(), 300);
+      this.saveTimer = setTimeout(() => { this.saveTimer = undefined; this.persist(); }, 300);
     });
     this.placeDefault();
     for (const suffix of ['', '.bak']) {
@@ -127,7 +138,7 @@ export class StatusStripHost {
       y: Math.max(area.y + my, Math.min(bounds.y, area.y + area.height - my - height)) });
   }
   private persist(): void {
-    if (!this.window || this.window.isDestroyed()) return;
+    if (!this.manual || !this.window || this.window.isDestroyed()) return;
     const b = this.window.getBounds(); const p = screen.dipToScreenPoint({ x: b.x, y: b.y });
     try {
       mkdirSync(this.root, { recursive: true });

@@ -50,6 +50,7 @@ const os = require('node:os');
       await request(page, 'settings.update', { patch: { desktopMode: false } });
     }
     const state = await request(page, 'statusStrip.recover'); assert.equal(state.visible, true);
+    assert.equal(state.positionMode, 'automatic');
     const strip = application.windows().find(p => p.url().includes('surface=strip')); assert(strip);
     await strip.getByRole('button', { name: '展开或折叠状态条' }).click();
     await strip.getByRole('button', { name: '打开主界面' }).waitFor();
@@ -111,6 +112,7 @@ const os = require('node:os');
     await fs.unlink(transcript);
     await application.close(); application = undefined;
     page = await launch();
+    assert.equal((await request(page, 'statusStrip.getState')).positionMode, 'automatic');
     assert.equal((await request(page, 'settings.get')).theme, 'light');
     await request(page, 'runtime.select', { runtime: 'claudeCode' });
     assert.equal((await request(page, 'usage.refresh')).tokens.lifetime.tokens, 120);
