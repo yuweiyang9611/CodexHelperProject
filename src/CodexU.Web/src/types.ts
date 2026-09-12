@@ -116,6 +116,7 @@ export interface TaskItem {
 }
 
 export interface DailyUsage {
+  source?: 'live' | 'retained' | 'legacy' | 'conflict'
   date: string
   tokens: number
   creditsUsed: number
@@ -304,6 +305,7 @@ export interface TodoMutation {
 }
 
 export interface DashboardSnapshot {
+  history?: { retainedSources: number; conflicts: number; legacyDays: number }
   runtime: AgentRuntime
   refreshedAt: string
   account?: AccountSnapshot

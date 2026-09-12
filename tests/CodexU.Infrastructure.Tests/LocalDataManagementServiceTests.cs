@@ -98,7 +98,7 @@ public sealed class LocalDataManagementServiceTests
             Assert.Equal(456, Assert.Single(await historyStore.LoadAsync(AgentRuntime.ClaudeCode, scope)).Tokens.TotalTokens);
 
             using var document = JsonDocument.Parse(await File.ReadAllTextAsync(backup));
-            Assert.Equal(2, document.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(3, document.RootElement.GetProperty("schemaVersion").GetInt32());
             var manifest = document.RootElement.GetProperty("manifest");
             Assert.Equal("SHA-256", manifest.GetProperty("hashAlgorithm").GetString());
             var files = manifest.GetProperty("files").EnumerateArray().ToArray();

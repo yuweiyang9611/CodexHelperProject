@@ -4,10 +4,10 @@ namespace CodexU.Infrastructure;
 
 internal sealed class SessionIndexCache
 {
-    // Version 9 persists compact normalized token events plus session/fork identity
+    // Version 12 includes OS file identity and a complete committed-prefix fingerprint.
     // under the field-validating, last-only-aware normalizer semantics. Global
     // canonicalization and parent-prefix removal are recomputed on every read.
-    private const int CurrentVersion = 9;
+    private const int CurrentVersion = 12;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _path;
 
@@ -130,7 +130,9 @@ internal sealed record SessionIndexEntry(
     string Path,
     long Length,
     long LastWriteTimeUtcTicks,
-    ParsedSessionFile Parsed)
+    ParsedSessionFile Parsed,
+    string? Boundary = null,
+    string? FileIdentity = null)
 {
     public bool Matches(FileInfo file) =>
         Length == file.Length && LastWriteTimeUtcTicks == file.LastWriteTimeUtc.Ticks;

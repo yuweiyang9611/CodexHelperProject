@@ -16,30 +16,33 @@ public sealed record SessionAnalytics(
     int ParsedFileCount,
     int TokenEventCount,
     int SkippedFileCount,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics)
+{
+    public IReadOnlyList<ProjectUsage> Projects { get; init; } = [];
+    public UsageHistoryStatus? History { get; init; }
+}
 
 public sealed partial class CodexSessionReader(
     CodexPaths paths,
     bool incrementalIndexEnabled = true,
     string? indexDirectory = null,
     IReadOnlyList<ModelCreditRate>? customRates = null,
-    bool completeRateCatalog = false)
+    bool completeRateCatalog = false,
+    string? defaultWorkspace = null,
+    bool historyEnabled = false)
 {
     public async Task<SessionAnalytics> ReadAsync(CancellationToken cancellationToken = default)
     {
         string[] files;
+        string? enumerationFailure = null;
         try
         {
             files = EnumerateSessionFiles().ToArray();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return Empty($"无法枚举本机 session：{exception.Message}");
-        }
-
-        if (files.Length == 0)
-        {
-            return Empty("未找到精细 session token 事件");
+            files = [];
+            enumerationFailure = $"无法枚举本机 session，保留历史：{exception.Message}";
         }
 
         var now = DateTimeOffset.Now;
@@ -62,6 +65,7 @@ public sealed partial class CodexSessionReader(
         long taskDuration = 0;
         long longestTaskDuration = 0;
         var diagnostics = new List<string>();
+        if (enumerationFailure is not null) diagnostics.Add(enumerationFailure);
         SessionRateLimitSample? latestRateLimit = null;
         var reusedFiles = 0;
         var incrementalFiles = 0;
@@ -82,18 +86,22 @@ public sealed partial class CodexSessionReader(
             {
                 var fullPath = Path.GetFullPath(file);
                 var fileInfo = new FileInfo(fullPath);
+                var fileIdentity = SourceFileIdentity.Read(fullPath);
                 ParsedSessionFile parsed;
+                cachedEntries.TryGetValue(fullPath, out var cached);
+                if (cached?.FileIdentity != fileIdentity) cached = null;
                 if (incrementalIndexEnabled
-                    && cachedEntries.TryGetValue(fullPath, out var cached)
+                    && cached is not null
                     && cached.Matches(fileInfo))
                 {
                     parsed = cached.Parsed;
                     reusedFiles++;
                 }
                 else if (incrementalIndexEnabled
-                    && cachedEntries.TryGetValue(fullPath, out cached)
+                    && cached is not null
                     && cached.Length > 0
-                    && cached.Length < fileInfo.Length)
+                    && cached.Length < fileInfo.Length
+                    && cached.Boundary == await SourceBoundary.ReadAsync(fullPath, cached.Length, cancellationToken))
                 {
                     parsed = await ParseFileAsync(fullPath, cached.Parsed, cached.Length, cancellationToken);
                     incrementalFiles++;
@@ -111,7 +119,9 @@ public sealed partial class CodexSessionReader(
                         fullPath,
                         parsed.Offset,
                         fileInfo.LastWriteTimeUtc.Ticks,
-                        parsed));
+                        parsed,
+                        cached is not null && ReferenceEquals(parsed, cached.Parsed) ? cached.Boundary
+                            : await SourceBoundary.ReadAsync(fullPath, parsed.Offset, cancellationToken), fileIdentity));
                 }
 
                 physicalFiles.Add(new PhysicalSessionFile(
@@ -137,17 +147,78 @@ public sealed partial class CodexSessionReader(
             diagnostics.Add($"增量索引：复用 {reusedFiles} 个文件，续读 {incrementalFiles} 个文件，重新解析 {newlyParsedFiles} 个文件");
         }
 
+        var workspaceMap = await ReadWorkspaceMapAsync(paths.StateDatabase, cancellationToken);
+        physicalFiles = physicalFiles.Select(file => file with
+        {
+            Parsed = file.Parsed with
+            {
+                Workspace = file.Parsed.Workspace
+                ?? workspaceMap.GetValueOrDefault(file.Parsed.SessionId ?? "")
+            }
+        }).ToList();
+        // Preserve raw normalized session identities before reconstruction. Missing parents
+        // remain available for fork-prefix comparison after their source file disappears.
+        var liveReconstruction = ReconstructSessions(physicalFiles);
+        var disputed = physicalFiles.Where(f => f.Parsed.SessionId is not null).GroupBy(f => f.Parsed.SessionId!, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1 && (SelectCanonical(g.ToArray()).Divergent
+                || g.Select(f => f.Parsed.Workspace).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
+            .Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+        var canonicalLive = liveReconstruction.Files.Select(file => file.Source);
+        var observations = canonicalLive.ToDictionary(file => file.Parsed.SessionId
+            ?? UsageHistoryLedger.SourceId(file.Path), file => file.Parsed, StringComparer.Ordinal);
+        var historyConflicts = 0;
+        var retainedSources = 0;
+        LedgerRead<ParsedSessionFile>? historyRead = null;
+        try
+        {
+            if (historyEnabled)
+            {
+                var ledger = new UsageHistoryLedger(indexDirectory ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"));
+                var history = await ledger.MergeAsync("codex", observations, CanReplaceHistory, cancellationToken, disputed);
+                historyRead = history;
+                historyConflicts = history.Conflicts;
+                retainedSources = history.RetainedSources;
+                physicalFiles = history.Sources.Select(pair => new PhysicalSessionFile(pair.Key, 0, pair.Value)).ToList();
+                diagnostics.Add($"用量历史：留存 {history.RetainedSources} 个来源，冲突 {history.Conflicts} 个来源");
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or System.Text.Json.JsonException)
+        {
+            diagnostics.Add($"用量历史不可用，使用当前日志：{e.Message}");
+        }
+        var projectBuckets = new Dictionary<string, List<SessionUsageBucket>>(StringComparer.OrdinalIgnoreCase);
+        var attributed = new List<AttributedUsage>();
+        var projectSessions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var reconstruction = ReconstructSessions(physicalFiles);
+        if (historyEnabled) reconstruction = reconstruction with
+        {
+            DuplicateFileCount = liveReconstruction.DuplicateFileCount,
+            DivergentDuplicateCount = liveReconstruction.DivergentDuplicateCount
+        };
         parsedFiles = reconstruction.Files.Count;
         foreach (var resolved in reconstruction.Files)
         {
             var parsed = resolved.Source.Parsed;
-            tokenEvents += parsed.TokenEventCount;
-            skippedLines += parsed.SkippedLineCount;
             if (parsed.LatestRateLimit is { } candidate)
             {
                 latestRateLimit = MergeRateLimitSamples(latestRateLimit, candidate);
             }
+
+            if (!WorkspaceScope.Contains(defaultWorkspace, parsed.Workspace))
+            {
+                if (parsed.Workspace is null) diagnostics.Add("工作区覆盖不足：部分 session 缺少项目归属，已从指定工作区统计排除");
+                continue;
+            }
+            tokenEvents += parsed.TokenEventCount;
+            skippedLines += parsed.SkippedLineCount;
+            var projectKey = parsed.Workspace ?? "未知项目";
+            if (!projectBuckets.ContainsKey(projectKey))
+            {
+                projectBuckets[projectKey] = [];
+                projectSessions[projectKey] = new(StringComparer.Ordinal);
+            }
+            projectSessions[projectKey].Add(parsed.SessionId ?? resolved.Source.Path);
 
             taskStarted += parsed.TaskLifecycle.Started;
             taskCompleted += parsed.TaskLifecycle.Completed;
@@ -158,6 +229,9 @@ public sealed partial class CodexSessionReader(
             foreach (var tokenEvent in EffectiveTokenEvents(resolved))
             {
                 var bucket = new SessionUsageBucket(tokenEvent.Date, tokenEvent.Model, tokenEvent.Tokens, 1);
+                projectBuckets[projectKey].Add(bucket);
+                attributed.Add(new(parsed.SessionId ?? resolved.Source.Path, parsed.Workspace,
+                    tokenEvent.Date, tokenEvent.Model, tokenEvent.Tokens, 1, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live"));
                 lifetime.Add(bucket);
                 if (!daily.TryGetValue(bucket.Date, out var dailyPeriod))
                 {
@@ -228,6 +302,7 @@ public sealed partial class CodexSessionReader(
         }
 
         var tokenQuality = skippedFiles > 0
+                           || historyConflicts > 0
                            || skippedLines > 0
                            || reconstruction.AmbiguousForkCount > 0
                            || reconstruction.DivergentDuplicateCount > 0
@@ -285,7 +360,14 @@ public sealed partial class CodexSessionReader(
             ? null
             : keptSecondary with { MeasuredAt = latestRateLimit!.SecondaryTimestamp };
 
-        return new SessionAnalytics(
+        UsageProjection? projection = null;
+        if (historyEnabled)
+        {
+            projection = await UsageHistoryProjection.BuildAsync(AgentRuntime.Codex, attributed,
+                indexDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
+                defaultWorkspace, tokenQuality, customRates, completeRateCatalog, retainedSources, historyConflicts, cancellationToken);
+        }
+        var result = new SessionAnalytics(
             latestRateLimit is null
                 ? null
                 : new AccountSnapshot("chatgpt", latestRateLimit.PlanType, null, true),
@@ -305,7 +387,27 @@ public sealed partial class CodexSessionReader(
             parsedFiles,
             tokenEvents,
             skippedFiles,
-            diagnostics);
+            diagnostics)
+        {
+            Projects = projectBuckets.Select(pair =>
+            {
+                var accumulator = new PeriodAccumulator();
+                foreach (var bucket in pair.Value) accumulator.Add(bucket);
+                var period = accumulator.ToPeriod(tokenQuality, customRates, completeRateCatalog);
+                return new ProjectUsage(pair.Key, Path.GetFileName(pair.Key), pair.Key == "未知项目" ? null : pair.Key,
+                    period.Tokens, projectSessions[pair.Key].Count,
+                    pair.Value.Count == 0 ? null : new DateTimeOffset(pair.Value.Max(b => b.Date).ToDateTime(TimeOnly.MinValue)),
+                    null, period.CreditsUsed > 0 ? period.CreditsUsed : null, tokenQuality);
+            }).OrderByDescending(project => project.Tokens).ToArray()
+        };
+        return projection is null ? result : result with
+        {
+            Tokens = projection.Tokens,
+            DailyUsage = projection.Daily,
+            Models = projection.Models,
+            Projects = projection.Projects,
+            History = projection.History
+        };
     }
 
     private static IReadOnlyList<DailyUsage> BuildDailyUsage(
@@ -452,7 +554,8 @@ public sealed record ParsedSessionFile(
     ForkReplayPhase ForkReplayPhase,
     string? SessionId,
     string? ForkedFromId,
-    IReadOnlyList<SessionTokenEvent> TokenEvents);
+    IReadOnlyList<SessionTokenEvent> TokenEvents,
+    string? Workspace = null);
 
 public sealed record SessionTokenEvent(
     DateOnly Date,

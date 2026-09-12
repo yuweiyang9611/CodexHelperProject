@@ -794,7 +794,7 @@ public sealed class CodexSessionReaderTests
         try
         {
             await using var locked = new FileStream(lockedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            var result = await new CodexLocalUsageReader(paths, incrementalIndexEnabled: false).ReadAsync();
+            var result = await new CodexLocalUsageReader(paths, incrementalIndexEnabled: false, applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(100, result.Tokens.Lifetime.Tokens);
             Assert.Equal(100, result.Tokens.Lifetime.Breakdown.TotalTokens);
@@ -857,7 +857,7 @@ public sealed class CodexSessionReaderTests
 
         try
         {
-            var result = await new CodexLocalUsageReader(paths, incrementalIndexEnabled: false).ReadAsync();
+            var result = await new CodexLocalUsageReader(paths, incrementalIndexEnabled: false, applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(100, result.Tokens.Lifetime.Tokens);
             Assert.Equal(100, result.Tokens.Lifetime.Breakdown.TotalTokens);
@@ -945,7 +945,7 @@ public sealed class CodexSessionReaderTests
                 paths,
                 incrementalIndexEnabled: false,
                 customRates: pinnedRates,
-                completeRateCatalog: true).ReadAsync();
+                completeRateCatalog: true, applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(0, result.Tokens.Lifetime.CreditsUsed);
             Assert.Equal(100, result.Tokens.Lifetime.UnratedTokens);

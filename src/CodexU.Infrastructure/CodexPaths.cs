@@ -27,7 +27,7 @@ public sealed record CodexPaths(
             Path.Combine(codex, "archived_sessions"),
             Path.Combine(codex, "automations"),
             Path.Combine(codex, "goals_1.sqlite"),
-            Path.Combine(home, ".claude"));
+            TryNormalize(Environment.GetEnvironmentVariable("CODEXU_CLAUDE_DIRECTORY")) ?? Path.Combine(home, ".claude"));
     }
 
     private static string? TryNormalize(string? path)

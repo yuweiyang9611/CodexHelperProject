@@ -419,9 +419,7 @@ public sealed class ApplicationSession : IDisposable
                         ?? throw new InvalidDataException("备份恢复结果缺少设置。");
                     var restoredTodos = restored.Todos
                         ?? throw new InvalidDataException("备份恢复结果缺少待办。");
-                    var replacementService = DashboardSettingsChanged(previousSettings, restoredSettings)
-                        ? _dashboardServiceFactory(restoredSettings)
-                        : null;
+                    var replacementService = _dashboardServiceFactory(restoredSettings);
 
                     if (previousSettings.StartAtLogin != restoredSettings.StartAtLogin)
                     {

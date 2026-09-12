@@ -494,12 +494,14 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
         + 0.43 * rate.cachedInput
         + 0.33 * rate.output),
       quality: 'detailed' as const,
+      source: 'live' as const,
     }
   })
 
   return {
     runtime,
     refreshedAt: today.toISOString(),
+    history: { retainedSources: 0, conflicts: 0, legacyDays: 0 },
     // "pro" is a different price per vendor — US$20 on Claude, US$200 on ChatGPT —
     // so the demo account has to follow the runtime it is describing rather than
     // showing a ChatGPT subscription behind the Claude Code toggle.
@@ -618,9 +620,8 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
     goals: [
       { id: 'goal-1', objective: '完成 codexU Windows 功能对齐', status: 'active', tokenBudget: 120_000, tokensUsed: 46_000, timeUsedSeconds: 5400, updatedAt: today.toISOString() },
     ],
-    // Structurally empty for Claude, matching the reader: it records no task
-    // lifecycle and keeps no index. Demo data that invented numbers here would hide
-    // the very case the view now has to handle without padding zeros.
+    // Claude does not record task lifecycle. Its demo index is disabled to exercise
+    // the same shared index setting's empty state without invented measurements.
     taskLifecycle: isClaude
       ? { started: 0, completed: 0, aborted: 0, durationMilliseconds: 0, longestDurationMilliseconds: 0 }
       : { started: 126, completed: 104, aborted: 8, durationMilliseconds: 42_000_000, longestDurationMilliseconds: 1_620_000 },

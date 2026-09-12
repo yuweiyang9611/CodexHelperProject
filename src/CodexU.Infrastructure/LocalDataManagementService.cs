@@ -13,9 +13,9 @@ public sealed class LocalDataManagementService(
     string? applicationDataDirectory = null,
     string? electronLogDirectory = null)
 {
-    private const int CurrentBackupSchemaVersion = 2;
-    private const long MaximumBackupBytes = 24L * 1024 * 1024;
-    private const int MaximumManagedFileBytes = 8 * 1024 * 1024;
+    private const int CurrentBackupSchemaVersion = 3;
+    private const long MaximumBackupBytes = 768L * 1024 * 1024;
+    private const int MaximumManagedFileBytes = 256 * 1024 * 1024;
     private const string BackupHashAlgorithm = "SHA-256";
     private const string SettingsBackupPath = "settings.json";
     private const string TodosBackupPath = "todos.json";
@@ -25,7 +25,8 @@ public sealed class LocalDataManagementService(
     private static readonly string[] HistoryBackupPaths =
     [
         CodexHistoryBackupPath,
-        ClaudeHistoryBackupPath
+        ClaudeHistoryBackupPath,
+        UsageHistoryLedger.RelativePath
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -37,7 +38,8 @@ public sealed class LocalDataManagementService(
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"));
     private readonly string? _electronLogDirectory = ResolveOptionalDirectory(
         electronLogDirectory ?? Environment.GetEnvironmentVariable("CODEXU_ELECTRON_LOG_DIRECTORY"));
-    private readonly SemaphoreSlim _dataOperationGate = new(1, 1);
+    private readonly SemaphoreSlim _dataOperationGate = UsageHistoryLedger.GateFor(applicationDataDirectory
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"));
 
     public async Task<LocalOperationResult> ExportAggregatesAsync(
         DashboardSnapshot snapshot,
@@ -124,7 +126,9 @@ public sealed class LocalDataManagementService(
             };
             foreach (var relativePath in HistoryBackupPaths)
             {
-                var content = await ReadManagedFileAsync(
+                var content = relativePath == UsageHistoryLedger.RelativePath
+                    ? await ReadLedgerSnapshotAsync(cancellationToken)
+                    : await ReadManagedFileAsync(
                     ManagedPathFor(relativePath),
                     allowMissing: true,
                     cancellationToken);
@@ -175,15 +179,21 @@ public sealed class LocalDataManagementService(
     }
 
     public async Task<LocalDataHistorySnapshot> CaptureDailyUsageHistoryAsync(
-        CancellationToken cancellationToken = default) =>
-        new(await CaptureHistoryAsync(cancellationToken));
+        CancellationToken cancellationToken = default)
+    {
+        await _dataOperationGate.WaitAsync(cancellationToken);
+        try { return new(await CaptureHistoryAsync(cancellationToken)); }
+        finally { _dataOperationGate.Release(); }
+    }
 
-    public Task RestoreDailyUsageHistoryAsync(
+    public async Task RestoreDailyUsageHistoryAsync(
         LocalDataHistorySnapshot snapshot,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        return RestoreHistoryAsync(snapshot.Files, cancellationToken);
+        await _dataOperationGate.WaitAsync(cancellationToken);
+        try { await RestoreHistoryAsync(snapshot.Files, cancellationToken); }
+        finally { _dataOperationGate.Release(); }
     }
 
     public async Task<LocalOperationResult> RestoreAsync(
@@ -208,6 +218,7 @@ public sealed class LocalDataManagementService(
             var payload = backup.SchemaVersion switch
             {
                 1 => ValidateLegacyBackup(backup),
+                2 => ValidateCurrentBackup(backup),
                 CurrentBackupSchemaVersion => ValidateCurrentBackup(backup),
                 _ => throw new InvalidDataException("不支持的 codexU 备份格式。")
             };
@@ -237,6 +248,11 @@ public sealed class LocalDataManagementService(
                 {
                     await RestoreHistoryAsync(payload.History, cancellationToken);
                 }
+
+                // Caches are reconstructible, unlike the restored ledger. Never let
+                // a pre-restore generation supply a cached parse to the new snapshot.
+                foreach (var cache in new[] { "session-index-v1.json", "claude-session-index-v1.json" })
+                    File.Delete(Path.Combine(_dataDirectory, cache));
 
                 var restoredScope = payload.IncludesHistory
                     ? "设置、待办和用量历史已恢复。"
@@ -392,6 +408,8 @@ public sealed class LocalDataManagementService(
     public Task<LocalOperationResult> RebuildSessionIndexAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var claudeIndex = Path.Combine(_dataDirectory, "claude-session-index-v1.json");
+        if (File.Exists(claudeIndex)) File.Move(claudeIndex, claudeIndex + ".rebuild-" + Guid.NewGuid().ToString("N"));
         var index = Path.Combine(_dataDirectory, "session-index-v1.json");
         if (!File.Exists(index))
         {
@@ -569,13 +587,14 @@ public sealed class LocalDataManagementService(
         var allowedPaths = new HashSet<string>(
             [SettingsBackupPath, TodosBackupPath, .. HistoryBackupPaths],
             StringComparer.Ordinal);
-        if (backup.Manifest.Files is null || backup.Manifest.Files.Count is < 2 or > 4)
+        if (backup.Manifest.Files is null || backup.Manifest.Files.Count is < 2 or > 5)
         {
             throw new InvalidDataException("备份文件清单不完整或项目过多。");
         }
 
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         long totalBytes = 0;
+        long legacyBytes = 0;
         foreach (var entry in backup.Manifest.Files)
         {
             if (entry is null
@@ -594,6 +613,8 @@ public sealed class LocalDataManagementService(
             }
 
             byte[] content;
+            if (entry.Path != UsageHistoryLedger.RelativePath && entry.Size > 8 * 1024 * 1024)
+                throw new InvalidDataException($"备份文件 {entry.Path} 超过 8 MB。");
             byte[] expectedHash;
             try
             {
@@ -617,6 +638,8 @@ public sealed class LocalDataManagementService(
             }
 
             totalBytes += content.LongLength;
+            if (entry.Path != UsageHistoryLedger.RelativePath) legacyBytes += content.LongLength;
+            if (legacyBytes > 16L * 1024 * 1024) throw new InvalidDataException("非数据库备份数据总量过大。");
             if (totalBytes > MaximumManagedFileBytes * 2L)
             {
                 throw new InvalidDataException("备份文件清单中的数据总量过大。");
@@ -654,12 +677,42 @@ public sealed class LocalDataManagementService(
         {
             if (files.TryGetValue(relativePath, out var content))
             {
-                DailyUsageHistoryStore.ValidateBackupContent(content);
+                if (relativePath == UsageHistoryLedger.RelativePath) ValidateLedgerContent(content);
+                else DailyUsageHistoryStore.ValidateBackupContent(content);
                 history.Add(relativePath, content);
             }
         }
 
         return new RestorePayload(settings, todos, history, IncludesHistory: true);
+    }
+
+    private void ValidateLedgerContent(byte[] content)
+    {
+        Directory.CreateDirectory(_dataDirectory);
+        var path = Path.Combine(_dataDirectory, ".ledger-validation-" + Guid.NewGuid().ToString("N") + ".sqlite");
+        try
+        {
+            File.WriteAllBytes(path, content);
+            using var db = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            { DataSource = path, Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+            db.Open();
+            using var command = db.CreateCommand();
+            command.CommandText = "PRAGMA integrity_check";
+            if (!Equals(command.ExecuteScalar(), "ok")) throw new InvalidDataException("历史账本完整性校验失败。");
+            command.CommandText = "PRAGMA user_version";
+            if (Convert.ToInt32(command.ExecuteScalar()) != 2) throw new InvalidDataException("不支持的历史账本版本。");
+            command.CommandText = "SELECT runtime,id,payload,conflict FROM sources";
+            using var rows = command.ExecuteReader();
+            while (rows.Read())
+            {
+                if (rows.IsDBNull(0) || rows.IsDBNull(1) || rows.IsDBNull(2) || rows.IsDBNull(3))
+                    throw new InvalidDataException("历史账本包含不完整来源。");
+                using var payload = JsonDocument.Parse(rows.GetString(2));
+            }
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException e) { throw new InvalidDataException("历史账本无效。", e); }
+        catch (JsonException e) { throw new InvalidDataException("历史账本来源内容无效。", e); }
+        finally { File.Delete(path); }
     }
 
     private async Task<Dictionary<string, byte[]>> CaptureHistoryAsync(CancellationToken cancellationToken)
@@ -735,9 +788,10 @@ public sealed class LocalDataManagementService(
                 FileShare.ReadWrite | FileShare.Delete,
                 16 * 1024,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            if (stream.Length > MaximumManagedFileBytes)
+            var maximum = Path.GetFileName(path).Contains("ledger", StringComparison.OrdinalIgnoreCase) ? MaximumManagedFileBytes : 8 * 1024 * 1024;
+            if (stream.Length > maximum)
             {
-                throw new InvalidDataException($"受管数据文件 {Path.GetFileName(path)} 超过 8 MB，无法安全备份或恢复。");
+                throw new InvalidDataException($"受管数据文件 {Path.GetFileName(path)} 超过 {maximum / 1024 / 1024} MB，无法安全备份或恢复。");
             }
 
             var content = new byte[checked((int)stream.Length)];
@@ -754,10 +808,32 @@ public sealed class LocalDataManagementService(
         }
     }
 
+    private async Task<byte[]?> ReadLedgerSnapshotAsync(CancellationToken ct)
+    {
+        var source = ManagedPathFor(UsageHistoryLedger.RelativePath);
+        if (!File.Exists(source)) return null;
+        var temporary = Path.Combine(_dataDirectory, "ledger-snapshot-" + Guid.NewGuid().ToString("N") + ".sqlite");
+        try
+        {
+            using (var input = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            { DataSource = source, Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly, Pooling = false }.ToString()))
+            using (var output = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            { DataSource = temporary, Pooling = false }.ToString()))
+            {
+                await input.OpenAsync(ct);
+                await output.OpenAsync(ct);
+                input.BackupDatabase(output);
+            }
+            return await ReadManagedFileAsync(temporary, false, ct);
+        }
+        finally { DeleteTemporaryFile(temporary); }
+    }
+
     private string ManagedPathFor(string relativePath) => relativePath switch
     {
         SettingsBackupPath => Path.Combine(_dataDirectory, SettingsBackupPath),
         TodosBackupPath => Path.Combine(_dataDirectory, TodosBackupPath),
+        UsageHistoryLedger.RelativePath => Path.Combine(_dataDirectory, UsageHistoryLedger.RelativePath),
         CodexHistoryBackupPath => Path.Combine(_dataDirectory, "history", "daily-usage-codex-v1.jsonl"),
         ClaudeHistoryBackupPath => Path.Combine(_dataDirectory, "history", "daily-usage-claude-code-v1.jsonl"),
         _ => throw new InvalidOperationException("未知的受管备份路径。")

@@ -26,13 +26,11 @@ const maxModelTokens = computed(() => Math.max(...props.snapshot.models.map((mod
 const providesTaskLifecycle = computed(() => props.snapshot.runtime === 'codex')
 
 /**
- * Reuse and incremental-read counts describe an index. Claude has none, and Codex
- * reports zeros for both when incremental indexing is switched off — in neither case
- * is a zero a measurement.
+ * Both runtimes support incremental indexing. Disabled counters are not measurements.
  */
 const indexSummary = computed(() => props.snapshot.indexStatus.enabled
   ? `${props.snapshot.indexStatus.reusedFiles} 复用 · ${props.snapshot.indexStatus.incrementalFiles} 续读`
-  : props.snapshot.runtime === 'codex' ? '未启用增量索引' : '该运行时无索引')
+  : '未启用增量索引')
 const longestActiveStreak = computed(() => {
   let longest = 0
   let current = 0
@@ -46,6 +44,9 @@ const longestActiveStreak = computed(() => {
 
 <template>
   <div class="usage-pane">
+    <p v-if="snapshot.history && (snapshot.history.retainedSources || snapshot.history.conflicts || snapshot.history.legacyDays)" role="status">
+      历史留存 {{ snapshot.history.retainedSources }} 个来源 · 待核对 {{ snapshot.history.conflicts }} 个来源 · 旧版快照 {{ snapshot.history.legacyDays }} 天（旧版金额保留采集值）
+    </p>
     <div class="usage-layout">
       <article class="inner-card heatmap-card">
         <div class="inner-heading"><div><span>活跃度</span><h3>最近半年本机原始用量</h3></div><em>{{ qualityLabel(snapshot.dailyUsage[0]?.quality) }}</em></div>

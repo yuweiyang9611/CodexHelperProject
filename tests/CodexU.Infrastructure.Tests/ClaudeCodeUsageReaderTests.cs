@@ -33,7 +33,7 @@ public sealed class ClaudeCodeUsageReaderTests
                 + valid
                 + Environment.NewLine);
 
-            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude)).ReadAsync();
+            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude), applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(100, result.Tokens.Lifetime.Tokens);
             Assert.Equal(DataQuality.Partial, result.Tokens.Lifetime.Quality);
@@ -97,7 +97,7 @@ public sealed class ClaudeCodeUsageReaderTests
             {
                 new ModelCreditRate("claude-sonnet", 100, 10, 200, MatchMode: "prefix")
             };
-            var result = await new ClaudeCodeUsageReader(paths, selectedWorkspace, customRates: rates).ReadAsync();
+            var result = await new ClaudeCodeUsageReader(paths, selectedWorkspace, customRates: rates, applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(200, result.Tokens.Lifetime.Tokens);
             Assert.Equal(150, result.Tokens.Lifetime.Breakdown.InputTokens);
@@ -143,7 +143,7 @@ public sealed class ClaudeCodeUsageReaderTests
                     usage = new { input_tokens = 100, output_tokens = 20 }
                 }
             });
-            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "session.jsonl"), transcript);
+            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "session.jsonl"), transcript + Environment.NewLine);
             var pinnedRates = new[]
             {
                 new ModelCreditRate("archive-model", 10, 1, 100)
@@ -152,7 +152,7 @@ public sealed class ClaudeCodeUsageReaderTests
             var result = await new ClaudeCodeUsageReader(
                 CreatePaths(root, claude),
                 customRates: pinnedRates,
-                completeRateCatalog: true).ReadAsync();
+                completeRateCatalog: true, applicationDataDirectory: root).ReadAsync();
 
             Assert.Equal(0, result.Tokens.Lifetime.CreditsUsed);
             Assert.Equal(120, result.Tokens.Lifetime.UnratedTokens);
@@ -231,10 +231,10 @@ public sealed class ClaudeCodeUsageReaderTests
                     }
                 }
             });
-            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "session.jsonl"), line);
+            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "session.jsonl"), line + Environment.NewLine);
 
             var rates = new[] { new ModelCreditRate("claude-opus-5", 100, 10, 200) };
-            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude), customRates: rates).ReadAsync();
+            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude), customRates: rates, applicationDataDirectory: root).ReadAsync();
             var breakdown = result.Tokens.Lifetime.Breakdown;
 
             Assert.Equal(1_000_000, breakdown.BillableCacheWrite5mTokens);
@@ -281,7 +281,7 @@ public sealed class ClaudeCodeUsageReaderTests
 
         try
         {
-            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude)).ReadAsync();
+            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude), applicationDataDirectory: root).ReadAsync();
 
             Assert.NotNull(result.PrimaryQuota);
             Assert.Equal(23.5, result.PrimaryQuota.UsedPercent, precision: 6);
@@ -317,7 +317,7 @@ public sealed class ClaudeCodeUsageReaderTests
 
         try
         {
-            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude)).ReadAsync();
+            var result = await new ClaudeCodeUsageReader(CreatePaths(root, claude), applicationDataDirectory: root).ReadAsync();
 
             Assert.NotNull(result.PrimaryQuota);
             Assert.NotNull(result.PrimaryQuota.MeasuredAt);
@@ -362,7 +362,7 @@ public sealed class ClaudeCodeUsageReaderTests
 
         try
         {
-            return await new ClaudeCodeUsageReader(CreatePaths(root, claude)).ReadAsync();
+            return await new ClaudeCodeUsageReader(CreatePaths(root, claude), applicationDataDirectory: root).ReadAsync();
         }
         finally
         {

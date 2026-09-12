@@ -5,19 +5,9 @@ using CodexU.Core;
 namespace CodexU.Infrastructure;
 
 /// <summary>
-/// Append-only day-granularity record of usage that the readers already compute
-/// and then discard.
-///
-/// Every statistic in the app is recomputed from source transcripts on each
-/// refresh, so when those logs rotate or are cleaned the history goes with them —
-/// permanently, including the equivalent-value figures the product is built
-/// around. This store is the app's own memory of what it saw.
-///
-/// Writing is the irreversible half: a day never captured cannot be recovered
-/// later. Reading back into the dashboard is deliberately separate, because a
-/// restored day has to be reconciled against period totals that are still
-/// recomputed live, and getting that wrong would make the chart disagree with
-/// its own summary.
+/// Legacy v1 daily snapshots. Readers preserve this file and import scoped days
+/// into UsageHistoryLedger. Missing model attribution requires keeping captured
+/// prices instead of repricing these snapshots.
 /// </summary>
 public sealed class DailyUsageHistoryStore
 {
