@@ -76,7 +76,23 @@ public sealed partial class ClaudeCodeUsageReader
         return new(events, skipped, complete, identity);
     }
 
-    private static bool CanReplaceClaude(ClaudeSource previous, ClaudeSource next) =>
+    private sealed record Compatibility(bool Value);
+    private sealed class Comparisons
+    {
+        internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<ClaudeSource,
+            System.Runtime.CompilerServices.ConditionalWeakTable<ClaudeSource, Compatibility>> Values = new();
+    }
+    private bool CanReplaceClaude(ClaudeSource previous, ClaudeSource next)
+    {
+        var context = UsageReadContext.For(applicationDataDirectory);
+        return context.Get("claude-comparisons", () => new Comparisons()).Values.GetOrCreateValue(previous)
+            .GetValue(next, current =>
+            {
+                context.SourceComparisons++;
+                return new Compatibility(IsCompatibleClaude(previous, current));
+            }).Value;
+    }
+    private static bool IsCompatibleClaude(ClaudeSource previous, ClaudeSource next) =>
         next.Offset >= previous.Offset
         && (previous.Identity is null || previous.Identity == next.Identity)
         && next.Events.Count >= previous.Events.Count

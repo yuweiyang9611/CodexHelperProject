@@ -166,10 +166,7 @@ public sealed partial class CodexSessionReader(
         // Preserve raw normalized session identities before reconstruction. Missing parents
         // remain available for fork-prefix comparison after their source file disappears.
         var liveReconstruction = ReconstructCached(physicalFiles, "live");
-        var disputed = physicalFiles.Where(f => f.Parsed.SessionId is not null).GroupBy(f => f.Parsed.SessionId!, StringComparer.Ordinal)
-            .Where(g => g.Count() > 1 && (SelectCanonical(g.ToArray()).Divergent
-                || g.Select(f => f.Parsed.Workspace).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
-            .Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+        var disputed = liveReconstruction.DisputedSources;
         var canonicalLive = liveReconstruction.Files.Select(file => file.Source);
         var observations = canonicalLive.ToDictionary(file => file.Parsed.SessionId
             ?? UsageHistoryLedger.SourceId(file.Path), file => file.Parsed, StringComparer.Ordinal);

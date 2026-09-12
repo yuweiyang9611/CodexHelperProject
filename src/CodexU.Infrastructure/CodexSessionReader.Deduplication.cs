@@ -16,7 +16,13 @@ public sealed partial class CodexSessionReader
             && cache.Inputs.Zip(files).All(p => p.First.Path == p.Second.Path
                 && p.First.LastWriteTimeUtcTicks == p.Second.LastWriteTimeUtcTicks && ReferenceEquals(p.First.Parsed, p.Second.Parsed))) return cache.Result;
         cache.Inputs = files.ToArray();
-        return cache.Result = ReconstructSessions(files);
+        return cache.Result = ReconstructSessions(files) with
+        {
+            DisputedSources = files.Where(f => f.Parsed.SessionId is not null).GroupBy(f => f.Parsed.SessionId!, StringComparer.Ordinal)
+                .Where(g => g.Count() > 1 && (SelectCanonical(g.ToArray()).Divergent
+                    || g.Select(f => f.Parsed.Workspace).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
+                .Select(g => g.Key).ToHashSet(StringComparer.Ordinal)
+        };
     }
 
     private sealed class BucketCache
@@ -236,5 +242,8 @@ public sealed partial class CodexSessionReader
         int StructuralForkCount,
         int PrefixForkCount,
         int AmbiguousForkCount,
-        long AmbiguousForkTokens);
+        long AmbiguousForkTokens)
+    {
+        internal IReadOnlySet<string> DisputedSources { get; init; } = new HashSet<string>();
+    }
 }

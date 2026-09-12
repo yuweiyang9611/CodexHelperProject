@@ -9,6 +9,7 @@ public sealed class UsageReadContext
     private readonly ConcurrentDictionary<string, object> _values = new(StringComparer.Ordinal);
     internal long LedgerDeserialized;
     internal long LedgerWrites;
+    internal long SourceComparisons;
     internal sealed class LedgerMemory
     {
         internal string? Stamp;

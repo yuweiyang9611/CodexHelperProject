@@ -267,6 +267,10 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
             File.Copy(original, renamed);
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
+            var context = UsageReadContext.For(root);
+            var compared = context.SourceComparisons;
+            Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
+            Assert.Equal(compared, context.SourceComparisons);
             File.Delete(original);
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
         }
