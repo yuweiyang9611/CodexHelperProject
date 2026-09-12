@@ -626,8 +626,8 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
       ? { started: 0, completed: 0, aborted: 0, durationMilliseconds: 0, longestDurationMilliseconds: 0 }
       : { started: 126, completed: 104, aborted: 8, durationMilliseconds: 42_000_000, longestDurationMilliseconds: 1_620_000 },
     indexStatus: isClaude
-      ? { enabled: false, reusedFiles: 0, incrementalFiles: 0, parsedFiles: 118, totalFiles: 118, updatedAt: today.toISOString() }
-      : { enabled: true, reusedFiles: 42, incrementalFiles: 1, parsedFiles: 0, totalFiles: 43, updatedAt: today.toISOString() },
+      ? { enabled: false, reusedFiles: 0, incrementalFiles: 0, parsedFiles: 118, totalFiles: 118, updatedAt: today.toISOString(), lastFullValidationAt: today.toISOString(), fullValidationDue: false }
+      : { enabled: true, reusedFiles: 42, incrementalFiles: 1, parsedFiles: 0, totalFiles: 43, updatedAt: today.toISOString(), lastFullValidationAt: today.toISOString(), fullValidationDue: false },
     diagnostics: [],
   }
 }

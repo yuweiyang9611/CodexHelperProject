@@ -77,6 +77,10 @@ jobs:
           ./tools/Verify-VersionConsistency.ps1
           ./tools/Verify-ReleaseAutomation.ps1
 
+      - name: Verify native command failure propagation
+        shell: pwsh
+        run: ./tools/Test-VerificationFailure.ps1
+
       - name: Build
         run: dotnet build CodexU.sln --configuration Release --no-restore -warnaserror
 

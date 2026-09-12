@@ -35,6 +35,7 @@ public sealed class ApplicationSession : IDisposable
     private volatile bool _stateShutdownRequested;
     private volatile string? _stateMutationFailure;
     private bool _disposed;
+    private readonly string _usageDataDirectory;
 
     public ApplicationSession(
         IDashboardService dashboardService,
@@ -62,6 +63,7 @@ public sealed class ApplicationSession : IDisposable
         _updateService = updateService;
         _settings = settings;
         var dataDirectory = Path.GetFullPath(applicationDataDirectory);
+        _usageDataDirectory = dataDirectory;
         _dataManagementService = new LocalDataManagementService(settingsStore, todoStore, dataDirectory);
         _rateCatalogFileService = new RateCatalogFileService(dataDirectory);
         _startupRegistration = startupRegistration;
@@ -529,6 +531,7 @@ public sealed class ApplicationSession : IDisposable
         }
 
         _disposed = true;
+        UsageReadContext.Invalidate(_usageDataDirectory);
         _stateShutdownRequested = true;
         _lifetimeCancellation.Cancel();
         _lifetimeCancellation.Dispose();

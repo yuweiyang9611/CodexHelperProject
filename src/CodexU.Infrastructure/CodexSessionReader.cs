@@ -31,8 +31,12 @@ public sealed partial class CodexSessionReader(
     string? defaultWorkspace = null,
     bool historyEnabled = false)
 {
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
     public async Task<SessionAnalytics> ReadAsync(CancellationToken cancellationToken = default)
     {
+        var schedule = UsageReadContext.For(indexDirectory).Get("validate/codex/" + Path.GetFullPath(paths.SessionsDirectory), () => new UsageReadContext.ValidationSchedule());
+        var validationTime = Clock.GetUtcNow();
+        var validate = schedule.Due(validationTime);
         string[] files;
         string? enumerationFailure = null;
         try
@@ -92,7 +96,8 @@ public sealed partial class CodexSessionReader(
                 if (cached?.FileIdentity != fileIdentity) cached = null;
                 if (incrementalIndexEnabled
                     && cached is not null
-                    && cached.Matches(fileInfo))
+                    && cached.Matches(fileInfo)
+                    && (!validate || cached.Boundary == await SourceBoundary.ReadAsync(fullPath, cached.Length, cancellationToken)))
                 {
                     parsed = cached.Parsed;
                     reusedFiles++;
@@ -141,6 +146,7 @@ public sealed partial class CodexSessionReader(
             }
         }
 
+        if (validate && skippedFiles == 0 && enumerationFailure is null) schedule.LastSuccess = validationTime;
         if (incrementalIndexEnabled)
         {
             await indexCache.SaveAsync(currentEntries, cancellationToken);
@@ -148,21 +154,11 @@ public sealed partial class CodexSessionReader(
         }
 
         var workspaceMap = await ReadWorkspaceMapAsync(paths.StateDatabase, cancellationToken);
-        physicalFiles = physicalFiles.Select(file => file with
-        {
-            Parsed = file.Parsed with
-            {
-                Workspace = file.Parsed.Workspace
-                ?? workspaceMap.GetValueOrDefault(file.Parsed.SessionId ?? "")
-            }
-        }).ToList();
+        physicalFiles = physicalFiles.Select(file => EnrichWorkspace(file, workspaceMap)).ToList();
         // Preserve raw normalized session identities before reconstruction. Missing parents
         // remain available for fork-prefix comparison after their source file disappears.
-        var liveReconstruction = ReconstructSessions(physicalFiles);
-        var disputed = physicalFiles.Where(f => f.Parsed.SessionId is not null).GroupBy(f => f.Parsed.SessionId!, StringComparer.Ordinal)
-            .Where(g => g.Count() > 1 && (SelectCanonical(g.ToArray()).Divergent
-                || g.Select(f => f.Parsed.Workspace).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
-            .Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+        var liveReconstruction = ReconstructCached(physicalFiles, "live");
+        var disputed = liveReconstruction.DisputedSources;
         var canonicalLive = liveReconstruction.Files.Select(file => file.Source);
         var observations = canonicalLive.ToDictionary(file => file.Parsed.SessionId
             ?? UsageHistoryLedger.SourceId(file.Path), file => file.Parsed, StringComparer.Ordinal);
@@ -190,7 +186,7 @@ public sealed partial class CodexSessionReader(
         var projectBuckets = new Dictionary<string, List<SessionUsageBucket>>(StringComparer.OrdinalIgnoreCase);
         var attributed = new List<AttributedUsage>();
         var projectSessions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        var reconstruction = ReconstructSessions(physicalFiles);
+        var reconstruction = ReconstructCached(physicalFiles, "history");
         if (historyEnabled) reconstruction = reconstruction with
         {
             DuplicateFileCount = liveReconstruction.DuplicateFileCount,
@@ -226,12 +222,11 @@ public sealed partial class CodexSessionReader(
             taskDuration += parsed.TaskLifecycle.DurationMilliseconds;
             longestTaskDuration = Math.Max(longestTaskDuration, parsed.TaskLifecycle.LongestDurationMilliseconds);
 
-            foreach (var tokenEvent in EffectiveTokenEvents(resolved))
+            foreach (var bucket in EffectiveBuckets(resolved))
             {
-                var bucket = new SessionUsageBucket(tokenEvent.Date, tokenEvent.Model, tokenEvent.Tokens, 1);
                 projectBuckets[projectKey].Add(bucket);
                 attributed.Add(new(parsed.SessionId ?? resolved.Source.Path, parsed.Workspace,
-                    tokenEvent.Date, tokenEvent.Model, tokenEvent.Tokens, 1, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live"));
+                    bucket.Date, bucket.Model, bucket.Tokens, bucket.EventCount, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live"));
                 lifetime.Add(bucket);
                 if (!daily.TryGetValue(bucket.Date, out var dailyPeriod))
                 {
@@ -383,7 +378,8 @@ public sealed partial class CodexSessionReader(
             skillRanking,
             models,
             new TaskLifecycleStats(taskStarted, taskCompleted, taskAborted, taskDuration, longestTaskDuration),
-            new IndexStatus(incrementalIndexEnabled, reusedFiles, incrementalFiles, newlyParsedFiles, files.Length, DateTimeOffset.Now),
+            new IndexStatus(incrementalIndexEnabled, reusedFiles, incrementalFiles, newlyParsedFiles, files.Length, DateTimeOffset.Now,
+                schedule.LastSuccess, schedule.Due(Clock.GetUtcNow())),
             parsedFiles,
             tokenEvents,
             skippedFiles,

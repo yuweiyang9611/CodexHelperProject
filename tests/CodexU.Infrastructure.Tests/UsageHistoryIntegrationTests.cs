@@ -63,7 +63,15 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             Assert.Equal(30000, first.Tokens.Lifetime.Tokens);
             Assert.Equal(30000, metrics!.ParsedLines);
             output.WriteLine($"Full: {metrics}");
+            var context = UsageReadContext.For(root);
+            var deserialized = context.LedgerDeserialized;
+            var writes = context.LedgerWrites;
+            var allocated = GC.GetTotalAllocatedBytes();
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
             var unchanged = await reader.ReadAsync();
+            output.WriteLine($"Complete unchanged refresh: {elapsed.Elapsed.TotalMilliseconds:F2} ms; allocated {GC.GetTotalAllocatedBytes() - allocated}; working set {Environment.WorkingSet}");
+            Assert.Equal(deserialized, context.LedgerDeserialized);
+            Assert.Equal(writes, context.LedgerWrites);
             Assert.Equal(0, metrics!.TranscriptBytes);
             Assert.Equal(0, metrics.ParsedLines);
             output.WriteLine($"Unchanged: {metrics}");
@@ -206,6 +214,10 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             await File.WriteAllLinesAsync(original, [Meta("session", ""), CodexLine(100)]);
             CodexSessionReader Reader() => new(paths, indexDirectory: root, defaultWorkspace: repo, historyEnabled: true);
             Assert.Equal(100, (await Reader().ReadAsync()).Tokens.Lifetime.Tokens);
+            var context = UsageReadContext.For(root);
+            var builds = context.ReconstructionBuilds;
+            Assert.Equal(100, (await Reader().ReadAsync()).Tokens.Lifetime.Tokens);
+            Assert.Equal(builds, context.ReconstructionBuilds);
             Directory.CreateDirectory(paths.ArchivedSessionsDirectory);
             await File.WriteAllLinesAsync(Path.Combine(paths.ArchivedSessionsDirectory, "rollout-conflict.jsonl"),
                 [Meta("session", repo), CodexLine(900), CodexLine(1000)]);
@@ -259,6 +271,10 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
             File.Copy(original, renamed);
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
+            var context = UsageReadContext.For(root);
+            var compared = context.SourceComparisons;
+            Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
+            Assert.Equal(compared, context.SourceComparisons);
             File.Delete(original);
             Assert.Equal(10, (await reader.ReadAsync()).Tokens.Lifetime.Tokens);
         }

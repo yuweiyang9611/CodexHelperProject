@@ -159,7 +159,8 @@ internal sealed class LocalRestoreJournal
     internal static async Task<LocalRestoreJournal> PrepareAsync(
         string applicationDataDirectory,
         bool includesHistory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeLedger = true)
     {
         var dataDirectory = Path.GetFullPath(applicationDataDirectory);
         RecoverPending(dataDirectory);
@@ -175,7 +176,7 @@ internal sealed class LocalRestoreJournal
         try
         {
             var entries = new List<JournalFileEntry>();
-            foreach (var target in Targets(includesHistory))
+            foreach (var target in Targets(includesHistory, includeLedger))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 entries.Add(await CaptureAsync(

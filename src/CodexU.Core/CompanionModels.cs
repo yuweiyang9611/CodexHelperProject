@@ -440,4 +440,6 @@ public sealed record IndexStatus(
     int IncrementalFiles,
     int ParsedFiles,
     int TotalFiles,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    DateTimeOffset? LastFullValidationAt = null,
+    bool FullValidationDue = false);
