@@ -179,6 +179,8 @@ export interface IndexStatus {
   parsedFiles: number
   totalFiles: number
   updatedAt?: string
+  lastFullValidationAt?: string
+  fullValidationDue?: boolean
 }
 
 export interface AppSettings {

@@ -171,6 +171,7 @@ function removeCustomRate(index: number) {
         <div><span>本地数据</span><h3 id="diagnostics-title">数据源状态</h3></div>
         <em>{{ snapshot.indexStatus.parsedFiles }} 个文件已解析</em>
       </div>
+      <p class="inline-note">最近完整校验：{{ snapshot.indexStatus.lastFullValidationAt ? new Date(snapshot.indexStatus.lastFullValidationAt).toLocaleString() : '尚未完成' }}{{ snapshot.indexStatus.fullValidationDue ? ' · 下次刷新重试' : '' }}<br>启动后及每隔一小时，在刷新时重新校验。</p>
       <div class="diagnostic-list" aria-live="polite">
         <div v-for="(diagnostic, index) in snapshot.diagnostics" :key="index">
           <!-- Severity is inferred from wording, so this pattern has to be kept in

@@ -20,6 +20,9 @@ internal sealed class SessionIndexCache
 
     public async Task<Dictionary<string, SessionIndexEntry>> LoadAsync(CancellationToken cancellationToken)
     {
+        var memory = UsageReadContext.For(Path.GetDirectoryName(_path)).Get("codex-index", () => new UsageReadContext.FileCache<Dictionary<string, SessionIndexEntry>>());
+        var stamp = UsageReadContext.Stamp(_path);
+        if (memory.Stamp == stamp && memory.Value is not null) return memory.Value;
         if (!File.Exists(_path))
         {
             return new Dictionary<string, SessionIndexEntry>(StringComparer.OrdinalIgnoreCase);
@@ -48,6 +51,8 @@ internal sealed class SessionIndexCache
                 }
             }
 
+            memory.Stamp = stamp;
+            memory.Value = entries;
             return entries;
         }
         catch (JsonException)
@@ -97,18 +102,24 @@ internal sealed class SessionIndexCache
     {
         try
         {
+            var items = entries.ToArray();
+            var memory = UsageReadContext.For(Path.GetDirectoryName(_path)).Get("codex-index", () => new UsageReadContext.FileCache<Dictionary<string, SessionIndexEntry>>());
+            if (memory.Value is not null && memory.Stamp == UsageReadContext.Stamp(_path)
+                && items.Length == memory.Value.Count && items.All(e => memory.Value.TryGetValue(e.Path, out var old) && e == old)) return;
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             var temporaryPath = _path + ".tmp";
             await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 await JsonSerializer.SerializeAsync(
                     stream,
-                    new SessionIndexDocument(CurrentVersion, TimeZoneInfo.Local.Id, entries.ToArray()),
+                    new SessionIndexDocument(CurrentVersion, TimeZoneInfo.Local.Id, items),
                     JsonOptions,
                     cancellationToken);
             }
 
             File.Move(temporaryPath, _path, overwrite: true);
+            memory.Value = items.ToDictionary(e => e.Path, StringComparer.OrdinalIgnoreCase);
+            memory.Stamp = UsageReadContext.Stamp(_path);
         }
         catch (IOException)
         {

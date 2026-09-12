@@ -5,6 +5,7 @@ namespace CodexU.Infrastructure;
 
 public sealed partial class ClaudeCodeUsageReader
 {
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
     internal sealed record ReadMetrics(long TranscriptBytes, int ParsedLines, double ElapsedMilliseconds, long AllocatedBytes);
     internal Action<ReadMetrics>? MetricsObserved { get; init; }
     private sealed record ClaudeEvent(string? Workspace, DateTimeOffset Timestamp, string? Branch,
@@ -13,6 +14,20 @@ public sealed partial class ClaudeCodeUsageReader
     private sealed record ClaudeSource(IReadOnlyList<ClaudeEvent> Events, int SkippedLines, long Offset, string? Identity = null);
     private sealed record ClaudeCacheEntry(long Length, long Modified, string Boundary, ClaudeSource Source, string FileIdentity);
     private sealed record ClaudeIndex(int Version, string Zone, Dictionary<string, ClaudeCacheEntry> Entries);
+    private sealed record Summary(ClaudeEvent Event, int Count);
+    private sealed class Summaries
+    {
+        internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<ClaudeSource, Summary[]> Values = new();
+    }
+    private Summary[] Summarize(ClaudeSource source) => UsageReadContext.For(applicationDataDirectory)
+        .Get("claude-summaries", () => new Summaries()).Values.GetValue(source, value => value.Events
+            .GroupBy(e => (e.Workspace, Date: DateOnly.FromDateTime(e.Timestamp.LocalDateTime), e.Branch, e.Model, e.Throttled))
+            .Select(g => new Summary(g.First() with
+            {
+                Tokens = g.First().Tokens is null ? null : g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens!)),
+                Tools = g.SelectMany(e => e.Tools).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
+                Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value))
+            }, g.Count())).ToArray());
     private static readonly JsonSerializerOptions IndexJson = new(JsonSerializerDefaults.Web);
 
     private static async Task<ClaudeSource> ParseTranscriptAsync(string file, ClaudeSource? seed, Action<long, int> measured, CancellationToken ct)
@@ -68,7 +83,7 @@ public sealed partial class ClaudeCodeUsageReader
         && previous.Events.Select(e => JsonSerializer.Serialize(e, IndexJson))
             .SequenceEqual(next.Events.Take(previous.Events.Count).Select(e => JsonSerializer.Serialize(e, IndexJson)));
 
-    private async Task<(IReadOnlyDictionary<string, ClaudeSource> Sources, IndexStatus Index, int Conflicts, int Retained, LedgerRead<ClaudeSource>? History)> ReadSourcesAsync(
+    private async Task<(IReadOnlyDictionary<string, ClaudeSource> Sources, IndexStatus Index, int Conflicts, int Failures, int Retained, LedgerRead<ClaudeSource>? History)> ReadSourcesAsync(
         List<string> diagnostics, CancellationToken ct)
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
@@ -84,8 +99,15 @@ public sealed partial class ClaudeCodeUsageReader
         }
         var root = applicationDataDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU");
         var indexPath = Path.Combine(root, "claude-session-index-v1.json");
+        var context = UsageReadContext.For(root);
+        var schedule = context.Get("validate/claude/" + Path.GetFullPath(paths.ClaudeDirectory), () => new UsageReadContext.ValidationSchedule());
+        var validationTime = Clock.GetUtcNow();
+        var validate = schedule.Due(validationTime);
+        var memory = context.Get("claude-index", () => new UsageReadContext.FileCache<Dictionary<string, ClaudeCacheEntry>>());
+        var stamp = UsageReadContext.Stamp(indexPath);
         var cached = new Dictionary<string, ClaudeCacheEntry>(StringComparer.OrdinalIgnoreCase);
-        if (incrementalIndexEnabled && File.Exists(indexPath))
+        if (incrementalIndexEnabled && memory.Stamp == stamp && memory.Value is not null) cached = memory.Value;
+        else if (incrementalIndexEnabled && File.Exists(indexPath))
         {
             try
             {
@@ -99,13 +121,14 @@ public sealed partial class ClaudeCodeUsageReader
             { diagnostics.Add("Claude 索引不可用，重新解析日志"); }
         }
         string[] files = [];
+        var enumerationFailed = false;
         try
         {
             var projects = Path.Combine(paths.ClaudeDirectory, "projects");
             if (Directory.Exists(projects)) files = Directory.EnumerateFiles(projects, "*.jsonl", SearchOption.AllDirectories).ToArray();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        { diagnostics.Add($"无法枚举 Claude transcript：{e.Message}"); }
+        { enumerationFailed = true; diagnostics.Add($"无法枚举 Claude transcript：{e.Message}"); }
         var next = new Dictionary<string, ClaudeCacheEntry>(StringComparer.OrdinalIgnoreCase);
         var sources = new Dictionary<string, ClaudeSource>(StringComparer.Ordinal);
         var disputed = new HashSet<string>(StringComparer.Ordinal);
@@ -120,7 +143,8 @@ public sealed partial class ClaudeCodeUsageReader
                 ClaudeSource source;
                 cached.TryGetValue(file, out var entry);
                 if (entry?.FileIdentity != fileIdentity) entry = null;
-                if (incrementalIndexEnabled && entry is not null && entry.Length == info.Length && entry.Modified == info.LastWriteTimeUtc.Ticks)
+                if (incrementalIndexEnabled && entry is not null && entry.Length == info.Length && entry.Modified == info.LastWriteTimeUtc.Ticks
+                    && (!validate || entry.Boundary == await Boundary(file, entry.Source.Offset)))
                 { source = entry.Source; reused++; }
                 else if (incrementalIndexEnabled && entry is not null && info.Length > entry.Length
                     && entry.Boundary == await Boundary(file, entry.Source.Offset))
@@ -150,16 +174,19 @@ public sealed partial class ClaudeCodeUsageReader
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { diagnostics.Add($"Claude 索引写入失败：{e.Message}"); }
         }
+        if (incrementalIndexEnabled) { memory.Value = next; memory.Stamp = UsageReadContext.Stamp(indexPath); }
+        if (validate && failures == 0 && !enumerationFailed) schedule.LastSuccess = validationTime;
         var indexStatus = new IndexStatus(incrementalIndexEnabled, reused, appended, parsed, files.Length, DateTimeOffset.Now);
+        indexStatus = indexStatus with { LastFullValidationAt = schedule.LastSuccess, FullValidationDue = schedule.Due(Clock.GetUtcNow()) };
         MetricsObserved?.Invoke(new(bytesRead, linesParsed, started.Elapsed.TotalMilliseconds, GC.GetTotalAllocatedBytes() - allocated));
         diagnostics.Add($"Claude 增量索引：复用 {reused}，续读 {appended}，重新解析 {parsed}");
         try
         {
             var history = await new UsageHistoryLedger(root).MergeAsync("claude", sources, CanReplaceClaude, ct, disputed);
             diagnostics.Add($"用量历史：留存 {history.RetainedSources} 个来源，冲突 {history.Conflicts} 个来源");
-            return (history.Sources, indexStatus, history.Conflicts + failures, history.RetainedSources, history);
+            return (history.Sources, indexStatus, history.Conflicts, failures, history.RetainedSources, history);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or JsonException)
-        { diagnostics.Add($"用量历史不可用，使用当前日志：{e.Message}"); return (sources, indexStatus, failures, 0, null); }
+        { diagnostics.Add($"用量历史不可用，使用当前日志：{e.Message}"); return (sources, indexStatus, 0, failures, 0, null); }
     }
 }

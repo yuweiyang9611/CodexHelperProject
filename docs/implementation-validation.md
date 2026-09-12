@@ -1,6 +1,10 @@
 # 六项实施验证记录
 
-日期：2026-09-12。代码和本机验证已落地；专用 Windows 桌面矩阵及安装生命周期仍未验收，因此不声明六项全部完成，不发布稳定版。
+日期：2026-09-12。首次实施代码和本机验证已落地；合并后的主线 CI 已通过安装生命周期。专用 Windows 桌面矩阵仍未验收，因此不声明所有平台验收完成，不发布稳定版。
+
+远端补充证据：[主线 19f7c1c 的 CI](https://github.com/yuweiyang9611/CodexHelperProject/actions/runs/34665919361) 已成功，包含真实 Electron、打包 smoke、视觉/无障碍，以及安装、从 v0.5.0 升级和卸载。下方性能表是优化前记录，不代表后续缓存修复的性能。
+
+后续六项修复及优化后测量见 [correctness-fixes-validation.md](correctness-fixes-validation.md)。
 
 ## 环境与产物
 
@@ -49,7 +53,6 @@
 
 - Windows 10 22H2 的实际运行与桌面附着。
 - 专用 Windows 10/11 VM 中的 Win+D、Explorer 重启、混合 DPI、负坐标多屏、显示器移除及重启找回。
-- 一次性用户环境中的 Inno Setup 安装、从 v0.5.0 升级、运行和卸载。当前主机没有锁定的 Inno Setup 6.7.1 编译器；CI 已有对应编译及安装生命周期链路，本次未向远端触发或发布。
 
 普通 Docker Windows 容器不提供所需的交互式桌面，不能替代上述矩阵；参见 [Microsoft Windows 容器兼容性说明](https://learn.microsoft.com/en-us/virtualization/windowscontainers/quick-start/lift-shift-to-containers)。Docker 中承载完整 Windows VM 的方式仍需虚拟机资源、镜像和相应桌面访问。
 

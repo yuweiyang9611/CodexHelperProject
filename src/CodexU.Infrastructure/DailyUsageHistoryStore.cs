@@ -93,6 +93,10 @@ public sealed class DailyUsageHistoryStore
         CancellationToken cancellationToken = default)
     {
         var path = PathFor(runtime);
+        var memory = UsageReadContext.For(Path.GetDirectoryName(_directory)).Get("legacy/" + runtime + "/" + scope,
+            () => new UsageReadContext.FileCache<IReadOnlyList<DailyUsageRecord>>());
+        var stamp = UsageReadContext.Stamp(path);
+        if (memory.Stamp == stamp && memory.Value is not null) return memory.Value;
         if (!File.Exists(path))
         {
             return [];
@@ -117,7 +121,8 @@ public sealed class DailyUsageHistoryStore
             return [];
         }
 
-        return latest.Values.OrderBy(record => record.Date).ToArray();
+        memory.Stamp = stamp;
+        return memory.Value = latest.Values.OrderBy(record => record.Date).ToArray();
     }
 
     /// <summary>

@@ -4,6 +4,29 @@ namespace CodexU.Infrastructure;
 
 public sealed partial class CodexSessionReader
 {
+    private sealed class ReconstructionCache
+    {
+        internal PhysicalSessionFile[] Inputs = [];
+        internal SessionReconstruction? Result;
+    }
+    private SessionReconstruction ReconstructCached(IReadOnlyList<PhysicalSessionFile> files, string stage)
+    {
+        var cache = UsageReadContext.For(indexDirectory).Get("reconstruct/" + paths.SessionsDirectory + "/" + stage, () => new ReconstructionCache());
+        if (cache.Result is not null && cache.Inputs.Length == files.Count
+            && cache.Inputs.Zip(files).All(p => p.First.Path == p.Second.Path
+                && p.First.LastWriteTimeUtcTicks == p.Second.LastWriteTimeUtcTicks && ReferenceEquals(p.First.Parsed, p.Second.Parsed))) return cache.Result;
+        cache.Inputs = files.ToArray();
+        return cache.Result = ReconstructSessions(files);
+    }
+
+    private sealed class BucketCache
+    {
+        internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<ResolvedSessionFile, SessionUsageBucket[]> Values = new();
+    }
+    private SessionUsageBucket[] EffectiveBuckets(ResolvedSessionFile file) => UsageReadContext.For(indexDirectory)
+        .Get("codex-buckets", () => new BucketCache()).Values.GetValue(file, source => EffectiveTokenEvents(source)
+            .GroupBy(e => (e.Date, e.Model)).Select(g => new SessionUsageBucket(g.Key.Date, g.Key.Model,
+                g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens)), g.Count())).ToArray());
     /// <summary>
     /// Resolves physical rollout files into one local token ledger. The strict
     /// parent/child longest-common-prefix rule follows the MIT-licensed codexU

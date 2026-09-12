@@ -63,7 +63,15 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
             Assert.Equal(30000, first.Tokens.Lifetime.Tokens);
             Assert.Equal(30000, metrics!.ParsedLines);
             output.WriteLine($"Full: {metrics}");
+            var context = UsageReadContext.For(root);
+            var deserialized = context.LedgerDeserialized;
+            var writes = context.LedgerWrites;
+            var allocated = GC.GetTotalAllocatedBytes();
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
             var unchanged = await reader.ReadAsync();
+            output.WriteLine($"Complete unchanged refresh: {elapsed.Elapsed.TotalMilliseconds:F2} ms; allocated {GC.GetTotalAllocatedBytes() - allocated}; working set {Environment.WorkingSet}");
+            Assert.Equal(deserialized, context.LedgerDeserialized);
+            Assert.Equal(writes, context.LedgerWrites);
             Assert.Equal(0, metrics!.TranscriptBytes);
             Assert.Equal(0, metrics.ParsedLines);
             output.WriteLine($"Unchanged: {metrics}");

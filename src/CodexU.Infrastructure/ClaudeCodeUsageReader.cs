@@ -31,32 +31,33 @@ public sealed partial class ClaudeCodeUsageReader(
         var diagnostics = new List<string>();
 
         var attributed = new List<AttributedUsage>();
-        var (sources, indexStatus, conflicts, retained, history) = await ReadSourcesAsync(diagnostics, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(defaultWorkspace) && sources.Values.Any(s => s.Events.Any(e => e.Workspace is null)))
+        var (sources, indexStatus, conflicts, failures, retained, history) = await ReadSourcesAsync(diagnostics, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(defaultWorkspace) && sources.Values.Any(s => Summarize(s).Any(e => e.Event.Workspace is null)))
             diagnostics.Add("工作区覆盖不足：部分 Claude 消息缺少项目归属，已从指定工作区统计排除");
-        skippedFiles = conflicts;
+        skippedFiles = failures;
         parsedFiles = sources.Count;
         foreach (var (sourceId, source) in sources)
         {
             skippedLines += source.SkippedLines;
-            foreach (var item in source.Events)
+            foreach (var summary in Summarize(source))
             {
+                var item = summary.Event;
                 if (!WorkspaceScope.Contains(defaultWorkspace, item.Workspace)) continue;
-                assistantMessages++;
+                assistantMessages += summary.Count;
                 var date = DateOnly.FromDateTime(item.Timestamp.ToLocalTime().Date);
-                if (item.Throttled && date >= sevenDayStart && date <= todayDate) rateLimitHits++;
+                if (item.Throttled && date >= sevenDayStart && date <= todayDate) rateLimitHits += summary.Count;
                 foreach (var pair in item.Tools) tools[pair.Key] = tools.GetValueOrDefault(pair.Key) + pair.Value;
                 foreach (var pair in item.Skills) skills[pair.Key] = skills.GetValueOrDefault(pair.Key) + pair.Value;
                 if (item.Tokens is not { } tokens || item.Model is not { } model) continue;
-                usageEvents++;
+                usageEvents += summary.Count;
                 var bucket = new UsageBucket(date, model, tokens);
-                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, 1, item.Branch, history?.Kind(sourceId) ?? "live"));
+                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.Count, item.Branch, history?.Kind(sourceId) ?? "live"));
                 lifetime.Add(bucket);
 
             }
         }
 
-        var quality = skippedFiles > 0 || skippedLines > 0
+        var quality = skippedFiles > 0 || skippedLines > 0 || conflicts > 0
             ? DataQuality.Partial
             : usageEvents == 0 ? DataQuality.Unavailable : DataQuality.Detailed;
         var lifetimePeriod = lifetime.ToPeriod(quality);
