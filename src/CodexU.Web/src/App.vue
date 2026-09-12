@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import OverviewCards from './components/OverviewCards.vue'
 import UiIcon from './components/UiIcon.vue'
@@ -19,6 +19,10 @@ import { host } from './host'
 
 const store = useDashboardStore()
 const activeTab = ref<'today' | 'todos' | 'usage' | 'projects' | 'skills' | 'combined' | 'diagnostics'>('today')
+const stopNavigation = window.codexU?.onEvent((method, payload) => {
+  if (method === 'window.navigate' && typeof payload === 'object' && payload !== null && 'tab' in payload && payload.tab === 'todos') activeTab.value = 'todos'
+})
+onUnmounted(() => stopNavigation?.())
 const snapshot = computed(() => store.snapshot)
 const { layoutStyle } = useViewportScale()
 const { isLightTheme } = useThemePreference()

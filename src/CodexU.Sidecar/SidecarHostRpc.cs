@@ -20,7 +20,8 @@ public static class SidecarHostRpcMethods
         PickSaveFile,
         PickOpenFile,
         Confirm,
-        SetStartupRegistration);
+        SetStartupRegistration,
+        "host.statusStrip.control");
 }
 
 public sealed record SidecarHostRequest(
@@ -376,6 +377,8 @@ public sealed class SidecarHostRpcBroker
 
 public interface ISidecarHostRpcClient
 {
+    Task<CodexU.Core.StatusStripControlState> StatusStripAsync(string action, CodexU.Core.AppSettings? settings = null) =>
+        throw new NotSupportedException("Status strip RPC is unavailable.");
     Task<string?> PickSaveFileAsync(
         HostFileDialogRequest request,
         CancellationToken cancellationToken = default);
@@ -395,6 +398,14 @@ public interface ISidecarHostRpcClient
 
 public sealed class SidecarHostRpcClient : ISidecarHostRpcClient
 {
+    internal Func<CodexU.Core.AppSettings, CodexU.Core.StatusStripPresentation>? StatusStripProjection { get; set; }
+    public async Task<CodexU.Core.StatusStripControlState> StatusStripAsync(string action, CodexU.Core.AppSettings? settings = null)
+    {
+        var presentation = settings is null ? null : StatusStripProjection?.Invoke(settings);
+        var result = await _broker.InvokeAsync("host.statusStrip.control", new { action, settings, presentation }, requestTimeout: TimeSpan.FromSeconds(10));
+        return result?.Deserialize<CodexU.Core.StatusStripControlState>(IpcJson.Options)
+            ?? throw new InvalidDataException("Status strip RPC returned no state.");
+    }
     public static readonly TimeSpan DefaultStartupRegistrationTimeout = TimeSpan.FromSeconds(25);
 
     private readonly SidecarHostRpcBroker _broker;

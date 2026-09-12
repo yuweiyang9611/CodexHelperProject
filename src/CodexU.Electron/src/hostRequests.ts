@@ -187,6 +187,8 @@ export function createHostRequestHandler(
         }
         return actual;
       }
+      case 'host.statusStrip.control':
+        throw new HostRequestHandlerError('host_unsupported', 'Status strip requires its native controller.');
     }
   };
 }

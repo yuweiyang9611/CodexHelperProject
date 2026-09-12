@@ -40,6 +40,9 @@ public interface IStartupRegistration
 
 public interface IStatusStripCommands
 {
+    Task<StatusStripControlState> GetStateAsync() => Task.FromResult(GetState());
+    Task<StatusStripControlState> PreviewAsync(AppSettings settings) => Task.FromResult(Preview(settings));
+    Task<StatusStripControlState> RecoverAsync() => Task.FromResult(Recover());
     StatusStripControlState GetState();
 
     StatusStripControlState Preview(AppSettings settings);

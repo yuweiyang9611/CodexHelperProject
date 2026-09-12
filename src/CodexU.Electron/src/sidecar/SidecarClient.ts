@@ -564,6 +564,14 @@ function parseHostRequest(message: JsonObject): SidecarHostRequest {
 }
 
 function validateHostResponsePayload(method: SidecarHostRequest['method'], payload: unknown): void {
+  if (method === 'host.statusStrip.control') {
+    if (!isRecord(payload)
+      || !['configuredEnabled', 'visible', 'positionLocked', 'hasManualPosition'].every(key => typeof payload[key] === 'boolean')
+      || !['positionMode', 'displayName', 'message'].every(key => typeof payload[key] === 'string')) {
+      throw new TypeError('Status strip host handler returned an invalid state.');
+    }
+    return;
+  }
   if (method === 'host.dialog.confirm' || method === 'host.startup.set') {
     if (typeof payload !== 'boolean') {
       throw new TypeError(`The ${method} host handler must return a boolean.`);

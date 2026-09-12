@@ -103,6 +103,11 @@ jobs:
         working-directory: src/CodexU.Electron
         run: npm run package
 
+      - name: Real Electron integration tests
+        # Real preload and published Sidecar; isolated synthetic data.
+        working-directory: src/CodexU.Electron
+        run: node scripts/test-desktop.cjs
+
       - name: Smoke-test packaged Electron app
         shell: pwsh
         run: ./tools/Test-PackagedElectron.ps1 -ApplicationDirectory src/CodexU.Electron/out/CodexU-win32-x64
@@ -119,6 +124,7 @@ jobs:
           path: |
             src/CodexU.Web/test-results
             src/CodexU.Web/playwright-report
+            artifacts/desktop-e2e
           if-no-files-found: ignore
           retention-days: 7
 

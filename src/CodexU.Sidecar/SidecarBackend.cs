@@ -14,6 +14,8 @@ public sealed class SidecarBackend : IDisposable
     private readonly SidecarNativeNotificationBridge? _nativeNotifications;
     private int _stopping;
     private bool _disposed;
+    private IIpcEventSink? _surfaceEvents;
+    private int? _openTodos;
 
     private SidecarBackend(
         ApplicationSession session,
@@ -32,10 +34,8 @@ public sealed class SidecarBackend : IDisposable
         _backgroundRefresh = backgroundRefresh;
         _nativeNotifications = nativeNotifications;
         _session.SettingsChanged += OnSettingsChanged;
-        if (_nativeNotifications is not null)
-        {
-            _session.SnapshotChanged += OnSnapshotChanged;
-        }
+        _session.SnapshotChanged += OnSnapshotChanged;
+        _session.TodosChanged += OnTodosChanged;
     }
 
     public IpcRequestProcessor RequestProcessor { get; }
@@ -111,6 +111,9 @@ public sealed class SidecarBackend : IDisposable
                 hostEnvironment,
                 backgroundRefresh,
                 nativeNotifications);
+            backend._surfaceEvents = eventSink;
+            if (hostRpcClient is SidecarHostRpcClient rpc)
+                rpc.StatusStripProjection = preview => backend.ProjectSurface(preview);
             backgroundRefresh.Start();
             return backend;
         }
@@ -150,10 +153,8 @@ public sealed class SidecarBackend : IDisposable
 
         _disposed = true;
         _session.SettingsChanged -= OnSettingsChanged;
-        if (_nativeNotifications is not null)
-        {
-            _session.SnapshotChanged -= OnSnapshotChanged;
-        }
+        _session.SnapshotChanged -= OnSnapshotChanged;
+        _session.TodosChanged -= OnTodosChanged;
         _backgroundRefresh.StopScheduling();
         _session.CancelLifetime();
         try
@@ -170,11 +171,57 @@ public sealed class SidecarBackend : IDisposable
         _updateService.Dispose();
     }
 
-    private void OnSettingsChanged(AppSettings settings) =>
+    private void OnSettingsChanged(AppSettings settings)
+    {
         _hostEnvironment.UpdateTheme(settings.Theme);
+        PublishSurface();
+    }
 
-    private void OnSnapshotChanged(DashboardSnapshot snapshot) =>
+    private void OnSnapshotChanged(DashboardSnapshot snapshot)
+    {
         _nativeNotifications?.Publish(snapshot, _session.CurrentSettings);
+        PublishSurface(snapshot);
+    }
+
+    private void OnTodosChanged(IReadOnlyList<TodoItem> todos)
+    {
+        _openTodos = todos.Count(todo => !todo.Done);
+        PublishSurface();
+    }
+
+    private void PublishSurface(DashboardSnapshot? snapshot = null)
+    {
+        var settings = _session.CurrentSettings;
+        snapshot ??= _session.LastSnapshot;
+        var presentation = ProjectSurface(settings, snapshot);
+        _surfaceEvents?.PostEvent("host.surface.update", new
+        {
+            presentation,
+            layout = new
+            {
+                width = StatusStripLayout.PreferredWidthDip,
+                collapsedHeight = StatusStripLayout.CollapsedHeightDip,
+                expandedHeight = StatusStripLayout.ExpandedHeightDip,
+                margin = StatusStripLayout.WorkAreaMarginDip,
+                rightOffset = StatusStripLayout.FallbackRightOffsetDip,
+                topOffset = StatusStripLayout.FallbackTopOffsetDip
+            },
+            settings.Theme,
+            settings.StatusStripEnabled,
+            settings.StatusStripPositionLocked,
+            settings.DesktopMode,
+            settings.StatusStripShowTodayTokens,
+            settings.StatusStripQuotaMode,
+            todayAmount = (snapshot?.Tokens.Today.CreditsUsed ?? 0) * settings.AmountPerThousandCredits / 1000
+        });
+    }
+
+    private StatusStripPresentation ProjectSurface(AppSettings settings, DashboardSnapshot? snapshot = null)
+    {
+        var presenter = new StatusStripPresenter(settings);
+        snapshot ??= _session.LastSnapshot;
+        return snapshot is null ? presenter.Current : presenter.UpdateSnapshot(snapshot, _openTodos);
+    }
 
     private static IDashboardService CreateDashboardService(
         AppSettings settings,

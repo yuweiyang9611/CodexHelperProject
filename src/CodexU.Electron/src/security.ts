@@ -46,6 +46,8 @@ export const ALLOWED_EVENT_METHODS: ReadonlySet<string> = new Set([
   'usage.refreshStarted',
   'usage.snapshotChanged',
   'window.compactChanged',
+  'window.navigate',
+  'desktop.stateChanged',
 ]);
 
 export function isAllowedMethod(value: unknown): value is string {

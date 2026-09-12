@@ -148,8 +148,9 @@ fails if the legacy package is reintroduced or the hardened implementation disap
 
 The v0.5.0 release remains the legacy WPF build, while v0.6.0-beta.1 is the first
 Electron prerelease. This packaging readiness does not imply
-complete product parity: the status strip and desktop mode still need native-host
-implementations. Startup registration rollback, window work-area/DPI recovery, and
+complete Windows acceptance: the status strip and isolated desktop widget are implemented,
+but Explorer restart, Win+D and mixed-DPI recovery require a disposable Windows 10/11 matrix.
+Startup registration rollback, window work-area/DPI recovery, and
 Windows notifications are implemented. The first Electron version should still be
 validated as a prerelease. The shipped ASAR has no runtime npm dependency tree. Linux has
 not yet been validated.
@@ -174,6 +175,6 @@ never opens a real dialog or writes an export file. Smoke mode also reports
 changing startup registration, or showing native notifications. Success prints
 `CODEXU_ELECTRON_SMOKE_OK`; failures print `CODEXU_ELECTRON_SMOKE_FAILED` and exit
 non-zero. Any unexpected `settings.changed` event, or `host.*` event other than the
-`host.webReady` barrier, also fails smoke without executing the requested window, URL,
+`host.webReady` barrier and ignored passive `host.surface.update`, also fails smoke without executing the requested window, URL,
 startup, theme, or other OS action. A second-instance signal fails smoke without
 showing the window, while an incidental application activation is ignored.
