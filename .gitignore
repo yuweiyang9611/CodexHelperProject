@@ -1,6 +1,8 @@
 # .NET
 **/bin/
 **/obj/
+**/TestResults/
+**/TestResults/
 *.user
 *.suo
 .vs/

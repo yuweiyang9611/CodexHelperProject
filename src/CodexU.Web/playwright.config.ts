@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
-const port = 4173
+const port = Number(process.env.CODEXU_E2E_PORT ?? 4173)
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid CODEXU_E2E_PORT')
 
 export default defineConfig({
   testDir: './tests/e2e',
