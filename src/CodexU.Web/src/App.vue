@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import OverviewCards from './components/OverviewCards.vue'
 import UiIcon from './components/UiIcon.vue'
@@ -7,8 +7,6 @@ import CombinedRuntimeView from './views/CombinedRuntimeView.vue'
 import DiagnosticsSettings from './views/DiagnosticsSettings.vue'
 import ProjectRankView from './views/ProjectRankView.vue'
 import SkillUsageView from './views/SkillUsageView.vue'
-import TodayTasksView from './views/TodayTasksView.vue'
-import TodoGoalsView from './views/TodoGoalsView.vue'
 import UsageTrendView from './views/UsageTrendView.vue'
 import { useRecentUsage } from './composables/useRecentUsage'
 import { useThemePreference } from './composables/useThemePreference'
@@ -18,11 +16,7 @@ import { useDashboardStore } from './stores/dashboard'
 import { host } from './host'
 
 const store = useDashboardStore()
-const activeTab = ref<'today' | 'todos' | 'usage' | 'projects' | 'skills' | 'combined' | 'diagnostics'>('today')
-const stopNavigation = window.codexU?.onEvent((method, payload) => {
-  if (method === 'window.navigate' && typeof payload === 'object' && payload !== null && 'tab' in payload && payload.tab === 'todos') activeTab.value = 'todos'
-})
-onUnmounted(() => stopNavigation?.())
+const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'diagnostics'>('usage')
 const snapshot = computed(() => store.snapshot)
 const { layoutStyle } = useViewportScale()
 const { isLightTheme } = useThemePreference()
@@ -30,8 +24,6 @@ const { isLightTheme } = useThemePreference()
 const { lastSevenTotal } = useRecentUsage(snapshot)
 
 const tabs = [
-  { id: 'today' as const, icon: 'check-square' as const, label: '今日任务' },
-  { id: 'todos' as const, icon: 'list' as const, label: '待办与目标' },
   { id: 'usage' as const, icon: 'activity' as const, label: '用量趋势' },
   { id: 'projects' as const, icon: 'folder' as const, label: '项目排行' },
   { id: 'skills' as const, icon: 'sparkle' as const, label: 'Skill 使用' },
@@ -112,10 +104,8 @@ onMounted(async () => {
             </button>
           </nav>
           <div class="tab-summary">
-            <template v-if="activeTab === 'today'">今日共 <strong>{{ snapshot.tasks.length }}</strong> 项</template>
-            <template v-else-if="activeTab === 'usage'">近 7 日 <strong>{{ compactNumber(lastSevenTotal) }}</strong></template>
+            <template v-if="activeTab === 'usage'">近 7 日 <strong>{{ compactNumber(lastSevenTotal) }}</strong></template>
             <template v-else-if="activeTab === 'projects'">已归类 <strong>{{ snapshot.projects.length }}</strong> 个项目</template>
-            <template v-else-if="activeTab === 'todos'">未完成 <strong>{{ store.todos.filter(todo => !todo.done).length }}</strong> 项</template>
             <template v-else-if="activeTab === 'skills'">发现 <strong>{{ snapshot.skills.length }}</strong> 个 Skill</template>
             <template v-else-if="activeTab === 'combined'">Codex + Claude Code 并列</template>
             <template v-else>数据源 <strong>{{ snapshot.diagnostics.length }}</strong> 项</template>
@@ -124,11 +114,7 @@ onMounted(async () => {
 
         <!-- Each panel component renders the panel element itself, so the tab
              wiring below falls through onto that element unchanged. -->
-        <TodayTasksView v-if="activeTab === 'today'" id="panel-today" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-today" tabindex="0" @todo-created="activeTab = 'todos'" />
-
-        <TodoGoalsView v-else-if="activeTab === 'todos'" id="panel-todos" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-todos" tabindex="0" />
-
-        <UsageTrendView v-else-if="activeTab === 'usage'" id="panel-usage" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-usage" tabindex="0" />
+        <UsageTrendView v-if="activeTab === 'usage'" id="panel-usage" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-usage" tabindex="0" />
 
         <ProjectRankView v-else-if="activeTab === 'projects'" id="panel-projects" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-projects" tabindex="0" />
 

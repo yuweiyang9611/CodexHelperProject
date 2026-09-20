@@ -34,7 +34,7 @@ export class DesktopWidgetHost {
       if (value.type === 'ready' && child.connected) child.send({ type: 'snapshot', data: this.latest });
       if (value.type === 'error') this.report(String(value.message).slice(0, 1024));
       if (value.type === 'state') this.state(value.attached === true, String(value.message || '').slice(0, 1024));
-      if (value.type === 'action' && ['open', 'todos', 'refresh'].includes(String(value.name))) {
+      if (value.type === 'action' && ['open', 'refresh'].includes(String(value.name))) {
         void this.action(String(value.name)).catch(e => this.report(String(e)));
       }
     });
@@ -87,7 +87,7 @@ export async function startDesktopWidget(rendererRoot: string): Promise<void> {
   ipcMain.handle('codexu:surface', (event, name: unknown) => {
     if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted surface.');
     if (name === 'ready') { window.webContents.send('codexu:surface-data', latest); return true; }
-    if (!['open', 'todos', 'refresh'].includes(String(name))) throw new Error('Unsupported desktop action.');
+    if (!['open', 'refresh'].includes(String(name))) throw new Error('Unsupported desktop action.');
     process.send?.({ type: 'action', name }); return true;
   });
   process.on('message', (value: unknown) => {

@@ -130,6 +130,7 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
                 DataQuality.Detailed, null, false, 0, 0, default);
             Assert.Equal(12, projection.Tokens.Lifetime.CreditsUsed);
             Assert.Equal("legacy", projection.Daily.Last().Source);
+            Assert.Equal(new UsageDistributionSlice("unknown", "unknown", 100), Assert.Single(projection.Daily.Last().Distribution!));
             var settings = new AppSettingsStore(data); var todos = new TodoStore(data);
             var service = new LocalDataManagementService(settings, todos, data);
             var backup = Path.Combine(root, "backup.json");

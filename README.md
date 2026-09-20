@@ -23,8 +23,9 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - session JSONL：精细 token delta、每日桶、工具和 Skill 计数。
 - session 增量索引：复用未变化文件，并从已记录字节偏移续读增长中的 rollout。
 - 模型 Token 分布、任务启动/完成/中止生命周期统计。
+- 用量趋势页支持近 7／30 天的每日堆叠柱状图、按功能／模型切换、分类占比及每日明细；点击图例可突出显示分类。占比以所选期间的本地 Token 为分母，沿用历史留存、工作区筛选和 fork 去重口径。功能目前识别任务与子代理，缺少来源标记和旧版历史保留为未分类；不推算官方额度消耗比例，也不伪造自动审查、记忆更新等独立功能用量。
 - automations、Goals 和日志 WARN/ERROR 健康计数。
-- 本地待办：优先级、日期、筛选、编辑、完成、删除、清理，以及最近线程一键转待办。
+- 默认进入用量趋势；主界面保留用量趋势、项目排行、Skill 使用、双运行时和设置与诊断。今日任务、待办与目标页面及状态条待办入口已移除。
 - 设置与诊断：`CODEX_HOME`、Codex 可执行文件、工作区/子代理过滤、刷新频率和数据源状态。
 - Claude Code 本地适配器：聚合 `%USERPROFILE%\.claude\projects` transcript 的 token、模型、工具和 Skill，读取本地任务。transcript 中的 HTTP 429 记录会作为近 7 天的限流次数单独提示，它只表明当时已用满，不能据此推算余量。
 - 用量历史留存：Codex 与 Claude 的规范化贡献保存到 `%LOCALAPPDATA%\codexU\history\usage-ledger-v2.sqlite`，保留全部已读取日期、会话身份、工作区、每日模型及 Token 分项。源日志删除、读失败或截断时保留上次有效贡献；无法确认的改写保留旧版本并标记冲突。账本不保存对话正文、工具参数或凭据。
@@ -35,7 +36,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 针对本月等效金额、额度余量和费率覆盖率发送去重通知。
 - 深色/浅色玻璃/跟随系统主题，以及紧凑/展开双模式。
 - Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、可校验回滚的开机启动、单实例、自动刷新、紧凑布局、原生主题、Windows 原生额度通知，以及按显示器工作区/DPI 恢复的窗口位置。
-- Electron 顶部状态条：额度、Token、待办及刷新状态，支持折叠、刷新、打开主界面/待办、拖动、锁定、预览与找回；兼容旧 WPF 位置文件。独立桌面仪表盘通过专用 Electron 子进程与 .NET Win32 桥接附着 Explorer，失败时隐藏副本并显示原因。
+- Electron 顶部状态条：额度、Token 及刷新状态，支持折叠、刷新、打开主界面、拖动、锁定、预览与找回；兼容旧 WPF 位置文件。独立桌面仪表盘通过专用 Electron 子进程与 .NET Win32 桥接附着 Explorer，失败时隐藏副本并显示原因。
 - 每日 GitHub Release 更新检查（私有仓库通过进程环境变量读取令牌）、发布页跳转，不静默下载或安装。
 - 聚合 JSON/CSV 导出；带 SHA-256 清单的设置、待办和每日用量历史备份恢复；包含 Electron 滚动日志的脱敏诊断包；以及非破坏式索引重建。
 - 每用户 Inno Setup 安装包：开始菜单、卸载项和可选桌面快捷方式；开机启动由应用内设置统一管理，Release 可按仓库密钥配置进行 Authenticode 签名。

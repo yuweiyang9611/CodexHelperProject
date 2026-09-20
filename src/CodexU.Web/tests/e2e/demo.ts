@@ -30,8 +30,6 @@ export async function openDemo(
  * usually still passes — it just stops checking what it was written to check.
  */
 export const TAB_IDS = [
-  'today',
-  'todos',
   'usage',
   'projects',
   'skills',
@@ -45,6 +43,9 @@ export async function openTab(page: Page, id: TabId) {
   const tab = page.locator(`#tab-${id}`)
   await tab.click()
   await expect(tab).toHaveAttribute('aria-selected', 'true')
+  // The combined panel loads independently. Wait for its final height before
+  // scrolling or capturing it; a short loading panel clamps the scroll position.
+  if (id === 'combined') await expect(page.locator('.combined-columns')).toBeVisible()
   await settleUi(page)
 }
 

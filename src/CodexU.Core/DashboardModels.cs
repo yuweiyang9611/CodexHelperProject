@@ -199,7 +199,11 @@ public sealed record DailyUsage(
     long Tokens,
     double CreditsUsed,
     DataQuality Quality,
-    string Source = "live");
+    string Source = "live",
+    IReadOnlyList<UsageDistributionSlice>? Distribution = null);
+
+/// <summary>Disjoint local token contributions, after session/fork deduplication.</summary>
+public sealed record UsageDistributionSlice(string Model, string Feature, long Tokens);
 
 public sealed record UsageHistoryStatus(int RetainedSources, int Conflicts, int LegacyDays);
 

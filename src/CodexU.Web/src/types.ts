@@ -116,6 +116,7 @@ export interface TaskItem {
 }
 
 export interface DailyUsage {
+  distribution?: { model: string, feature: string, tokens: number }[] | null
   source?: 'live' | 'retained' | 'legacy' | 'conflict'
   date: string
   tokens: number
@@ -296,14 +297,6 @@ export interface TodoItem {
   threadId?: string
   createdAt: string
   updatedAt?: string
-}
-
-export interface TodoMutation {
-  id?: string
-  text: string
-  priority: 'low' | 'normal' | 'high'
-  dueDate?: string
-  threadId?: string
 }
 
 export interface DashboardSnapshot {

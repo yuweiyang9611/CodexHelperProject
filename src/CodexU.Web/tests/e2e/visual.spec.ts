@@ -74,6 +74,9 @@ test.beforeEach(async ({ page }, testInfo) => {
 })
 
 test('dashboard overview matches its visual baseline', async ({ page }) => {
+  await expect(page.getByRole('tab', { name: '今日任务', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '待办与目标', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '用量趋势', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page).toHaveScreenshot('dashboard-overview.png', { fullPage: true })
 
   const overflow = await page.evaluate(() => ({
@@ -106,7 +109,6 @@ test('primary detail tabs match their dark theme visual baselines', async ({ pag
     'One stable project covers each primary detail tab.')
 
   const tabs = [
-    { id: 'todos' as const, panel: '#panel-todos', snapshot: 'todos.png' },
     { id: 'usage' as const, panel: '#panel-usage', snapshot: 'usage-trend.png' },
     { id: 'projects' as const, panel: '#panel-projects', snapshot: 'projects.png' },
     { id: 'skills' as const, panel: '#panel-skills', snapshot: 'skills.png' },

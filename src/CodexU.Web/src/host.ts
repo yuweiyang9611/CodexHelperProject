@@ -1,4 +1,4 @@
-import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, TodoItem, TodoMutation } from './types'
+import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState } from './types'
 import { DEMO_HOST_CAPABILITIES } from './hostCapabilities'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
@@ -64,7 +64,6 @@ class HostBridge {
     isRateCatalogPinned: false,
   }
 
-  private mockTodos: TodoItem[] = []
 
   private mockStatusStripState: StatusStripControlState = {
     configuredEnabled: false,
@@ -327,37 +326,6 @@ class HostBridge {
       this.mockSettings.compactMode = !this.mockSettings.compactMode
       return { enabled: this.mockSettings.compactMode } as T
     }
-    if (method === 'todos.list') return this.mockTodos as T
-    if (method === 'todos.add') {
-      const mutation = payload as TodoMutation
-      this.mockTodos.unshift({
-        id: crypto.randomUUID(), text: mutation.text, done: false,
-        priority: mutation.priority, dueDate: mutation.dueDate,
-        threadId: mutation.threadId, createdAt: new Date().toISOString(),
-      })
-      return this.mockTodos as T
-    }
-    if (method === 'todos.toggle') {
-      const id = (payload as { id: string }).id
-      this.mockTodos = this.mockTodos.map((item) => item.id === id ? { ...item, done: !item.done } : item)
-      return this.mockTodos as T
-    }
-    if (method === 'todos.update') {
-      const mutation = payload as TodoMutation
-      this.mockTodos = this.mockTodos.map((item) => item.id === mutation.id
-        ? { ...item, text: mutation.text, priority: mutation.priority, dueDate: mutation.dueDate, updatedAt: new Date().toISOString() }
-        : item)
-      return this.mockTodos as T
-    }
-    if (method === 'todos.delete') {
-      const id = (payload as { id: string }).id
-      this.mockTodos = this.mockTodos.filter((item) => item.id !== id)
-      return this.mockTodos as T
-    }
-    if (method === 'todos.clearCompleted') {
-      this.mockTodos = this.mockTodos.filter((item) => !item.done)
-      return this.mockTodos as T
-    }
     if (method === 'update.check') {
       return {
         currentVersion: `${__APP_VERSION__}-dev`, latestVersion: __APP_VERSION__,
@@ -495,6 +463,10 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
         + 0.33 * rate.output),
       quality: 'detailed' as const,
       source: 'live' as const,
+      distribution: [
+        { model: isClaude ? 'claude-sonnet-4-6' : 'gpt-5.6-sol', feature: 'tasks', tokens: Math.floor(tokens * 0.7) },
+        { model: isClaude ? 'claude-opus-4-6' : 'gpt-6-astra', feature: 'subagents', tokens: tokens - Math.floor(tokens * 0.7) },
+      ],
     }
   })
 

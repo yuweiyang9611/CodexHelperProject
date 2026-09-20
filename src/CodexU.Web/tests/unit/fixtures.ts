@@ -6,21 +6,9 @@ import type {
   QuotaForecast,
   RateLimitWindow,
   RuntimeReadResult,
-  TodoItem,
   TokenBreakdown,
   TokenPeriod,
 } from '../../src/types'
-
-export function todoItem(overrides: Partial<TodoItem> = {}): TodoItem {
-  return {
-    id: 't1',
-    text: '写测试',
-    done: false,
-    priority: 'normal',
-    createdAt: '2026-07-14T00:00:00Z',
-    ...overrides,
-  }
-}
 
 export function tokenBreakdown(overrides: Partial<TokenBreakdown> = {}): TokenBreakdown {
   return {

@@ -2,12 +2,17 @@ using CodexU.Core;
 
 namespace CodexU.Infrastructure;
 
-internal sealed record AttributedUsage(string Source, string? Workspace, DateOnly Date, string Model, TokenBreakdown Tokens, int Events, string? Branch = null, string SourceKind = "live");
+internal sealed record AttributedUsage(string Source, string? Workspace, DateOnly Date, string Model, TokenBreakdown Tokens, int Events, string? Branch = null, string SourceKind = "live", string Feature = "unknown");
 internal sealed record UsageProjection(TokenSummary Tokens, IReadOnlyList<DailyUsage> Daily,
     IReadOnlyList<ModelUsage> Models, IReadOnlyList<ProjectUsage> Projects, UsageHistoryStatus History);
 
 internal static class UsageHistoryProjection
 {
+    internal static IReadOnlyList<UsageDistributionSlice> Distribution(IEnumerable<AttributedUsage> entries) => entries
+        .GroupBy(e => (Model: e.Model.ToLowerInvariant(), e.Feature))
+        .Select(g => new UsageDistributionSlice(g.Key.Model, g.Key.Feature, g.Sum(e => e.Tokens.VisibleTotalTokens)))
+        .Where(e => e.Tokens > 0).OrderBy(e => e.Model).ThenBy(e => e.Feature).ToArray();
+
     internal static async Task<UsageProjection> BuildAsync(AgentRuntime runtime, IReadOnlyList<AttributedUsage> entries,
         string root, string? workspace, DataQuality quality, IReadOnlyList<ModelCreditRate>? rates,
         bool completeCatalog, int retained, int conflicts, CancellationToken ct)
@@ -76,7 +81,10 @@ internal static class UsageHistoryProjection
         {
             var day = dayRecords.GetValueOrDefault(date);
             return new DailyUsage(date, day?.Tokens.VisibleTotalTokens ?? 0, day?.CreditsUsed ?? 0, day?.Quality ?? quality,
-                legacy.ContainsKey(date) ? "legacy" : daySources.GetValueOrDefault(date, "live"));
+                legacy.ContainsKey(date) ? "legacy" : daySources.GetValueOrDefault(date, "live"),
+                legacy.ContainsKey(date)
+                    ? [new UsageDistributionSlice("unknown", "unknown", day!.Tokens.VisibleTotalTokens)]
+                    : Distribution(measured.GetValueOrDefault(date) ?? []));
         }).ToArray();
         return new(new(Period(d => d == today), Period(d => d >= today.AddDays(-6) && d <= today),
             Period(d => d.Year == today.Year && d.Month == today.Month && d <= today), Period(_ => true)), days,

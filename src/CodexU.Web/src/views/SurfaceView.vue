@@ -6,7 +6,7 @@ interface Presentation {
   runtimeTitle: string; primaryLabel: string; secondaryLabel: string
   primaryQuota: Quota; secondaryQuota: Quota
   today: Quota; sevenDays: Quota; lifetime: Quota
-  todoText: string; statusText: string; statusToolTip: string
+  statusText: string; statusToolTip: string
 }
 interface SurfaceData {
   presentation?: Presentation; expanded?: boolean; theme?: string
@@ -51,7 +51,6 @@ onUnmounted(() => unsubscribe?.())
       <p :title="data.presentation?.statusToolTip">{{ data.refreshing ? '刷新中…' : (data.refreshError || data.presentation?.statusText || '等待数据') }}</p>
       <nav>
         <button :disabled="busy || data.refreshing" @click="action('refresh')">{{ busy || data.refreshing ? '刷新中' : '刷新' }}</button>
-        <button @click="action('todos')">待办 {{ data.presentation?.todoText || '--' }}</button>
         <button @click="action('open')">打开主界面</button>
         <button v-if="!desktop" @click="action('lock')">{{ data.statusStripPositionLocked ? '解锁位置' : '锁定位置' }}</button>
       </nav>

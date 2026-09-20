@@ -226,7 +226,8 @@ public sealed partial class CodexSessionReader(
             {
                 projectBuckets[projectKey].Add(bucket);
                 attributed.Add(new(parsed.SessionId ?? resolved.Source.Path, parsed.Workspace,
-                    bucket.Date, bucket.Model, bucket.Tokens, bucket.EventCount, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live"));
+                    bucket.Date, bucket.Model, bucket.Tokens, bucket.EventCount, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live",
+                    Feature: parsed.Feature));
                 lifetime.Add(bucket);
                 if (!daily.TryGetValue(bucket.Date, out var dailyPeriod))
                 {
@@ -362,6 +363,7 @@ public sealed partial class CodexSessionReader(
                 indexDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
                 defaultWorkspace, tokenQuality, customRates, completeRateCatalog, retainedSources, historyConflicts, cancellationToken);
         }
+        var distribution = attributed.GroupBy(e => e.Date).ToDictionary(g => g.Key, g => UsageHistoryProjection.Distribution(g));
         var result = new SessionAnalytics(
             latestRateLimit is null
                 ? null
@@ -373,7 +375,8 @@ public sealed partial class CodexSessionReader(
                 sevenDays.ToPeriod(tokenQuality, customRates, completeRateCatalog),
                 month.ToPeriod(tokenQuality, customRates, completeRateCatalog),
                 lifetimePeriod),
-            BuildDailyUsage(daily, now, tokenQuality, customRates, completeRateCatalog),
+            BuildDailyUsage(daily, now, tokenQuality, customRates, completeRateCatalog)
+                .Select(day => day with { Distribution = distribution.GetValueOrDefault(day.Date, []) }).ToArray(),
             toolRanking,
             skillRanking,
             models,
@@ -551,7 +554,8 @@ public sealed record ParsedSessionFile(
     string? SessionId,
     string? ForkedFromId,
     IReadOnlyList<SessionTokenEvent> TokenEvents,
-    string? Workspace = null);
+    string? Workspace = null,
+    string Feature = "unknown");
 
 public sealed record SessionTokenEvent(
     DateOnly Date,

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import TrendChart from '../components/TrendChart.vue'
 import UsageHeatmap from '../components/UsageHeatmap.vue'
+import UsageDistribution from '../components/UsageDistribution.vue'
 import { useEquivalentValue } from '../composables/useEquivalentValue'
 import { useRecentUsage } from '../composables/useRecentUsage'
 import { compactNumber, qualityLabel } from '../format'
@@ -47,6 +48,7 @@ const longestActiveStreak = computed(() => {
     <p v-if="snapshot.history && (snapshot.history.retainedSources || snapshot.history.conflicts || snapshot.history.legacyDays)" role="status">
       历史留存 {{ snapshot.history.retainedSources }} 个来源 · 待核对 {{ snapshot.history.conflicts }} 个来源 · 旧版快照 {{ snapshot.history.legacyDays }} 天（旧版金额保留采集值）
     </p>
+    <UsageDistribution :days="snapshot.dailyUsage" :refreshed-at="snapshot.refreshedAt" />
     <div class="usage-layout">
       <article class="inner-card heatmap-card">
         <div class="inner-heading"><div><span>活跃度</span><h3>最近半年本机原始用量</h3></div><em>{{ qualityLabel(snapshot.dailyUsage[0]?.quality) }}</em></div>
