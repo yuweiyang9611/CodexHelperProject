@@ -122,7 +122,6 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <StackPanel x:Name="WeekBlock">
                             <TextBlock Text="近 7 天" Foreground="#707C96" FontSize="11" />
@@ -132,11 +131,6 @@
                         <StackPanel x:Name="LifetimeBlock" Grid.Column="1">
                             <TextBlock Text="累计" Foreground="#707C96" FontSize="11" />
                             <TextBlock x:Name="LifetimeText" Text="--" Foreground="White" FontSize="15"
-                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                        <StackPanel x:Name="TodoBlock" Grid.Column="2">
-                            <TextBlock Text="未完成待办" Foreground="#707C96" FontSize="11" />
-                            <TextBlock x:Name="TodoText" Text="--" Foreground="White" FontSize="15"
                                        FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </Grid>

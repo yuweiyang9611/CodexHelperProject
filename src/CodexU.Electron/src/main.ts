@@ -176,9 +176,8 @@ function updateSurfaces(data: SurfaceData): void {
 }
 
 async function handleSurfaceAction(action: string): Promise<unknown> {
-  if (action === 'open' || action === 'todos') {
+  if (action === 'open') {
     showAndFocusMainWindow();
-    if (action === 'todos') mainWindow?.webContents.send(EVENT_CHANNEL, 'window.navigate', { tab: 'todos' });
     return true;
   }
   if (!sidecar) throw new Error('后端暂不可用，请稍后重试。');

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { host } from '../host'
 import { HOST_CAPABILITY, type HostCapabilityName } from '../hostCapabilities'
-import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, TodoItem, TodoMutation, UpdateCheckResult } from '../types'
+import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, UpdateCheckResult } from '../types'
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const snapshot = ref<DashboardSnapshot | null>(null)
@@ -11,7 +11,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const error = ref<string | null>(null)
   const settings = ref<AppSettings | null>(null)
   const settingsDraft = ref<AppSettings | null>(null)
-  const todos = ref<TodoItem[]>([])
+
   const updateStatus = ref<UpdateCheckResult | null>(null)
   const rateCatalog = ref<RateCatalogSnapshot | null>(null)
   const isCheckingUpdates = ref(false)
@@ -190,10 +190,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
     const snapshotGeneration = beginSnapshotOperation()
     const statusStripSupported = hasHostCapability(HOST_CAPABILITY.statusStripControl)
-    const [snapshotResult, settingsResult, todosResult, rateCatalogResult, statusStripResult] = await Promise.allSettled([
+    const [snapshotResult, settingsResult, rateCatalogResult, statusStripResult] = await Promise.allSettled([
       host.request<DashboardSnapshot>('usage.getSnapshot'),
       host.request<AppSettings>('settings.get'),
-      host.request<TodoItem[]>('todos.list'),
       host.request<RateCatalogSnapshot>('rates.getCatalog'),
       statusStripSupported
         ? host.request<StatusStripControlState>('statusStrip.getState')
@@ -210,8 +209,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     } else {
       failures.push(`设置读取失败：${errorMessage(settingsResult.reason)}`)
     }
-    if (todosResult.status === 'fulfilled') todos.value = todosResult.value
-    else failures.push(`待办读取失败：${errorMessage(todosResult.reason)}`)
     if (rateCatalogResult.status === 'fulfilled') rateCatalog.value = rateCatalogResult.value
     else failures.push(`费率目录读取失败：${errorMessage(rateCatalogResult.reason)}`)
     if (!statusStripSupported) {
@@ -358,30 +355,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
 
-  async function mutateTodos(method: string, payload: object = {}): Promise<boolean> {
-    error.value = null
-    try {
-      // Always publish a fresh array. The in-browser bridge can legally return the
-      // same backing array it just mutated; assigning that identity to a ref again
-      // would leave computed counts and filtered rows stale.
-      todos.value = [...await host.request<TodoItem[]>(method, payload)]
-      return true
-    } catch (reason) {
-      error.value = errorMessage(reason)
-      return false
-    }
-  }
-
-  async function addTodo(mutation: TodoMutation) { return mutateTodos('todos.add', mutation) }
-
-  async function updateTodo(mutation: TodoMutation) { return mutateTodos('todos.update', mutation) }
-
-  async function toggleTodo(id: string) { return mutateTodos('todos.toggle', { id }) }
-
-  async function deleteTodo(id: string) { return mutateTodos('todos.delete', { id }) }
-
-  async function clearCompletedTodos() { return mutateTodos('todos.clearCompleted') }
-
   async function checkForUpdates(force = true) {
     if (isCheckingUpdates.value) return
     isCheckingUpdates.value = true
@@ -416,7 +389,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
         settings.value = copySettings(result.settings)
         settingsDraft.value = copySettings(result.settings)
       }
-      if (result.todos) todos.value = result.todos
       return result.success
     } catch (reason) {
       operationStatus.value = errorMessage(reason)
@@ -462,11 +434,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   return {
     desktopState,
-    snapshot, settings, settingsDraft, settingsDirty, todos, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
+    snapshot, settings, settingsDraft, settingsDirty, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
     hostPlatform, hostIsPackaged, hostCapabilities, hasHostCapability,
     isLoading, isRefreshing, error, runtime, compactMode,
     combined, isLoadingCombined, combinedError, loadCombined,
     initialize, refresh, selectRuntime, saveSettings, resetSettingsDraft, toggleCompact, previewStatusStrip, recoverStatusStrip, refreshStatusStripState,
-    addTodo, updateTodo, toggleTodo, deleteTodo, clearCompletedTodos, checkForUpdates, openReleasePage, runLocalOperation,
+    checkForUpdates, openReleasePage, runLocalOperation,
   }
 })

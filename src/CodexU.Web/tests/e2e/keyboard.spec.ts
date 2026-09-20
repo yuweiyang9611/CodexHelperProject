@@ -35,13 +35,13 @@ test('primary navigation is reachable and operable with the keyboard', async ({ 
   await expect(compactToggle).toHaveAttribute('aria-disabled', 'false')
   await expect(compactToggle).toBeFocused()
 
-  const todosTab = page.getByRole('tab').nth(1)
-  await todosTab.focus()
+  const usageTab = page.getByRole('tab', { name: '用量趋势', exact: true })
+  await usageTab.focus()
   await page.keyboard.press('Enter')
-  await expect(todosTab).toHaveAttribute('aria-selected', 'true')
+  await expect(usageTab).toHaveAttribute('aria-selected', 'true')
 
-  const openFilter = page.getByRole('button', { name: '未完成', exact: true })
-  const todayFilter = page.getByRole('button', { name: '今天', exact: true })
+  const openFilter = page.getByRole('button', { name: '7 天', exact: true })
+  const todayFilter = page.getByRole('button', { name: '30 天', exact: true })
   await expect(openFilter).toHaveAttribute('aria-pressed', 'true')
   await expect(todayFilter).toHaveAttribute('aria-pressed', 'false')
   await todayFilter.focus()

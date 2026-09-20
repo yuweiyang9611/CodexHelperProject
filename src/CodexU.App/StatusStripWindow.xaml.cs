@@ -172,21 +172,18 @@ public partial class StatusStripWindow : Window
         TodayText.Text = presentation.Today.Text;
         WeekText.Text = presentation.SevenDays.Text;
         LifetimeText.Text = presentation.Lifetime.Text;
-        TodoText.Text = presentation.TodoText;
 
         AutomationProperties.SetName(PrimaryBlock, presentation.PrimaryQuota.AccessibleText);
         AutomationProperties.SetName(SecondaryBlock, presentation.SecondaryQuota.AccessibleText);
         AutomationProperties.SetName(TodayBlock, presentation.Today.AccessibleText);
         AutomationProperties.SetName(WeekBlock, presentation.SevenDays.AccessibleText);
         AutomationProperties.SetName(LifetimeBlock, presentation.Lifetime.AccessibleText);
-        AutomationProperties.SetName(TodoBlock, presentation.TodoAccessibleText);
 
         PrimaryText.Foreground = MetricBrush(presentation.PrimaryQuota.IsAvailable, degraded: false);
         SecondaryText.Foreground = MetricBrush(presentation.SecondaryQuota.IsAvailable, degraded: false);
         TodayText.Foreground = MetricBrush(presentation.Today.IsAvailable, presentation.Today.IsDegraded);
         WeekText.Foreground = MetricBrush(presentation.SevenDays.IsAvailable, presentation.SevenDays.IsDegraded);
         LifetimeText.Foreground = MetricBrush(presentation.Lifetime.IsAvailable, presentation.Lifetime.IsDegraded);
-        TodoText.Foreground = presentation.TodoText == "--" ? UnavailableMetricBrush : AvailableMetricBrush;
 
         RenderQuotaProgress(
             PrimaryProgress,

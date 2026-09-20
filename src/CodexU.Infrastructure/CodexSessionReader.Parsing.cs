@@ -29,6 +29,7 @@ public sealed partial class CodexSessionReader
         var tokenCounterState = seed?.TokenCounterState ?? TokenCounterState.Empty;
         var sessionId = seed?.SessionId;
         var workspace = seed?.Workspace;
+        var feature = seed?.Feature ?? "unknown";
         var forkedFromId = seed?.ForkedFromId;
         var currentModel = seed?.CurrentModel ?? "unknown";
         var tokenEventCount = seed?.TokenEventCount ?? 0;
@@ -93,6 +94,7 @@ public sealed partial class CodexSessionReader
                     && string.Equals(type, "session_meta", StringComparison.OrdinalIgnoreCase))
                 {
                     sessionId = GetString(payload, "id");
+                    feature = ReadUsageFeature(payload);
                     workspace = WorkspaceScope.Normalize(GetString(payload, "cwd"));
                     forkedFromId = GetString(payload, "forked_from_id");
                     if (TryReadThreadSpawnParentId(payload, out var discoveredParentId))
@@ -240,7 +242,23 @@ public sealed partial class CodexSessionReader
             sessionId,
             forkedFromId,
             tokenEvents,
-            workspace);
+            workspace,
+            feature);
+    }
+
+    // Only header metadata is evidence of a session's feature. Never inspect prompt
+    // text or tool names, and never let replayed parent metadata relabel a child.
+    private static string ReadUsageFeature(JsonElement payload)
+    {
+        var threadSource = GetString(payload, "thread_source");
+        if (payload.TryGetProperty("source", out var source))
+        {
+            if (source.ValueKind == JsonValueKind.Object && source.TryGetProperty("subagent", out _))
+                return "subagents";
+            if (source.ValueKind == JsonValueKind.String && source.GetString() is "cli" or "vscode" or "exec" or "appServer")
+                return threadSource == "subagent" ? "subagents" : "tasks";
+        }
+        return threadSource switch { "user" => "tasks", "subagent" => "subagents", _ => "unknown" };
     }
 
     private static SessionTokenEventFingerprint Fingerprint(

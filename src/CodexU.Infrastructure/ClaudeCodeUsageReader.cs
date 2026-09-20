@@ -51,7 +51,8 @@ public sealed partial class ClaudeCodeUsageReader(
                 if (item.Tokens is not { } tokens || item.Model is not { } model) continue;
                 usageEvents += summary.Count;
                 var bucket = new UsageBucket(date, model, tokens);
-                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.Count, item.Branch, history?.Kind(sourceId) ?? "live"));
+                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.Count, item.Branch, history?.Kind(sourceId) ?? "live",
+                    source.Identity is null ? "unknown" : source.Identity.Contains("/agent:", StringComparison.Ordinal) ? "subagents" : "tasks"));
                 lifetime.Add(bucket);
 
             }

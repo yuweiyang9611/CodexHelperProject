@@ -4,10 +4,10 @@ namespace CodexU.Infrastructure;
 
 internal sealed class SessionIndexCache
 {
-    // Version 12 includes OS file identity and a complete committed-prefix fingerprint.
+    // Version 13 adds the normalized feature from session header metadata.
     // under the field-validating, last-only-aware normalizer semantics. Global
     // canonicalization and parent-prefix removal are recomputed on every read.
-    private const int CurrentVersion = 12;
+    private const int CurrentVersion = 13;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _path;
 

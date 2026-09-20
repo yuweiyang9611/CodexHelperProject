@@ -39,7 +39,6 @@ function routeRequests(routes: Record<string, unknown | (() => unknown)>) {
       return typeof route === 'function' ? (route as () => unknown)() : route
     }
     if (method === 'app.initialize') return { appVersion: '9.9.9', platform: 'test', theme: 'dark', isPackaged: false, capabilities: [...DEMO_HOST_CAPABILITIES] }
-    if (method === 'todos.list') return []
     if (method === 'settings.get') return appSettings()
     if (method === 'rates.getCatalog') return { builtIn: {}, builtInRates: [] }
     if (method === 'statusStrip.getState') return {
@@ -73,7 +72,6 @@ describe('initialize', () => {
     routeRequests({
       'usage.getSnapshot': loaded,
       'settings.get': appSettings({ checkForUpdates: false }),
-      'todos.list': [{ id: 't1', text: '写测试', done: false, priority: 'normal', createdAt: '2026-07-14T00:00:00Z' }],
     })
 
     const store = useDashboardStore()
@@ -82,7 +80,7 @@ describe('initialize', () => {
     expect(store.error).toBeNull()
     expect(store.isLoading).toBe(false)
     expect(store.snapshot).toEqual(loaded)
-    expect(store.todos).toHaveLength(1)
+    expect(mocks.request.mock.calls.some(([method]) => method.startsWith('todos.'))).toBe(false)
     expect(store.appVersion).toBe('9.9.9')
     expect(store.hostPlatform).toBe('test')
     expect(store.hostIsPackaged).toBe(false)
@@ -113,7 +111,7 @@ describe('initialize', () => {
     routeRequests({
       'usage.getSnapshot': () => Promise.reject(new Error('读取用量失败')),
       'settings.get': appSettings({ checkForUpdates: false }),
-      'todos.list': () => Promise.reject(new Error('待办损坏')),
+      'rates.getCatalog': () => Promise.reject(new Error('费率目录损坏')),
     })
 
     const store = useDashboardStore()
@@ -123,7 +121,7 @@ describe('initialize', () => {
     expect(store.settings).not.toBeNull()
     expect(store.isLoading).toBe(false)
     expect(store.error).toContain('用量读取失败：读取用量失败')
-    expect(store.error).toContain('待办读取失败：待办损坏')
+    expect(store.error).toContain('费率目录读取失败：费率目录损坏')
   })
 
   it('does not let a failed host handshake abort the rest of the load', async () => {
@@ -215,7 +213,6 @@ describe('stale response guarding', () => {
     mocks.request.mockImplementation(async (method) => {
       if (method === 'runtime.select') return runtimeSwitch.promise
       if (method === 'settings.get') return appSettings({ checkForUpdates: false })
-      if (method === 'todos.list') return []
       if (method === 'app.initialize') return { appVersion: '1', platform: 'test', theme: 'dark', isPackaged: false, capabilities: [...DEMO_HOST_CAPABILITIES] }
       return snapshot()
     })
@@ -487,34 +484,8 @@ describe('status strip controls', () => {
   })
 })
 
-describe('todos', () => {
-  it('replaces the list with whatever the host returns', async () => {
-    const updated = [{ id: 't1', text: '已完成', done: true, priority: 'high' as const, createdAt: '2026-07-14T00:00:00Z' }]
-    routeRequests({ 'todos.add': updated })
-
-    const store = useDashboardStore()
-    const ok = await store.addTodo({ text: '已完成', priority: 'high' })
-
-    expect(ok).toBe(true)
-    expect(store.todos).toEqual(updated)
-    expect(mocks.request).toHaveBeenCalledWith('todos.add', { text: '已完成', priority: 'high' })
-  })
-
-  it('reports failure and leaves the previous list intact', async () => {
-    routeRequests({ 'todos.delete': () => Promise.reject(new Error('删除失败')) })
-    const store = useDashboardStore()
-    store.todos = [{ id: 't1', text: '保留', done: false, priority: 'normal', createdAt: '2026-07-14T00:00:00Z' }]
-
-    const ok = await store.deleteTodo('t1')
-
-    expect(ok).toBe(false)
-    expect(store.error).toBe('删除失败')
-    expect(store.todos).toHaveLength(1)
-  })
-})
-
 describe('local operations', () => {
-  it('adopts settings and todos returned by the operation', async () => {
+  it('adopts settings and tolerates legacy todo data returned by the operation', async () => {
     routeRequests({
       'data.restore': {
         success: true,
@@ -531,7 +502,6 @@ describe('local operations', () => {
     expect(store.operationStatus).toBe('已恢复')
     expect(store.settings!.uiScalePercent).toBe(95)
     expect(store.settingsDirty).toBe(false)
-    expect(store.todos).toHaveLength(1)
   })
 
   it('refuses to run two operations at once', async () => {
