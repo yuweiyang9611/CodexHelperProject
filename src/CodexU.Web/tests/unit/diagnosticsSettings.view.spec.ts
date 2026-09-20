@@ -61,6 +61,34 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
+  it('shows download progress, retry and restart actions as update state changes', async () => {
+    const { container, store } = mountSettings([HOST_CAPABILITY.automaticUpdates])
+    store.updateStatus = { currentVersion: '0.6.0', latestVersion: '0.7.0', isUpdateAvailable: true, isPrerelease: false, checkedAt: new Date().toISOString(), status: '发现新版本' }
+    store.updateState = { supported: true, phase: 'downloading', message: '正在下载', progress: 42 }
+    await nextTick()
+    expect(container.querySelector('progress')?.value).toBe(42)
+    expect(button(container, '下载更新').disabled).toBe(true)
+    expect(labelledControl(container, '自动下载并在退出时安装更新')).toBeTruthy()
+    store.updateState = { supported: true, phase: 'error', message: '校验失败' }
+    await nextTick()
+    expect(button(container, '重试下载').disabled).toBe(false)
+    store.updateState = { supported: true, phase: 'ready', message: '已就绪' }
+    store.isRunningLocalOperation = true
+    await nextTick()
+    expect(button(container, '重启并更新').disabled).toBe(true)
+    store.isRunningLocalOperation = false
+    await nextTick()
+    expect(button(container, '重启并更新').disabled).toBe(false)
+  })
+
+  it('keeps portable hosts on the manual release page path', async () => {
+    const { container, store } = mountSettings([HOST_CAPABILITY.automaticUpdates])
+    store.updateState = { supported: false, phase: 'idle', message: '便携版请手动更新' }
+    await nextTick()
+    expect(container.textContent).toContain('便携版请手动更新')
+    expect(container.textContent).not.toContain('自动下载并在退出时安装更新')
+    expect(button(container, '打开发布页').disabled).toBe(false)
+  })
   it('disables unsupported Electron settings without rewriting saved values', async () => {
     const { container, store } = mountSettings([
       HOST_CAPABILITY.nativeDialogs,

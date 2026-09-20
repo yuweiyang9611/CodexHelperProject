@@ -36,6 +36,7 @@ public sealed record AppSettings(
     bool ClaudeAutoDetectSubscriptionAmount = true,
     bool CheckForUpdates = true,
     bool IncludePrereleaseUpdates = false,
+    bool AutoInstallUpdates = true,
     double MonthlyAmountAlert = 0d,
     double MinimumRateCoverageAlertPercent = 80d,
     string GlobalHotKey = "Ctrl+U",

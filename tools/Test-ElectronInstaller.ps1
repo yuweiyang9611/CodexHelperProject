@@ -1126,6 +1126,33 @@ function Invoke-InstallerScenario {
             if ($residentProcess.HasExited) {
                 throw "$Name Electron application exited before the resident-uninstall test."
             }
+
+            # Exercise the same silent flags used by the automatic updater,
+            # including graceful resident shutdown and explicit relaunch.
+            $updateResult = Invoke-ProcessWithTimeout `
+                -FilePath $installer `
+                -Arguments @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART',
+                    '/NOCLOSEAPPLICATIONS', '/NOFORCECLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS',
+                    '/CODEXUUPDATE=1', '/CODEXURESTART=1', "/DIR=$installDirectory",
+                    "/LOG=$(Join-Path $scenarioRoot 'automatic-update.log')") `
+                -WorkingDirectory $scenarioRoot `
+                -ProcessTimeoutSeconds $TimeoutSeconds `
+                -Environment $processEnvironment
+            Write-ProcessEvidence -Label "$Name automatic update" -Result $updateResult
+            if ($updateResult.ExitCode -ne 0 -or -not $residentProcess.WaitForExit(15000)) {
+                throw "$Name automatic update failed to replace the resident application safely."
+            }
+            $residentProcess.Dispose()
+            $residentProcess = $null
+            $restarted = @(Wait-ForExecutableProcess -ExecutablePath $installedExecutable `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(45)))
+            if ($restarted.Count -eq 0) { throw "$Name automatic update did not reopen the application." }
+            $residentProcess = $restarted[0]
+            foreach ($candidate in $restarted | Select-Object -Skip 1) { $candidate.Dispose() }
+            $restartedSidecars = @(Wait-ForExecutableProcess -ExecutablePath $sidecarExecutable `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(45)))
+            if ($restartedSidecars.Count -eq 0) { throw "$Name updated application did not start its backend." }
+            foreach ($candidate in $restartedSidecars) { $candidate.Dispose() }
         }
 
         Set-TestStartupEntries `

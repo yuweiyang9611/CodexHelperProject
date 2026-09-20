@@ -66,6 +66,46 @@ beforeEach(() => {
   mocks.listeners.clear()
 })
 
+describe('automatic updates', () => {
+  it('hydrates native update state and follows background progress events', async () => {
+    routeRequests({
+      'app.initialize': { appVersion: '0.6.0', platform: 'windows', isPackaged: true, capabilities: [HOST_CAPABILITY.automaticUpdates] },
+      'settings.get': appSettings({ checkForUpdates: false }),
+      'update.state': { supported: true, phase: 'downloading', progress: 34, message: '正在下载' },
+    })
+    const store = useDashboardStore()
+    await store.initialize()
+    expect(store.updateState?.progress).toBe(34)
+    emit('update.stateChanged', { supported: true, phase: 'ready', version: '0.7.0', message: '已就绪' })
+    expect(store.updateState?.phase).toBe('ready')
+    emit('update.checked', { currentVersion: '0.6.0', latestVersion: '0.7.0', isUpdateAvailable: true })
+    expect(store.updateStatus?.latestVersion).toBe('0.7.0')
+    await store.installUpdate()
+    await store.installUpdate()
+    expect(mocks.request.mock.calls.filter(([method]) => method === 'update.install')).toHaveLength(1)
+  })
+
+  it('does not issue updater methods to legacy hosts', async () => {
+    routeRequests({ 'settings.get': appSettings({ checkForUpdates: false }) })
+    const store = useDashboardStore()
+    await store.initialize()
+    expect(store.updateState).toBeNull()
+    expect(mocks.request.mock.calls.some(([method]) => method === 'update.state')).toBe(false)
+  })
+
+  it('keeps the app usable when native restart fails and defers during maintenance', async () => {
+    routeRequests({ 'update.install': () => { throw new Error('未下载完成') } })
+    const store = useDashboardStore()
+    store.isRunningLocalOperation = true
+    await store.installUpdate()
+    expect(mocks.request).not.toHaveBeenCalled()
+    store.isRunningLocalOperation = false
+    await store.installUpdate()
+    expect(store.isInstallingUpdate).toBe(false)
+    expect(store.error).toBe('未下载完成')
+  })
+})
+
 describe('initialize', () => {
   it('loads every source and reports no error on success', async () => {
     const loaded = snapshot({ refreshedAt: '2026-07-14T00:00:00Z' })

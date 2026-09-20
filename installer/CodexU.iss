@@ -130,6 +130,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupA
 
 [Run]
 Filename: "{app}\CodexU.exe"; Description: "启动 codexU"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CodexU.exe"; Flags: nowait skipifnotsilent; Check: ShouldRestartAfterUpdate
 
 [Code]
 var
@@ -160,6 +161,9 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  ShutdownParameters: String;
 begin
   LegacyWpfInstallDetected :=
     FileExists(ExpandConstant('{app}\CodexU.App.exe')) and
@@ -167,6 +171,24 @@ begin
   LegacyStartupRegistrationDetected :=
     LegacyWpfInstallDetected or IsLegacyWpfStartupCommand();
   Result := '';
+  if (ExpandConstant('{param:CODEXUUPDATE|0}') = '1') and
+     FileExists(ExpandConstant('{app}\CodexU.exe')) then
+  begin
+    ShutdownParameters :=
+      '--maintenance-shutdown --maintenance-shutdown-marker="' +
+      ExpandConstant('{tmp}\codexu-maintenance-shutdown.marker') + '"';
+    ResultCode := -1;
+    if not Exec(ExpandConstant('{app}\CodexU.exe'), ShutdownParameters,
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) or
+      (ResultCode <> 0) then
+      Result := 'codexU 未能安全退出，更新已取消。请关闭应用后重试。';
+  end;
+end;
+
+function ShouldRestartAfterUpdate(): Boolean;
+begin
+  Result := (ExpandConstant('{param:CODEXUUPDATE|0}') = '1') and
+    (ExpandConstant('{param:CODEXURESTART|0}') = '1');
 end;
 
 function ShouldRemoveLegacyWpfFiles(): Boolean;

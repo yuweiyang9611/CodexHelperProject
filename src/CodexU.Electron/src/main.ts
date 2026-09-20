@@ -38,6 +38,7 @@ import {
   type HostSettings,
 } from './hostSettings';
 import { decideQuitRequest } from './lifecycle';
+import { AutomaticUpdater, supportsAutomaticUpdates } from './automaticUpdates';
 import { requestTimeoutForMethod } from './ipcRequestTimeouts';
 import {
   resetMaintenanceShutdownMarker,
@@ -134,6 +135,8 @@ let sidecarHandshakeVersion = 'unknown';
 let allowQuit = false;
 let shutdownStarted = false;
 let desiredExitCode = 0;
+let automaticUpdater: AutomaticUpdater | undefined;
+let maintenanceQuit = false;
 let windowStateSaveTimer: NodeJS.Timeout | undefined;
 let sidecarRecoveryTimer: NodeJS.Timeout | undefined;
 let rendererRecoveryTimer: NodeJS.Timeout | undefined;
@@ -374,6 +377,25 @@ async function bootstrap(): Promise<void> {
   }
   nativeNotifications = createNativeNotificationAdapter();
   await startSidecar();
+  if (!smokeTest) {
+    automaticUpdater = new AutomaticUpdater({
+      supported: process.arch === 'x64' && supportsAutomaticUpdates(process.platform, app.isPackaged, smokeTest, process.execPath),
+      directory: path.join(app.getPath('userData'), 'updates'),
+      installDirectory: path.dirname(process.execPath),
+      fetch: (url, options) => net.fetch(url instanceof URL ? url.href : url, options),
+      check: async force => {
+        if (!sidecar || shutdownStarted) throw new Error('后端暂不可用。');
+        const result = await sidecar.request('update.check', { force });
+        forwardRendererEvent({ version: 1, type: 'event', method: 'update.checked', payload: result });
+        return result;
+      },
+      changed: state => {
+        if (state.phase === 'error') runtimeLog('warn', 'update', state.message);
+        forwardRendererEvent({ version: 1, type: 'event', method: 'update.stateChanged', payload: state });
+      },
+    });
+    automaticUpdater.configure(await sidecar?.request('settings.get', {}));
+  }
   if (smokeTest && (tray !== undefined || registeredGlobalHotKey !== undefined
       || isGlobalHotKeyRegistered)) {
     throw new Error('Smoke mode unexpectedly initialized native tray or shortcut state.');
@@ -558,9 +580,13 @@ function registerLifecycleHandlers(): void {
     event.preventDefault();
     if (shutdownStarted) return;
     shutdownStarted = true;
+    automaticUpdater?.stop();
 
     void shutdownActiveSidecars().then(
-      () => completeApplicationShutdown({ success: true }),
+      async () => {
+        if (!maintenanceQuit && desiredExitCode === 0) await automaticUpdater?.installOnQuit();
+        completeApplicationShutdown({ success: true });
+      },
       (reason) => completeApplicationShutdown({ success: false, reason }),
     );
   });
@@ -579,6 +605,7 @@ function registerLifecycleHandlers(): void {
 }
 
 function registerMaintenanceShutdownRequest(marker: string): void {
+  maintenanceQuit = true;
   const registration = maintenanceShutdownRequests.register(marker);
   if (registration.completed) {
     if (registration.outcome) acknowledgeMaintenanceShutdown(marker, registration.outcome);
@@ -645,9 +672,27 @@ function registerRendererIpc(): void {
         throw new Error(`IPC request rejected: method is not allowed (${String(method)}).`);
       }
       validateRendererPayload(method, payload);
+      if (shutdownStarted) throw new Error('应用正在退出，请稍后重试。');
+      if (method === 'update.state') return automaticUpdater?.getState();
+      if (method === 'update.download') {
+        if (!automaticUpdater) throw new Error('当前宿主不支持自动更新。');
+        void automaticUpdater.download();
+        return automaticUpdater.getState();
+      }
+      if (method === 'update.install') {
+        if (!automaticUpdater) throw new Error('当前宿主不支持自动更新。');
+        automaticUpdater.requestRestart();
+        setImmediate(() => requestQuit(0));
+        return true;
+      }
       if (!sidecar) throw new Error('Sidecar is unavailable.');
+      if (method === 'update.check' && automaticUpdater) return automaticUpdater.check(payload.force === true);
       if (method === 'settings.update') settingsUpdateGeneration.advance();
-      return sidecar.request(method, payload, requestTimeoutForMethod(method));
+      const result = await sidecar.request(method, payload, requestTimeoutForMethod(method));
+      if (method === 'app.initialize' && automaticUpdater && isRecord(result) && Array.isArray(result.capabilities)) {
+        return { ...result, capabilities: [...result.capabilities, 'automaticUpdates'] };
+      }
+      return result;
     },
   );
 }
@@ -883,6 +928,7 @@ async function applyChangedSettings(source: SidecarClient, event: SidecarEvent):
   try {
     const settings = parseHostSettings(event.payload);
     if (sidecar !== source) return;
+    automaticUpdater?.configure(event.payload);
     await applyHostSettings(settings, source);
     updateSurfaces(event.payload as SurfaceData);
     if (sidecar === source) forwardRendererEvent(event);

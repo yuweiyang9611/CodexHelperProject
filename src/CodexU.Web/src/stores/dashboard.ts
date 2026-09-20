@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { host } from '../host'
 import { HOST_CAPABILITY, type HostCapabilityName } from '../hostCapabilities'
-import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, UpdateCheckResult } from '../types'
+import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, UpdateCheckResult, UpdateState } from '../types'
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const snapshot = ref<DashboardSnapshot | null>(null)
@@ -13,6 +13,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const settingsDraft = ref<AppSettings | null>(null)
 
   const updateStatus = ref<UpdateCheckResult | null>(null)
+  const updateState = ref<UpdateState | null>(null)
+  const isInstallingUpdate = ref(false)
   const rateCatalog = ref<RateCatalogSnapshot | null>(null)
   const isCheckingUpdates = ref(false)
   const isRunningLocalOperation = ref(false)
@@ -69,6 +71,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const copied = cloneSettings(value)
     return {
       ...copied,
+      autoInstallUpdates: copied.autoInstallUpdates ?? true,
       isRateCatalogPinned: copied.isRateCatalogPinned ?? false,
       customModelRates: copied.customModelRates.map((rate) => ({
         ...rate,
@@ -136,8 +139,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
     hostPlatform.value = 'unknown'
     hostIsPackaged.value = false
     hostCapabilities.value = []
+    updateState.value = null
     if (!listenersBound) {
       listenersBound = true
+      host.on('update.stateChanged', payload => { updateState.value = payload as UpdateState })
+      host.on('update.checked', payload => { updateStatus.value = payload as UpdateCheckResult })
       host.on('usage.snapshotChanged', (payload) => {
         const changed = payload as DashboardSnapshot
         if (pendingRuntime !== null && changed.runtime !== pendingRuntime) return
@@ -189,6 +195,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
 
     const snapshotGeneration = beginSnapshotOperation()
+    if (hasHostCapability(HOST_CAPABILITY.automaticUpdates)) {
+      try { updateState.value = await host.request<UpdateState>('update.state') }
+      catch (reason) { failures.push(`更新状态读取失败：${errorMessage(reason)}`) }
+    }
     const statusStripSupported = hasHostCapability(HOST_CAPABILITY.statusStripControl)
     const [snapshotResult, settingsResult, rateCatalogResult, statusStripResult] = await Promise.allSettled([
       host.request<DashboardSnapshot>('usage.getSnapshot'),
@@ -224,6 +234,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function saveSettings() {
+    if (isInstallingUpdate.value) return
     if (!settingsDraft.value || isUpdatingSettings.value || isRunningLocalOperation.value) return
     if (!settings.value) return
     isUpdatingSettings.value = true
@@ -370,6 +381,21 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
 
+  async function downloadUpdate() {
+    try {
+      await checkForUpdates(true)
+      if (updateStatus.value?.isUpdateAvailable) await host.request('update.download')
+    }
+    catch (reason) { error.value = errorMessage(reason) }
+  }
+
+  async function installUpdate() {
+    if (isInstallingUpdate.value || isRunningLocalOperation.value || isUpdatingSettings.value) return
+    isInstallingUpdate.value = true
+    try { await host.request('update.install') }
+    catch (reason) { error.value = errorMessage(reason); isInstallingUpdate.value = false }
+  }
+
   async function openReleasePage() {
     try {
       await host.request('update.openRelease')
@@ -379,6 +405,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function runLocalOperation(method: string, payload: object = {}) {
+    if (isInstallingUpdate.value) return false
     if (isRunningLocalOperation.value || isUpdatingSettings.value) return false
     isRunningLocalOperation.value = true
     operationStatus.value = null
@@ -433,6 +460,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   return {
+    updateState, isInstallingUpdate, downloadUpdate, installUpdate,
     desktopState,
     snapshot, settings, settingsDraft, settingsDirty, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
     hostPlatform, hostIsPackaged, hostCapabilities, hasHostCapability,

@@ -55,6 +55,7 @@ class HostBridge {
     claudeAutoDetectSubscriptionAmount: true,
     checkForUpdates: true,
     includePrereleaseUpdates: false,
+    autoInstallUpdates: true,
     monthlyAmountAlert: 0,
     minimumRateCoverageAlertPercent: 80,
     globalHotKey: 'Ctrl+U',
