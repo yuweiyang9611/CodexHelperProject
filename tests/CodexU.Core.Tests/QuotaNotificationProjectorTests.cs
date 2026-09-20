@@ -110,7 +110,11 @@ public sealed class QuotaNotificationProjectorTests
             UnratedTokens: 500,
             CreditsByModel: [],
             Quality: DataQuality.Partial);
-        var snapshot = Snapshot(month: month);
+        var snapshot = Snapshot(month: month) with
+        {
+            DailyUsage = [new(DateOnly.FromDateTime(Now.Date), 1_000, 1_000, DataQuality.Partial,
+                Distribution: [new("gpt-5.5", "tasks", 500), new("unlisted-model", "tasks", 500)])]
+        };
         var settings = Settings() with
         {
             MonthlyAmountAlert = 20,
@@ -125,8 +129,101 @@ public sealed class QuotaNotificationProjectorTests
         Assert.Empty(projector.Project(snapshot, settings));
 
         now = now.AddMonths(1);
+        snapshot = snapshot with { DailyUsage = [snapshot.DailyUsage[0] with { Date = DateOnly.FromDateTime(now.Date) }] };
         Assert.Equal(2, projector.Project(snapshot, settings).Count);
     }
+
+    [Theory]
+    [InlineData("live")]
+    [InlineData("retained")]
+    [InlineData("legacy")]
+    public void RateCoverage_UnknownHistoricalRemainderDoesNotAskForRates(string source)
+    {
+        var snapshot = CoverageSnapshot(source,
+            [new("gpt-5.5", "tasks", 783), new("unknown", "unknown", 217)]);
+
+        Assert.Empty(Projector().Project(snapshot, Settings() with { MinimumRateCoverageAlertPercent = 80 }));
+    }
+
+    [Fact]
+    public void RateCoverage_NoModelDetailDoesNotInventMissingRates()
+    {
+        var snapshot = CoverageSnapshot("legacy", null);
+        Assert.Empty(Projector().Project(snapshot, Settings() with { MinimumRateCoverageAlertPercent = 80 }));
+    }
+
+    [Theory]
+    [InlineData("live")]
+    [InlineData("retained")]
+    [InlineData("legacy")]
+    public void RateCoverage_ReportsOnlyConfirmedModelsMissingApplicableRates(string source)
+    {
+        var snapshot = CoverageSnapshot(source,
+            [new("gpt-5.5", "unknown", 400), new("private-model", "tasks", 200), new("unknown", "tasks", 400)]);
+        var settings = Settings() with { MinimumRateCoverageAlertPercent = 80 };
+        var projector = Projector();
+        var notification = Assert.Single(projector.Project(snapshot, settings));
+
+        Assert.StartsWith("rate-coverage:", notification.Id);
+        Assert.Contains("66.7", notification.Body);
+        Assert.Contains("private-model", notification.Body);
+        Assert.DoesNotContain("gpt-5.5", notification.Body);
+        Assert.DoesNotContain("unknown", notification.Body);
+        Assert.Empty(projector.Project(snapshot, settings));
+        Assert.Equal(notification.Id, Assert.Single(Projector().Project(snapshot, settings)).Id);
+    }
+
+    [Fact]
+    public void RateCoverage_UsesUsageDateAndHonorsCustomAndPinnedRates()
+    {
+        var snapshot = CoverageSnapshot("live", [new("gpt-5.5", "tasks", 1_000)]);
+        var date = DateOnly.FromDateTime(Now.Date);
+        var settings = Settings() with
+        {
+            MinimumRateCoverageAlertPercent = 80,
+            IsRateCatalogPinned = true,
+            CustomModelRates = [new("gpt-5.5", 1, 1, 1, date.AddDays(1))]
+        };
+        Assert.Single(Projector().Project(snapshot, settings));
+        Assert.Empty(Projector().Project(snapshot, settings with
+        {
+            CustomModelRates = [new("gpt-5.5", 1, 1, 1, date)]
+        }));
+        Assert.Empty(Projector().Project(snapshot, settings with { IsRateCatalogPinned = false }));
+    }
+
+    [Fact]
+    public void RateCoverage_ExcludesOtherMonthsFutureDatesAndConflictingSources()
+    {
+        var snapshot = CoverageSnapshot("live", [new("gpt-5.5", "tasks", 1_000)]);
+        var day = snapshot.DailyUsage[0] with { Distribution = [new("private-model", "tasks", 1_000)] };
+        snapshot = snapshot with
+        {
+            DailyUsage = [snapshot.DailyUsage[0], day with { Date = day.Date.AddMonths(-1) },
+                day with { Date = day.Date.AddDays(1) }, day with { Source = "conflict" }]
+        };
+        Assert.Empty(Projector().Project(snapshot, Settings() with { MinimumRateCoverageAlertPercent = 80 }));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public void RateCoverage_RespectsDisabledAndSatisfiedThresholds(double threshold)
+    {
+        var snapshot = CoverageSnapshot("live", [new("gpt-5.5", "tasks", 500), new("private-model", "tasks", 500)]);
+        Assert.Empty(Projector().Project(snapshot, Settings() with { MinimumRateCoverageAlertPercent = threshold }));
+        Assert.Empty(Projector().Project(snapshot, Settings() with
+        {
+            MinimumRateCoverageAlertPercent = 80,
+            NotificationsEnabled = false
+        }));
+    }
+
+    private static DashboardSnapshot CoverageSnapshot(string source, IReadOnlyList<UsageDistributionSlice>? distribution) =>
+        Snapshot(month: new(1_000, TokenBreakdown.Zero, 0, 217, [], DataQuality.Approximate)) with
+        {
+            DailyUsage = [new(DateOnly.FromDateTime(Now.Date), 1_000, 0, DataQuality.Approximate, source, distribution)]
+        };
 
     [Fact]
     public void Project_UsesStableLogicalIdsAcrossProjectorRestarts()
