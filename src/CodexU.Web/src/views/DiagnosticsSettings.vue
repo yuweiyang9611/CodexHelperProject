@@ -193,10 +193,18 @@ function removeCustomRate(index: number) {
         <span><small>上次检查</small><strong>{{ store.updateStatus ? new Date(store.updateStatus.checkedAt).toLocaleString() : '--' }}</strong></span>
       </div>
       <p v-if="store.updateStatus?.notes" class="update-notes">{{ store.updateStatus.notes }}</p>
+      <div v-if="store.updateState" class="update-download" role="status" aria-live="polite">
+        <p>{{ store.updateState.message }}</p>
+        <progress v-if="store.updateState.phase === 'downloading'" :value="store.updateState.progress ?? 0" max="100" aria-label="更新下载进度" />
+        <span v-if="store.updateState.phase === 'downloading'"> {{ store.updateState.progress ?? 0 }}%</span>
+      </div>
       <div class="settings-actions">
         <button class="discard-settings" :disabled="store.isCheckingUpdates" @click="store.checkForUpdates(true)">{{ store.isCheckingUpdates ? '正在检查…' : '立即检查' }}</button>
         <button class="save-settings" @click="store.openReleasePage()">打开发布页</button>
+        <button v-if="store.updateState?.supported && store.updateState.phase === 'ready'" class="save-settings" :disabled="store.isInstallingUpdate || store.isRunningLocalOperation || store.isUpdatingSettings" @click="store.installUpdate()">重启并更新</button>
+        <button v-else-if="store.updateState?.supported && store.updateStatus?.isUpdateAvailable" class="save-settings" :disabled="store.updateState.phase === 'downloading' || store.updateState.phase === 'installing'" @click="store.downloadUpdate()">{{ store.updateState.phase === 'error' ? '重试下载' : '下载更新' }}</button>
       </div>
+      <p v-if="store.updateState?.supported" class="setting-hint">启用自动更新后，后台下载 GitHub 安装包并校验 SHA-256，正常退出时安装。关闭窗口至托盘不会触发安装；“重启并更新”会立即安装并重新打开应用。预发布版本需单独开启。</p>
       <p class="setting-hint">私有仓库可通过进程环境变量 CODEXU_GITHUB_TOKEN 只读检查 Release；应用不会保存或展示该令牌。</p>
     </article>
 
@@ -237,6 +245,7 @@ function removeCustomRate(index: number) {
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.showSubagents" type="checkbox" />显示子代理任务</label>
             <label><input v-model="store.settingsDraft.checkForUpdates" type="checkbox" />每天自动检查更新</label>
+            <label v-if="store.updateState?.supported"><input v-model="store.settingsDraft.autoInstallUpdates" type="checkbox" />自动下载并在退出时安装更新</label>
             <label><input v-model="store.settingsDraft.includePrereleaseUpdates" type="checkbox" />接收预发布版本</label>
           </div>
         </fieldset>

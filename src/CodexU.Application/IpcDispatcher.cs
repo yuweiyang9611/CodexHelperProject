@@ -41,6 +41,7 @@ public sealed class IpcDispatcher : IDisposable
         "claudeAutoDetectSubscriptionAmount",
         "checkForUpdates",
         "includePrereleaseUpdates",
+        "autoInstallUpdates",
         "monthlyAmountAlert",
         "minimumRateCoverageAlertPercent",
         "globalHotKey",

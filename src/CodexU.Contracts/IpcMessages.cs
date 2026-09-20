@@ -38,6 +38,7 @@ public sealed record IpcError(string Code, string Message);
 
 public static class HostCapabilityNames
 {
+    public const string AutomaticUpdates = "automaticUpdates";
     public const string NativeDialogs = "nativeDialogs";
     public const string NativeNotifications = "nativeNotifications";
     public const string StatusStripControl = "statusStripControl";

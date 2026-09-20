@@ -44,6 +44,7 @@ public partial class MainWindow
         "claudeAutoDetectSubscriptionAmount",
         "checkForUpdates",
         "includePrereleaseUpdates",
+        "autoInstallUpdates",
         "monthlyAmountAlert",
         "minimumRateCoverageAlertPercent",
         "globalHotKey",

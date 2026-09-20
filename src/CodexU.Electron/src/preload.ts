@@ -28,6 +28,9 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set([
   'todos.delete',
   'todos.clearCompleted',
   'update.check',
+  'update.state',
+  'update.download',
+  'update.install',
   'update.openRelease',
   'data.exportAggregates',
   'data.backup',
@@ -50,6 +53,8 @@ export const ALLOWED_EVENT_METHODS: ReadonlySet<string> = new Set([
   'window.compactChanged',
   'window.navigate',
   'desktop.stateChanged',
+  'update.stateChanged',
+  'update.checked',
 ]);
 
 type JsonObject = Record<string, unknown>;

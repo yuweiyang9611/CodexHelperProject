@@ -1,5 +1,6 @@
 export const HOST_CAPABILITY = Object.freeze({
   nativeDialogs: 'nativeDialogs',
+  automaticUpdates: 'automaticUpdates',
   nativeNotifications: 'nativeNotifications',
   statusStripControl: 'statusStripControl',
   desktopMode: 'desktopMode',

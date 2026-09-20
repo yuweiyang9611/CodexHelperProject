@@ -213,6 +213,7 @@ export interface AppSettings {
   claudeAutoDetectSubscriptionAmount: boolean
   checkForUpdates: boolean
   includePrereleaseUpdates: boolean
+  autoInstallUpdates?: boolean
   monthlyAmountAlert: number
   minimumRateCoverageAlertPercent: number
   globalHotKey: string
@@ -260,6 +261,14 @@ export interface UpdateCheckResult {
   checkedAt: string
   status: string
   notes?: string
+}
+
+export interface UpdateState {
+  supported: boolean
+  phase: 'idle' | 'downloading' | 'ready' | 'installing' | 'error'
+  message: string
+  version?: string
+  progress?: number
 }
 
 export interface LocalOperationResult {

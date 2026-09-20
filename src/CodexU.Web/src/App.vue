@@ -78,7 +78,8 @@ onMounted(async () => {
 
       <div v-if="store.error" class="notice error-notice" role="alert" aria-live="assertive" aria-atomic="true">{{ store.error }}</div>
       <div v-if="store.updateStatus?.isUpdateAvailable" class="notice update-notice">
-        <span>{{ store.updateStatus.status }}</span>
+        <span>{{ store.updateState?.phase === 'ready' ? `v${store.updateState.version} 已下载，可重启更新` : store.updateStatus.status }}</span>
+        <button v-if="store.updateState?.phase === 'ready'" type="button" :disabled="store.isInstallingUpdate || store.isRunningLocalOperation || store.isUpdatingSettings" @click="store.installUpdate()">重启并更新</button>
         <button type="button" @click="store.openReleasePage()">查看发布</button>
       </div>
 
