@@ -230,27 +230,48 @@ public sealed class QuotaNotificationProjector
             return;
         }
 
-        var coverage = Math.Clamp(
-            (month.Tokens - month.UnratedTokens) * 100d / month.Tokens,
-            0d,
-            100d);
+        // UnratedTokens also includes observations without a model and legacy
+        // totals without pricing detail. Adding a rate cannot repair those.
+        // Check confirmed model slices against the catalog on their usage date.
+        var now = _clock();
+        var today = DateOnly.FromDateTime(now.Date);
+        var usages = snapshot.DailyUsage
+            .Where(day => day.Date.Year == today.Year && day.Date.Month == today.Month && day.Date <= today
+                && day.Source is "live" or "retained" or "legacy")
+            .SelectMany(day => (day.Distribution ?? [])
+                .Where(slice => slice.Tokens > 0)
+                .Select(slice => new { day.Date, slice.Model, slice.Tokens }))
+            .Where(usage => UsageCredits.NormalizeModel(usage.Model) is not ("unknown" or "legacy-unattributed"))
+            .ToArray();
+        var missing = usages.Where(usage => UsageCredits.FindRate(
+            usage.Model, usage.Date, settings.CustomModelRates, settings.IsRateCatalogPinned) is null).ToArray();
+        if (missing.Length == 0)
+        {
+            return;
+        }
+
+        var coverage = Math.Clamp((usages.Sum(usage => usage.Tokens) - missing.Sum(usage => usage.Tokens))
+            * 100d / usages.Sum(usage => usage.Tokens), 0d, 100d);
         if (coverage >= settings.MinimumRateCoverageAlertPercent)
         {
             return;
         }
 
         var key = FormattableString.Invariant(
-            $"rate-coverage:{snapshot.Runtime}:{_clock():yyyy-MM}:{Math.Floor(coverage / 5d) * 5d:0}");
+            $"rate-coverage:{snapshot.Runtime}:{now:yyyy-MM}:{Math.Floor(coverage / 5d) * 5d:0}");
         if (!_monthlyKeys.Add(key))
         {
             return;
         }
 
+        var models = missing.Select(usage => usage.Model.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).Order().ToArray();
+        var modelNames = string.Join("、", models.Take(3));
+        if (models.Length > 3) modelNames += $"等 {models.Length} 个模型";
         notifications.Add(Create(
             "rate-coverage",
             key,
             "codexU 费率覆盖提醒",
-            $"{snapshot.Runtime} 本月只有 {coverage:N1}% Token 可核算金额，请在设置中补充未知模型费率。"));
+            $"{snapshot.Runtime} 本月已识别模型的用量中，{coverage:N1}% 有适用费率。请在设置中补充 {modelNames} 在用量发生日期的费率。"));
     }
 
     private string? ObserveWindowIdentity(

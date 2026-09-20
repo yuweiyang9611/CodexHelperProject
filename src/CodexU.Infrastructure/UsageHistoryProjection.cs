@@ -13,6 +13,20 @@ internal static class UsageHistoryProjection
         .Select(g => new UsageDistributionSlice(g.Key.Model, g.Key.Feature, g.Sum(e => e.Tokens.VisibleTotalTokens)))
         .Where(e => e.Tokens > 0).OrderBy(e => e.Model).ThenBy(e => e.Feature).ToArray();
 
+    private static IReadOnlyList<UsageDistributionSlice> LegacyDistribution(long total, IEnumerable<AttributedUsage> entries)
+    {
+        // Readers already reconstruct/deduplicate sources before projection. Only
+        // unambiguous observations in this day and scope can explain a legacy
+        // total; conflicting revisions must not supply historical attribution.
+        var known = Distribution(entries.Where(e => e.SourceKind is "live" or "retained"));
+        var assigned = known.Sum(e => e.Tokens);
+        if (assigned > total) return [new("unknown", "unknown", total)];
+        return known.Append(new UsageDistributionSlice("unknown", "unknown", total - assigned))
+            .GroupBy(e => (e.Model, e.Feature))
+            .Select(g => new UsageDistributionSlice(g.Key.Model, g.Key.Feature, g.Sum(e => e.Tokens)))
+            .Where(e => e.Tokens > 0).OrderBy(e => e.Model).ThenBy(e => e.Feature).ToArray();
+    }
+
     internal static async Task<UsageProjection> BuildAsync(AgentRuntime runtime, IReadOnlyList<AttributedUsage> entries,
         string root, string? workspace, DataQuality quality, IReadOnlyList<ModelCreditRate>? rates,
         bool completeCatalog, int retained, int conflicts, CancellationToken ct)
@@ -28,10 +42,14 @@ internal static class UsageHistoryProjection
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or System.Text.Json.JsonException)
         { /* Source observations remain usable even if archival migration is unavailable. */ }
-        var measured = entries.GroupBy(e => e.Date).ToDictionary(g => g.Key, g => g.ToArray());
+        // Recheck the projection boundary as well as the reader boundary. A
+        // workspace-specific snapshot cannot be explained by another workspace
+        // or a source whose workspace is unknown.
+        var scoped = entries.Where(e => WorkspaceScope.Contains(workspace, e.Workspace)).ToArray();
+        var measured = scoped.GroupBy(e => e.Date).ToDictionary(g => g.Key, g => g.ToArray());
         var legacy = old.Where(day => !measured.TryGetValue(day.Date, out var rows)
             || day.Tokens.VisibleTotalTokens > rows.Sum(row => row.Tokens.VisibleTotalTokens)).ToDictionary(day => day.Date);
-        var selected = entries.Where(e => !legacy.ContainsKey(e.Date)).ToArray();
+        var selected = scoped.Where(e => !legacy.ContainsKey(e.Date)).ToArray();
         var daySources = selected.GroupBy(e => e.Date).ToDictionary(g => g.Key,
             g => g.Any(e => e.SourceKind == "conflict") ? "conflict" : g.Any(e => e.SourceKind == "retained") ? "retained" : "live");
         var dayRecords = new Dictionary<DateOnly, DailyUsageRecord>();
@@ -83,7 +101,7 @@ internal static class UsageHistoryProjection
             return new DailyUsage(date, day?.Tokens.VisibleTotalTokens ?? 0, day?.CreditsUsed ?? 0, day?.Quality ?? quality,
                 legacy.ContainsKey(date) ? "legacy" : daySources.GetValueOrDefault(date, "live"),
                 legacy.ContainsKey(date)
-                    ? [new UsageDistributionSlice("unknown", "unknown", day!.Tokens.VisibleTotalTokens)]
+                    ? LegacyDistribution(day!.Tokens.VisibleTotalTokens, measured.GetValueOrDefault(date) ?? [])
                     : Distribution(measured.GetValueOrDefault(date) ?? []));
         }).ToArray();
         return new(new(Period(d => d == today), Period(d => d >= today.AddDays(-6) && d <= today),
