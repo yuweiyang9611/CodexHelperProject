@@ -13,7 +13,7 @@ public sealed record AppSettings(
     bool CloseToTray = true,
     bool StartAtLogin = false,
     bool NotificationsEnabled = true,
-    bool QuotaForecastAlertsEnabled = true,
+    bool QuotaForecastAlertsEnabled = false,
     int FiveHourAlertPercent = 20,
     int SevenDayAlertPercent = 20,
     int AutoRefreshMinutes = 5,
@@ -38,10 +38,10 @@ public sealed record AppSettings(
     bool IncludePrereleaseUpdates = false,
     bool AutoInstallUpdates = true,
     double MonthlyAmountAlert = 0d,
-    double MinimumRateCoverageAlertPercent = 80d,
+    double MinimumRateCoverageAlertPercent = 0d,
     string GlobalHotKey = "Ctrl+U",
     string StatusStripQuotaMode = "remaining",
-    bool StatusStripShowTodayTokens = true,
+    bool StatusStripShowTodayTokens = false,
     IReadOnlyList<ModelCreditRate>? CustomModelRates = null,
     bool IsRateCatalogPinned = false,
     string? PinnedRateCatalogVersion = null,
@@ -66,6 +66,10 @@ public sealed record AppSettings(
         CodexExecutable = NormalizePath(CodexExecutable),
         DefaultWorkspace = NormalizePath(DefaultWorkspace),
         Theme = Theme?.ToLowerInvariant() is "light" or "system" ? Theme.ToLowerInvariant() : "dark",
+        // Retired presentation options remain readable in old settings/backup files.
+        // They must not revive the desktop replica or task/token widgets on upgrade.
+        DesktopMode = false,
+        StatusStripShowTodayTokens = false,
         FiveHourAlertPercent = Math.Clamp(FiveHourAlertPercent, 1, 99),
         SevenDayAlertPercent = Math.Clamp(SevenDayAlertPercent, 1, 99),
         AutoRefreshMinutes = Math.Clamp(AutoRefreshMinutes, 1, 60),
@@ -83,12 +87,10 @@ public sealed record AppSettings(
             ? 0d
             : Math.Clamp(MonthlyAmountAlert, 0d, 1_000_000_000d),
         MinimumRateCoverageAlertPercent = !double.IsFinite(MinimumRateCoverageAlertPercent)
-            ? 80d
+            ? 0d
             : Math.Clamp(MinimumRateCoverageAlertPercent, 0d, 100d),
         GlobalHotKey = HotKeyGesture.Normalize(GlobalHotKey),
-        StatusStripQuotaMode = string.Equals(StatusStripQuotaMode, "used", StringComparison.OrdinalIgnoreCase)
-            ? "used"
-            : "remaining",
+        StatusStripQuotaMode = "remaining",
         CustomModelRates = NormalizeCustomRates(CustomModelRates, HasUsablePinnedRateCatalog()),
         IsRateCatalogPinned = HasUsablePinnedRateCatalog(),
         PinnedRateCatalogVersion = HasUsablePinnedRateCatalog()

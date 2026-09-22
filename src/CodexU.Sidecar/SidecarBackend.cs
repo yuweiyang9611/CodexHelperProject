@@ -209,10 +209,7 @@ public sealed class SidecarBackend : IDisposable
             settings.Theme,
             settings.StatusStripEnabled,
             settings.StatusStripPositionLocked,
-            settings.DesktopMode,
-            settings.StatusStripShowTodayTokens,
             settings.StatusStripQuotaMode,
-            todayAmount = (snapshot?.Tokens.Today.CreditsUsed ?? 0) * settings.AmountPerThousandCredits / 1000
         });
     }
 

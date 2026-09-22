@@ -5,6 +5,14 @@ namespace CodexU.Sidecar.Tests;
 public sealed class SidecarOptionsTests
 {
     [Fact]
+    public void DesktopReplicaIsNotAdvertisedByAnyHost()
+    {
+        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("windows", true));
+        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("linux", true));
+        Assert.Contains(HostCapabilityNames.StatusStripControl, SidecarOptions.ResolveHostCapabilities("windows", true));
+    }
+
+    [Fact]
     public void Parse_EnablesNativeNotificationsOnlyForTheExplicitHostSignal()
     {
         var dataDirectory = Path.Combine(

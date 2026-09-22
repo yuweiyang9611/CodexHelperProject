@@ -17,6 +17,12 @@ public interface IDashboardService
     Task<DashboardSnapshot> LoadAsync(
         AgentRuntime runtime = AgentRuntime.Codex,
         CancellationToken cancellationToken = default);
+
+    async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request, CancellationToken cancellationToken = default)
+    {
+        var snapshot = await LoadAsync(request.Runtime, cancellationToken);
+        return UsageAnalysisQuery.Execute(snapshot.AnalysisData, request, snapshot.Diagnostics);
+    }
 }
 
 public interface IUpdateService

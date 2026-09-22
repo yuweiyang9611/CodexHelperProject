@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { currencyAmount } from '../format'
+import { readPreference, writePreference } from '../preferences'
 import {
   builtInModelNames as builtInModelList,
   newestBuiltInRateFor,
@@ -13,6 +14,8 @@ import type { DashboardSnapshot, ModelCreditRate } from '../types'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
 const store = useDashboardStore()
+const showSubscriptionComparison = ref(readPreference('subscriptionComparison') === 'true')
+watch(showSubscriptionComparison, value => writePreference('subscriptionComparison', String(value)))
 const suggestedSubscriptionAmount = computed(() =>
   props.snapshot.account?.suggestedMonthlySubscriptionAmount ?? null)
 // Only the runtime on screen can be auto-priced right now, so the hint says which of
@@ -43,13 +46,11 @@ const rateEntryLimit = computed(() => isPinnedRateCatalog.value ? 1000 : 200)
 const settingsBusy = computed(() => store.isRunningLocalOperation || store.isUpdatingSettings)
 const supportsNativeNotifications = computed(() => store.hasHostCapability(HOST_CAPABILITY.nativeNotifications))
 const supportsStatusStrip = computed(() => store.hasHostCapability(HOST_CAPABILITY.statusStripControl))
-const supportsDesktopMode = computed(() => store.hasHostCapability(HOST_CAPABILITY.desktopMode))
 const supportsStartupRegistration = computed(() => store.hasHostCapability(HOST_CAPABILITY.startupRegistration))
 const supportsTray = computed(() => store.hasHostCapability(HOST_CAPABILITY.tray))
 const supportsGlobalHotKey = computed(() => store.hasHostCapability(HOST_CAPABILITY.globalHotKey))
 const unavailableDesktopCapabilities = computed(() => [
   !supportsStatusStrip.value ? '顶部状态条' : null,
-  !supportsDesktopMode.value ? '桌面底层模式' : null,
   !supportsStartupRegistration.value ? '开机自动启动' : null,
   !supportsTray.value ? '系统托盘' : null,
   !supportsGlobalHotKey.value ? '全局快捷键' : null,
@@ -220,8 +221,10 @@ function removeCustomRate(index: number) {
         <button :disabled="settingsBusy || store.settingsDirty" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('data.restore')">恢复备份</button>
         <button :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.export')">生成脱敏诊断包</button>
         <button class="warning" :disabled="settingsBusy" @click="store.runLocalOperation('diagnostics.rebuildIndex')">安全重建索引</button>
+        <button class="warning" :disabled="settingsBusy || store.settingsDirty" @click="store.runLocalOperation('data.clearHistory')">清理已留存历史</button>
       </div>
-      <p class="setting-hint">备份包含设置与每日用量历史，兼容旧版待办数据，并带 SHA-256 完整性校验；恢复前会再次确认。聚合报表不包含正文、任务标题、账户邮箱和完整项目路径。</p>
+      <p class="setting-hint">备份包含设置与已留存用量历史，并带 SHA-256 完整性校验；恢复前会再次确认。聚合报表导出当前工具的全部历史，按用量日期与当前费率核算，旧估值单列；不包含正文、会话标题、账户邮箱和完整项目路径。</p>
+      <p class="setting-hint">历史长期保存在本机，安全重建索引不会清空历史。清理会删除 Codex 与 Claude Code 的已留存统计，不删除原始日志和设置；仍存在的日志在下次刷新后会重新计入。清理前建议备份，并将在确认后执行。</p>
     </article>
 
     <article v-if="store.settingsDraft" class="inner-card settings-card" aria-labelledby="settings-title">
@@ -243,7 +246,6 @@ function removeCustomRate(index: number) {
             <label>界面缩放 %<input v-model.number="store.settingsDraft.uiScalePercent" type="number" min="90" max="140" step="5" /><small class="setting-hint">只使用你选择的 90%–140%；窗口变窄时界面会自动重排。</small></label>
           </div>
           <div class="setting-checks">
-            <label><input v-model="store.settingsDraft.showSubagents" type="checkbox" />显示子代理任务</label>
             <label><input v-model="store.settingsDraft.checkForUpdates" type="checkbox" />每天自动检查更新</label>
             <label v-if="store.updateState?.supported"><input v-model="store.settingsDraft.autoInstallUpdates" type="checkbox" />自动下载并在退出时安装更新</label>
             <label><input v-model="store.settingsDraft.includePrereleaseUpdates" type="checkbox" />接收预发布版本</label>
@@ -265,7 +267,7 @@ function removeCustomRate(index: number) {
 
         <fieldset class="settings-group">
           <legend>通知与额度</legend>
-          <p>选择需要提醒的额度风险；金额填 0 可关闭对应提醒。</p>
+          <p>默认只提醒额度不足与额度刷新。耗尽预测和金额阈值可手动开启；金额和费率覆盖阈值填 0 表示关闭。缺少费率会在金额模块提示。</p>
           <p v-if="!supportsNativeNotifications" id="native-notifications-capability-note" class="capability-unavailable">
             当前宿主尚未接入系统通知；下列阈值与开关会保留，但暂时不会触发提醒。
           </p>
@@ -273,7 +275,7 @@ function removeCustomRate(index: number) {
             <label>5h 提醒阈值 %<input v-model.number="store.settingsDraft.fiveHourAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="1" max="99" /></label>
             <label>7d 提醒阈值 %<input v-model.number="store.settingsDraft.sevenDayAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="1" max="99" /></label>
             <label>本月金额提醒（美元，0 为关闭）<input v-model.number="store.settingsDraft.monthlyAmountAlert" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="0" max="1000000000" step="1" /></label>
-            <label>最低费率覆盖率 %<input v-model.number="store.settingsDraft.minimumRateCoverageAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="0" max="100" step="1" /></label>
+            <label>缺少费率系统提醒阈值 %（0 为关闭）<input v-model.number="store.settingsDraft.minimumRateCoverageAlertPercent" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="number" min="0" max="100" step="1" /></label>
           </div>
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.notificationsEnabled" :disabled="!supportsNativeNotifications" :aria-describedby="!supportsNativeNotifications ? 'native-notifications-capability-note' : undefined" type="checkbox" />启用额度通知</label>
@@ -283,23 +285,19 @@ function removeCustomRate(index: number) {
 
         <fieldset class="settings-group">
           <legend>桌面行为</legend>
-          <p>控制快捷键、开机启动、主窗口和顶部状态条。</p>
+          <p>控制快捷键、开机启动和主窗口；小型额度悬浮条只显示账户额度余量与刷新时间。</p>
           <p v-if="unavailableDesktopCapabilities.length" id="desktop-capability-note" class="capability-unavailable">
             当前宿主暂不支持：{{ unavailableDesktopCapabilities.join('、') }}。对应设置值会保留，但暂不生效。
           </p>
           <div class="settings-grid">
             <label>全局快捷键<select v-model="store.settingsDraft.globalHotKey" :disabled="!supportsGlobalHotKey" :aria-describedby="!supportsGlobalHotKey ? 'desktop-capability-note' : undefined"><option>Ctrl+U</option><option>Ctrl+Shift+U</option><option>Ctrl+Alt+U</option><option>Ctrl+Shift+C</option><option>Ctrl+Alt+C</option></select></label>
-            <label>状态条额度口径<select v-model="store.settingsDraft.statusStripQuotaMode" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined"><option value="remaining">显示剩余</option><option value="used">显示已用</option></select></label>
           </div>
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.statusStripEnabled" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />启用顶部状态条</label>
-            <label><input v-model="store.settingsDraft.statusStripShowTodayTokens" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />状态条显示今日 Token</label>
             <label><input v-model="store.settingsDraft.statusStripPositionLocked" :disabled="!supportsStatusStrip" :aria-describedby="!supportsStatusStrip ? 'desktop-capability-note' : undefined" type="checkbox" />锁定状态条位置</label>
             <label><input v-model="store.settingsDraft.startAtLogin" :disabled="!supportsStartupRegistration" :aria-describedby="!supportsStartupRegistration ? 'desktop-capability-note' : undefined" type="checkbox" />开机自动启动</label>
-            <label><input v-model="store.settingsDraft.desktopMode" :disabled="!supportsDesktopMode" :aria-describedby="!supportsDesktopMode ? 'desktop-capability-note' : undefined" type="checkbox" />{{ store.hostCapabilities.includes('sidecar') ? '显示独立桌面仪表盘' : '启动后置于桌面底层' }}</label>
             <label><input v-model="store.settingsDraft.closeToTray" :disabled="!supportsTray" :aria-describedby="!supportsTray ? 'desktop-capability-note' : undefined" type="checkbox" />关闭主窗口时隐藏到托盘</label>
           </div>
-          <p v-if="store.desktopState" role="status">桌面仪表盘：{{ store.desktopState.message }}</p>
           <div class="status-strip-control" aria-labelledby="status-strip-control-title">
             <div>
               <strong id="status-strip-control-title">状态条预览与找回</strong>
@@ -325,13 +323,14 @@ function removeCustomRate(index: number) {
           <legend>价格与费率</legend>
           <p>设置订阅价格和 API 等价金额；模型级费率在高级设置中按需维护。</p>
           <div class="settings-grid">
-            <label>每 1,000 点对应金额（美元）<input v-model.number="store.settingsDraft.amountPerThousandCredits" type="number" min="0.01" max="1000000" step="0.01" /><small class="setting-hint">所有等效金额和订阅收益统一使用 US$</small></label>
+            <label>每 1,000 点对应金额（美元）<input v-model.number="store.settingsDraft.amountPerThousandCredits" type="number" min="0.01" max="1000000" step="0.01" /><small class="setting-hint">所有 API 等效金额和订阅月费对比统一使用 US$</small></label>
             <!-- Two fields, not one: the same plan name prices differently per vendor, and
                  Claude's plan is only auto-priceable when the statusline snapshot exists. -->
             <label>Codex 订阅月费（美元，手动备用）<input v-model.number="store.settingsDraft.codexMonthlySubscriptionAmount" type="number" min="0" max="1000000" step="0.01" @input="store.settingsDraft.codexAutoDetectSubscriptionAmount = false" /><small v-if="activeManualHint" class="setting-hint">{{ snapshot.runtime === 'codex' ? activeManualHint : '当前显示的是 Claude Code，此项影响 Codex 视图' }}</small></label>
             <label>Claude Code 订阅月费（美元，手动备用）<input v-model.number="store.settingsDraft.claudeMonthlySubscriptionAmount" type="number" min="0" max="1000000" step="0.01" @input="store.settingsDraft.claudeAutoDetectSubscriptionAmount = false" /><small v-if="activeManualHint" class="setting-hint">{{ snapshot.runtime === 'claudeCode' ? activeManualHint : '当前显示的是 Codex，此项影响 Claude Code 视图' }}</small></label>
           </div>
           <div class="setting-checks">
+            <label><input v-model="showSubscriptionComparison" type="checkbox" />显示订阅月费对比（立即生效）</label>
             <label><input v-model="store.settingsDraft.codexAutoDetectSubscriptionAmount" type="checkbox" />自动推算 Codex 月费</label>
             <label><input v-model="store.settingsDraft.claudeAutoDetectSubscriptionAmount" type="checkbox" />自动推算 Claude 月费</label>
           </div>

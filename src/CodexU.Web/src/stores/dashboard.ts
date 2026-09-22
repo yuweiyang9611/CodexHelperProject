@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { host } from '../host'
+import { preferredRuntime, writePreference } from '../preferences'
 import { HOST_CAPABILITY, type HostCapabilityName } from '../hostCapabilities'
 import type { AgentRuntime, AppSettings, CombinedSnapshots, DashboardSnapshot, InitializeResult, LocalOperationResult, RateCatalogSnapshot, StatusStripControlState, UpdateCheckResult, UpdateState } from '../types'
 
@@ -148,6 +149,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         const changed = payload as DashboardSnapshot
         if (pendingRuntime !== null && changed.runtime !== pendingRuntime) return
         snapshotOperationGeneration += 1
+        if (pendingRuntime !== null) writePreference('runtime', changed.runtime)
         pendingRuntime = null
         snapshot.value = changed
         isRefreshing.value = false
@@ -229,7 +231,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       failures.push(`状态条状态读取失败：${errorMessage(statusStripResult.reason)}`)
     }
 
-    error.value = failures.length ? failures.join('；') : null
+    const remembered = preferredRuntime()
+    if (remembered && snapshot.value && remembered !== runtime.value) await selectRuntime(remembered)
+    error.value = failures.length ? failures.join('；') : error.value
     isLoading.value = false
   }
 
@@ -448,7 +452,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     error.value = null
     try {
       const selected = await host.request<DashboardSnapshot>('runtime.select', { runtime: nextRuntime })
-      if (isLatestSnapshotOperation(generation)) snapshot.value = selected
+      if (isLatestSnapshotOperation(generation)) {
+        snapshot.value = selected
+        writePreference('runtime', selected.runtime)
+      }
     } catch (reason) {
       if (isLatestSnapshotOperation(generation)) error.value = errorMessage(reason)
     } finally {

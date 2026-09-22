@@ -105,6 +105,77 @@ public sealed class LocalDataManagementService(
         return new LocalOperationResult(true, $"聚合报表已导出：{path}", path);
     }
 
+    /// <summary>Export the whole-history query's aggregate views without source identifiers or private metadata.</summary>
+    public async Task<LocalOperationResult> ExportUsageAnalysisAsync(
+        UsageAnalysisResult analysis,
+        string path,
+        string format,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(analysis);
+        if (analysis.From is not null || analysis.To is not null)
+            throw new ArgumentException("导出需要当前工具的全部历史查询。", nameof(analysis));
+        if (!string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("仅支持 CSV 或 JSON 导出。", nameof(format));
+        var csv = string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase);
+        path = EnsureAllowedDestination(path, csv ? ".csv" : ".json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporaryPath = CreateTemporaryPath(path);
+        try
+        {
+            if (csv)
+            {
+                var historical = analysis.LegacyEstimates.ToDictionary(e => e.Date);
+                var builder = new StringBuilder("date,tokens,credits_used,unrated_tokens,unattributed_tokens,legacy_whole_day_estimate_not_additive\r\n");
+                foreach (var day in analysis.Days)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    builder.Append(day.Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                        .Append(day.Totals.Tokens).Append(',')
+                        .Append(day.Totals.CreditsUsed?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                        .Append(day.Totals.UnratedTokens).Append(',')
+                        .Append(day.Totals.UnattributedTokens).Append(',')
+                        .Append(historical.TryGetValue(day.Date, out var estimate)
+                            ? estimate.CreditsUsed.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) : "")
+                        .Append("\r\n");
+                }
+                await File.WriteAllTextAsync(temporaryPath, builder.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken);
+            }
+            else
+            {
+                var export = new
+                {
+                    schemaVersion = 2,
+                    exportedAt = DateTimeOffset.Now,
+                    scope = "当前工具全部本机历史",
+                    runtime = analysis.Runtime == AgentRuntime.Codex ? "codex" : "claudeCode",
+                    analysis.AvailableFrom,
+                    analysis.AvailableTo,
+                    analysis.Totals,
+                    dailyUsage = analysis.Days,
+                    models = analysis.Models.Select(model => new { model = model.Id, model.Totals }),
+                    features = analysis.Features.Select(feature => new { feature = feature.Id, feature.Totals }),
+                    projects = analysis.Projects.Select(project => new { name = project.Label, project.Totals }),
+                    analysis.LegacyEstimates,
+                    amounts = "creditsUsed 仅含当前可核算金额，缺失为 null；legacyEstimates 是包含已恢复明细的旧整日估值，仅供历史参考，不与明细金额相加。",
+                    privacy = "不包含对话正文、会话标题、会话标识、完整项目路径、账户邮箱或认证数据"
+                };
+                await using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await JsonSerializer.SerializeAsync(stream, export, JsonOptions, cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureDestinationRemainsAllowed(path);
+            File.Move(temporaryPath, path, overwrite: true);
+            EnsureDestinationRemainsAllowed(path);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporaryPath);
+        }
+        return new LocalOperationResult(true, $"当前工具全部本机历史报表已导出：{path}。旧整日估值仅供参考，不与明细金额相加。", path);
+    }
+
     public async Task<LocalOperationResult> BackupAsync(
         AppSettings settings,
         string path,
@@ -427,6 +498,45 @@ public sealed class LocalDataManagementService(
             return new LocalOperationResult(true, "旧索引已安全备份；下一次刷新将完整重建。", backup);
         }
         finally { _dataOperationGate.Release(); }
+    }
+
+    public const string ClearHistoryWarning = "将清除 Codex 和 Claude Code 的本机留存用量历史，包括已删除原始日志的历史。此操作不会删除原始日志或设置；仍存在的日志会在刷新时重新计入。建议先导出备份。是否继续？";
+
+    public async Task<LocalOperationResult> ClearUsageHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        await _dataOperationGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Use the existing durable checkpoint so interruption during a
+            // multi-file clear recovers the previous generation on next start.
+            var journal = await LocalRestoreJournal.PrepareAsync(_dataDirectory, true, cancellationToken);
+            try
+            {
+                foreach (var relativePath in HistoryBackupPaths)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var path = Path.Combine(_dataDirectory, relativePath);
+                    if (Directory.Exists(Path.GetDirectoryName(path))) File.Delete(path);
+                }
+                journal.Commit();
+            }
+            catch (Exception exception)
+            {
+                try { journal.Rollback(); }
+                catch (Exception rollbackException)
+                {
+                    throw new LocalDataRestoreRollbackException("历史清理未完成，自动回滚失败；请重启恢复历史。",
+                        new AggregateException(exception, rollbackException));
+                }
+                throw;
+            }
+            return new(true, "已清除本机留存用量历史。原始日志和设置未删除，仍存在的日志将在刷新时重新计入。");
+        }
+        finally
+        {
+            UsageReadContext.Invalidate(_dataDirectory);
+            _dataOperationGate.Release();
+        }
     }
 
     private string EnsureAllowedDestination(string path, string extension)

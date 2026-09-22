@@ -310,6 +310,49 @@ public sealed class QuotaNotificationProjectorTests
 
     private static QuotaNotificationProjector Projector() => new(() => Now);
 
+    [Fact]
+    public void MonthlyAmount_UsesConfirmedAnalysisInsteadOfOverlappingLegacyEstimate()
+    {
+        var month = new TokenPeriod(1_000, TokenBreakdown.Zero, 1_000, 0, [], DataQuality.Approximate);
+        var today = DateOnly.FromDateTime(Now.Date);
+        var snapshot = Snapshot(month: month) with
+        {
+            AnalysisData = new([AnalysisEntry(today, 10)], [new(today, 1_000, 1_000, "旧整日估值")])
+        };
+        var settings = Settings() with { MonthlyAmountAlert = 20, AmountPerThousandCredits = 1_000 };
+        Assert.Empty(Projector().Project(snapshot, settings));
+        Assert.Same(month, snapshot.Tokens.Month);
+        // An explicitly empty analysis is authoritative too; it is not a reason
+        // to fall back to the older saved estimate.
+        Assert.Empty(Projector().Project(snapshot with { AnalysisData = new([], []) }, settings));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MonthlyAmount_SumsCurrentRepricedEntries_AndLabelsOnlyCurrentUnknownContributions(bool currentUnknown)
+    {
+        var today = DateOnly.FromDateTime(Now.Date);
+        var unknown = AnalysisEntry(currentUnknown ? today : today.AddMonths(-1), null);
+        var snapshot = Snapshot() with
+        {
+            AnalysisData = new([
+                AnalysisEntry(today.AddDays(-1), 12), AnalysisEntry(today, 13),
+                AnalysisEntry(today.AddMonths(-1), 1_000), AnalysisEntry(today.AddMonths(1), 1_000),
+                AnalysisEntry(today.AddDays(1), 1_000), unknown],
+                [new(today, 1_000, 9_999, "旧整日估值")])
+        };
+        var settings = Settings() with { MonthlyAmountAlert = 20, AmountPerThousandCredits = 1_000 };
+        var notification = Assert.Single(Projector().Project(snapshot, settings));
+        Assert.StartsWith("monthly-amount:", notification.Id);
+        Assert.Contains($"US${25d:N2}", notification.Body);
+        Assert.Equal(currentUnknown, notification.Body.Contains("已核算部分", StringComparison.Ordinal));
+    }
+
+    private static UsageAnalysisEntry AnalysisEntry(DateOnly date, double? credits) =>
+        new(date, credits is null ? null : "session", null, null, null, "model", "tasks", 100,
+            credits is null ? null : new(100, 0, 0, 0, 100), credits, null, credits is null ? "legacy" : "retained");
+
     private static AppSettings Settings() => new AppSettings(
         NotificationsEnabled: true,
         QuotaForecastAlertsEnabled: true,

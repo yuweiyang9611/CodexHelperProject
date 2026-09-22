@@ -1,5 +1,82 @@
 export type AgentRuntime = 'codex' | 'claudeCode'
 export type DataQuality = 'detailed' | 'partial' | 'approximate' | 'unavailable'
+export interface UsageAnalysisRequest {
+  runtime: AgentRuntime
+  from?: string | null
+  to?: string | null
+  model?: string | null
+  project?: string | null
+  page: number
+  pageSize: number
+}
+export interface UsageAnalysisTotals {
+  availableBreakdownFields?: string[] | null
+  tokens: number
+  breakdown: TokenBreakdown
+  breakdownTokens: number
+  creditsUsed: number | null
+  ratedTokens: number
+  unratedTokens: number
+  unattributedTokens: number
+}
+export interface UsageAnalysisEntry {
+  availableBreakdownFields?: string[] | null
+  date: string
+  sessionId: string | null
+  parentSessionId: string | null
+  title: string | null
+  project: string | null
+  model: string
+  feature: string
+  tokens: number
+  breakdown: TokenBreakdown | null
+  creditsUsed: number | null
+  rate: ModelCreditRate | null
+  source: string
+  explanation?: string | null
+}
+export interface UsageAnalysisGroup { id: string, label: string, totals: UsageAnalysisTotals }
+export interface UsageSessionMember {
+  id: string
+  parentSessionId: string | null
+  title: string | null
+  project: string | null
+  from: string
+  to: string
+  totals: UsageAnalysisTotals
+  sources: string[]
+  contributions: UsageAnalysisEntry[]
+}
+export interface UsageSessionGroup {
+  id: string
+  title: string | null
+  from: string
+  to: string
+  totals: UsageAnalysisTotals
+  members: UsageSessionMember[]
+}
+export interface UsageAnalysisResult {
+  runtime: AgentRuntime
+  from: string | null
+  to: string | null
+  availableFrom: string | null
+  availableTo: string | null
+  totals: UsageAnalysisTotals
+  days: { date: string, totals: UsageAnalysisTotals }[]
+  models: UsageAnalysisGroup[]
+  features: UsageAnalysisGroup[]
+  projects: UsageAnalysisGroup[]
+  sessions: UsageSessionGroup[]
+  sessionCount: number
+  page: number
+  pageSize: number
+  unattributed: UsageAnalysisEntry[]
+  legacyEstimates: { date: string, tokens: number, creditsUsed: number, explanation: string }[]
+  availableModels: string[]
+  availableProjects: { id: string, label: string }[]
+  diagnostics: string[]
+  missingRates?: { model: string, date: string, tokens: number }[]
+}
 export type TaskColumnKind = 'active' | 'pending' | 'scheduled' | 'done'
 
 export interface RateLimitWindow {

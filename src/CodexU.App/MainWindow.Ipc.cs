@@ -172,7 +172,6 @@ public partial class MainWindow
                         HostCapabilityNames.StartupRegistration,
                         HostCapabilityNames.NativeNotifications,
                         HostCapabilityNames.StatusStripControl,
-                        HostCapabilityNames.DesktopMode,
                         "localOnly",
                         "updates",
                         "localData",
@@ -197,6 +196,17 @@ public partial class MainWindow
 
             case "usage.getCombined":
                 return await LoadCombinedSnapshotsAsync();
+
+            case "usage.query":
+                var query = request.Payload.Deserialize<UsageAnalysisRequest>(JsonOptions)
+                    ?? throw new ArgumentException("用量筛选条件无效。");
+                await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
+                try
+                {
+                    ThrowIfStateMutationUnavailable();
+                    return await _dashboardService.QueryUsageAsync(query, _lifetimeCancellation.Token);
+                }
+                finally { _refreshGate.Release(); }
 
             case "runtime.select":
                 var runtimeName = request.Payload.TryGetProperty("runtime", out var runtimeValue)
@@ -372,30 +382,30 @@ public partial class MainWindow
                 return new { opened = true };
 
             case "data.exportAggregates":
-                if (_lastSnapshot is null)
-                {
-                    throw new InvalidOperationException("尚未生成可导出的数据快照。");
-                }
                 var exportFormat = request.Payload.TryGetProperty("format", out var formatValue)
                     && string.Equals(formatValue.GetString(), "csv", StringComparison.OrdinalIgnoreCase)
                     ? "csv"
                     : "json";
                 var exportDialog = new SaveFileDialog
                 {
-                    Title = "导出 codexU 聚合统计",
+                    Title = "导出当前工具全部本机历史统计",
                     FileName = $"codexU-{CurrentRuntime}-{DateTimeOffset.Now:yyyyMMdd}.{exportFormat}",
                     DefaultExt = $".{exportFormat}",
                     Filter = exportFormat == "csv" ? "CSV 文件 (*.csv)|*.csv" : "JSON 文件 (*.json)|*.json",
                     AddExtension = true,
                     OverwritePrompt = true
                 };
-                return exportDialog.ShowDialog(this) == true
-                    ? await _dataManagementService.ExportAggregatesAsync(
-                        _lastSnapshot,
-                        exportDialog.FileName,
-                        exportFormat,
-                        _lifetimeCancellation.Token)
-                    : new LocalOperationResult(false, "已取消导出。");
+                if (exportDialog.ShowDialog(this) != true) return new LocalOperationResult(false, "已取消导出。");
+                UsageAnalysisResult exportAnalysis;
+                await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
+                try
+                {
+                    ThrowIfStateMutationUnavailable();
+                    exportAnalysis = await _dashboardService.QueryUsageAsync(new(CurrentRuntime), _lifetimeCancellation.Token);
+                }
+                finally { _refreshGate.Release(); }
+                return await _dataManagementService.ExportUsageAnalysisAsync(exportAnalysis, exportDialog.FileName,
+                    exportFormat, _lifetimeCancellation.Token);
 
             case "data.backup":
                 var backupDialog = new SaveFileDialog
@@ -445,6 +455,28 @@ public partial class MainWindow
                     {
                         Message = restoredState.Message + FormatRefreshWarning(restoreRefreshWarning)
                     };
+
+            case "data.clearHistory":
+                if (WpfMessageBox.Show(this, LocalDataManagementService.ClearHistoryWarning,
+                    "清理本机用量历史", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    return new LocalOperationResult(false, "已取消清理历史。");
+                LocalOperationResult cleared;
+                await _stateMutationGate.WaitAsync(_lifetimeCancellation.Token);
+                try
+                {
+                    ThrowIfStateMutationUnavailable();
+                    await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
+                    try { cleared = await _dataManagementService.ClearUsageHistoryAsync(_lifetimeCancellation.Token); }
+                    catch (LocalDataRestoreRollbackException)
+                    {
+                        EnterFailedRestoreState();
+                        throw;
+                    }
+                    finally { _refreshGate.Release(); }
+                }
+                finally { _stateMutationGate.Release(); }
+                var clearRefreshWarning = await TryRefreshAfterCommittedChangeAsync();
+                return clearRefreshWarning is null ? cleared : cleared with { Message = cleared.Message + " " + clearRefreshWarning };
 
             case "diagnostics.export":
                 var diagnosticDialog = new SaveFileDialog

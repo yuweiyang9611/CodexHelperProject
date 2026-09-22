@@ -197,16 +197,24 @@ public sealed class QuotaNotificationProjector
             return;
         }
 
-        var amount = UsageCredits.ToAmount(
-            snapshot.Tokens.Month.CreditsUsed,
-            settings.AmountPerThousandCredits);
+        var now = _clock();
+        var today = DateOnly.FromDateTime(now.Date);
+        var entries = snapshot.AnalysisData?.Entries
+            .Where(entry => entry.Date.Year == today.Year && entry.Date.Month == today.Month && entry.Date <= today)
+            .ToArray();
+        // Analysis entries are disjoint and priced at their usage date. The old
+        // month snapshot may contain a whole-day estimate that overlaps them.
+        var credits = entries?.Sum(entry => entry.CreditsUsed ?? 0) ?? snapshot.Tokens.Month.CreditsUsed;
+        var partial = entries?.Any(entry => entry.Tokens > 0 && entry.CreditsUsed is null)
+            ?? snapshot.Tokens.Month.UnratedTokens > 0;
+        var amount = UsageCredits.ToAmount(credits, settings.AmountPerThousandCredits);
         if (amount < settings.MonthlyAmountAlert)
         {
             return;
         }
 
         var key = FormattableString.Invariant(
-            $"monthly-amount:{snapshot.Runtime}:{_clock():yyyy-MM}:{settings.MonthlyAmountAlert:0.##}");
+            $"monthly-amount:{snapshot.Runtime}:{now:yyyy-MM}:{settings.MonthlyAmountAlert:0.##}");
         if (!_monthlyKeys.Add(key))
         {
             return;
@@ -216,7 +224,7 @@ public sealed class QuotaNotificationProjector
             "monthly-amount",
             key,
             "codexU 本月金额提醒",
-            $"{snapshot.Runtime} 本月 API 等效金额已达到 US${amount:N2}，超过提醒值 US${settings.MonthlyAmountAlert:N2}。"));
+            $"{snapshot.Runtime} 本月 API 等效金额{(partial ? "（已核算部分）" : "")}已达到 US${amount:N2}，超过提醒值 US${settings.MonthlyAmountAlert:N2}。"));
     }
 
     private void AddRateCoverage(

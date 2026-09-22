@@ -13,7 +13,9 @@ public enum StatusStripVisualState
 public sealed record StatusStripQuotaPresentation(
     string Text,
     double? ProgressPercent,
-    string AccessibleText)
+    string AccessibleText,
+    string ResetText = "刷新时间未知",
+    DateTimeOffset? ResetsAt = null)
 {
     public bool IsAvailable => ProgressPercent is not null;
 }
@@ -51,7 +53,6 @@ public sealed record StatusStripPresentation(
 
 public sealed class StatusStripPresenter
 {
-    private AppSettings _settings;
     private DashboardSnapshot? _snapshot;
     private int? _openTodoCount;
     private StatusStripVisualState _refreshState = StatusStripVisualState.Pending;
@@ -62,7 +63,6 @@ public sealed class StatusStripPresenter
     public StatusStripPresenter(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        _settings = settings;
     }
 
     public DashboardSnapshot? Snapshot => _snapshot;
@@ -72,7 +72,6 @@ public sealed class StatusStripPresenter
     public StatusStripPresentation ApplySettings(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        _settings = settings;
         return Build();
     }
 
@@ -139,14 +138,10 @@ public sealed class StatusStripPresenter
 
     private StatusStripPresentation Build()
     {
-        var showUsed = string.Equals(
-            _settings.StatusStripQuotaMode,
-            "used",
-            StringComparison.OrdinalIgnoreCase);
-        var primaryLabel = showUsed ? "5h 已用  " : "5h 剩余  ";
-        var secondaryLabel = showUsed ? "7d 已用  " : "7d 剩余  ";
-        var primaryDetailLabel = showUsed ? "5 小时已用额度" : "5 小时剩余额度";
-        var secondaryDetailLabel = showUsed ? "7 天已用额度" : "7 天剩余额度";
+        const string primaryLabel = "5h 剩余  ";
+        const string secondaryLabel = "7d 剩余  ";
+        const string primaryDetailLabel = "5 小时剩余额度";
+        const string secondaryDetailLabel = "7 天剩余额度";
 
         if (_snapshot is null)
         {
@@ -166,7 +161,7 @@ public sealed class StatusStripPresenter
             };
             return new StatusStripPresentation(
                 false,
-                _settings.StatusStripShowTodayTokens,
+                false,
                 "Codex 使用状态",
                 primaryLabel,
                 secondaryLabel,
@@ -186,20 +181,15 @@ public sealed class StatusStripPresenter
                 pendingState != StatusStripVisualState.Refreshing);
         }
 
-        var primary = FormatQuota(_snapshot.PrimaryQuota, showUsed, primaryDetailLabel);
-        var secondary = FormatQuota(_snapshot.SecondaryQuota, showUsed, secondaryDetailLabel);
+        var primary = FormatQuota(_snapshot.PrimaryQuota, primaryDetailLabel);
+        var secondary = FormatQuota(_snapshot.SecondaryQuota, secondaryDetailLabel);
         var today = FormatToken("今日", _snapshot.Tokens.Today);
         var sevenDays = FormatToken("近 7 天", _snapshot.Tokens.SevenDays);
         var lifetime = FormatToken("累计", _snapshot.Tokens.Lifetime);
-        var snapshotHealth = BuildSnapshotHealth(
-            primary,
-            secondary,
-            today,
-            sevenDays,
-            lifetime);
+        var snapshotHealth = BuildSnapshotHealth(primary, secondary);
         var visualState = snapshotHealth.State;
         var statusText = snapshotHealth.Text;
-        var statusToolTip = AppendDiagnostic(snapshotHealth.ToolTip, _snapshot.Diagnostics);
+        var statusToolTip = snapshotHealth.ToolTip;
 
         if (_refreshState == StatusStripVisualState.Refreshing)
         {
@@ -216,7 +206,7 @@ public sealed class StatusStripPresenter
 
         return new StatusStripPresentation(
             true,
-            _settings.StatusStripShowTodayTokens,
+            false,
             _snapshot.Runtime == AgentRuntime.ClaudeCode
                 ? "Claude Code 使用状态"
                 : "Codex 使用状态",
@@ -240,80 +230,25 @@ public sealed class StatusStripPresenter
 
     private SnapshotHealth BuildSnapshotHealth(
         StatusStripQuotaPresentation primary,
-        StatusStripQuotaPresentation secondary,
-        StatusStripTokenPresentation today,
-        StatusStripTokenPresentation sevenDays,
-        StatusStripTokenPresentation lifetime)
+        StatusStripQuotaPresentation secondary)
     {
         var unavailable = new List<string>();
-        if (!primary.IsAvailable)
-        {
-            unavailable.Add("5 小时额度");
-        }
-        if (!secondary.IsAvailable)
-        {
-            unavailable.Add("7 天额度");
-        }
-        if (!today.IsAvailable)
-        {
-            unavailable.Add("今日 Token");
-        }
-        if (!sevenDays.IsAvailable)
-        {
-            unavailable.Add("近 7 天 Token");
-        }
-        if (!lifetime.IsAvailable)
-        {
-            unavailable.Add("累计 Token");
-        }
-
+        if (!primary.IsAvailable) unavailable.Add("5 小时额度");
+        if (!secondary.IsAvailable) unavailable.Add("7 天额度");
         var refreshedAt = _snapshot!.RefreshedAt.ToLocalTime();
-        if (unavailable.Count > 0)
-        {
-            var detail = $"部分数据不可用：{string.Join("、", unavailable)}";
-            return new SnapshotHealth(
+        return unavailable.Count > 0
+            ? new SnapshotHealth(
                 StatusStripVisualState.Unavailable,
-                $"更新于 {refreshedAt:HH:mm} · 部分数据不可用",
-                detail);
-        }
-
-        var degraded = new List<string>();
-        AddDegradedLabel(degraded, "今日 Token", today);
-        AddDegradedLabel(degraded, "近 7 天 Token", sevenDays);
-        AddDegradedLabel(degraded, "累计 Token", lifetime);
-        if (degraded.Count > 0)
-        {
-            var detail = $"降级统计：{string.Join("、", degraded)}";
-            return new SnapshotHealth(
-                StatusStripVisualState.Degraded,
-                $"更新于 {refreshedAt:HH:mm} · 部分统计为降级口径",
-                detail);
-        }
-
-        return new SnapshotHealth(
-            StatusStripVisualState.Healthy,
-            $"更新于 {refreshedAt:HH:mm} · Token 为本机原始统计",
-            "本机原始数据读取正常。");
-    }
-
-    private static void AddDegradedLabel(
-        ICollection<string> labels,
-        string label,
-        StatusStripTokenPresentation token)
-    {
-        if (token.Quality == DataQuality.Partial)
-        {
-            labels.Add($"{label}（部分）");
-        }
-        else if (token.Quality == DataQuality.Approximate)
-        {
-            labels.Add($"{label}（估算）");
-        }
+                $"更新于 {refreshedAt:HH:mm} · 部分额度不可用",
+                $"额度来源未提供：{string.Join("、", unavailable)}。请在主界面查看数据来源状态。")
+            : new SnapshotHealth(
+                StatusStripVisualState.Healthy,
+                $"额度更新于 {refreshedAt:HH:mm}",
+                "账户额度独立于本机用量统计与筛选。");
     }
 
     private static StatusStripQuotaPresentation FormatQuota(
         RateLimitWindow? quota,
-        bool showUsed,
         string label)
     {
         if (quota is null)
@@ -326,7 +261,7 @@ public sealed class StatusStripPresenter
             return UnavailableQuota(label);
         }
 
-        var rawValue = showUsed ? quota.UsedPercent : quota.RemainingPercent;
+        var rawValue = quota.RemainingPercent;
         if (!double.IsFinite(rawValue))
         {
             return UnavailableQuota(label);
@@ -334,7 +269,10 @@ public sealed class StatusStripPresenter
 
         var value = Math.Clamp(rawValue, 0d, 100d);
         var text = $"{Math.Round(value)}%";
-        return new StatusStripQuotaPresentation(text, value, $"{label} {text}");
+        var resetText = quota.ResetsAt is { } resetsAt
+            ? $"{resetsAt.ToLocalTime():M/d HH:mm} 刷新"
+            : "刷新时间未知";
+        return new StatusStripQuotaPresentation(text, value, $"{label} {text}，{resetText}", resetText, quota.ResetsAt);
     }
 
     private static StatusStripQuotaPresentation UnavailableQuota(string label) =>
@@ -364,23 +302,6 @@ public sealed class StatusStripPresenter
 
     private static string FormatTodoAccessibleText(int? openTodoCount) =>
         openTodoCount is null ? "未完成待办数量未知" : $"未完成待办 {openTodoCount.Value}";
-
-    private static string AppendDiagnostic(string message, IReadOnlyList<string> diagnostics)
-    {
-        var diagnostic = diagnostics.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item));
-        if (string.IsNullOrWhiteSpace(diagnostic))
-        {
-            return message;
-        }
-
-        var normalized = diagnostic.Trim();
-        if (normalized.Length > 240)
-        {
-            normalized = normalized[..240] + "…";
-        }
-
-        return $"{message} 诊断：{normalized}";
-    }
 
     private static string GlyphFor(StatusStripVisualState state) => state switch
     {

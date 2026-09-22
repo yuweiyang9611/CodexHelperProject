@@ -10,7 +10,8 @@ public sealed partial class ClaudeCodeUsageReader
     internal Action<ReadMetrics>? MetricsObserved { get; init; }
     private sealed record ClaudeEvent(string? Workspace, DateTimeOffset Timestamp, string? Branch,
         string? Model, TokenBreakdown? Tokens, bool Throttled,
-        IReadOnlyDictionary<string, int> Tools, IReadOnlyDictionary<string, int> Skills);
+        IReadOnlyDictionary<string, int> Tools, IReadOnlyDictionary<string, int> Skills,
+        UsageBreakdownFields? AvailableFields = null);
     private sealed record ClaudeSource(IReadOnlyList<ClaudeEvent> Events, int SkippedLines, long Offset, string? Identity = null);
     private sealed record ClaudeCacheEntry(long Length, long Modified, string Boundary, ClaudeSource Source, string FileIdentity);
     private sealed record ClaudeIndex(int Version, string Zone, Dictionary<string, ClaudeCacheEntry> Entries);
@@ -26,7 +27,8 @@ public sealed partial class ClaudeCodeUsageReader
             {
                 Tokens = g.First().Tokens is null ? null : g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens!)),
                 Tools = g.SelectMany(e => e.Tools).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
-                Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value))
+                Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
+                AvailableFields = g.Aggregate(UsageBreakdownFields.All, (fields, e) => fields & e.AvailableFields.GetValueOrDefault())
             }, g.Count())).ToArray());
     private static readonly JsonSerializerOptions IndexJson = new(JsonSerializerDefaults.Web);
 
@@ -68,7 +70,8 @@ public sealed partial class ClaudeCodeUsageReader
                 var hasUsage = TryReadUsage(root, message, out var model, out var tokens);
                 events.Add(new(WorkspaceScope.Normalize(ReadString(root, "cwd") ?? ReadString(root, "projectPath")),
                     ReadTimestamp(root) ?? new DateTimeOffset(File.GetLastWriteTimeUtc(file)), ReadString(root, "gitBranch"),
-                    hasUsage ? model : null, hasUsage ? tokens : null, ReadLong(root, "apiErrorStatus") == 429, tools, skills));
+                    hasUsage ? model : null, hasUsage ? tokens : null, ReadLong(root, "apiErrorStatus") == 429, tools, skills,
+                    ReadAvailableFields(root, message)));
             }
             catch (JsonException) { skipped++; }
         }
@@ -96,8 +99,8 @@ public sealed partial class ClaudeCodeUsageReader
         next.Offset >= previous.Offset
         && (previous.Identity is null || previous.Identity == next.Identity)
         && next.Events.Count >= previous.Events.Count
-        && previous.Events.Select(e => JsonSerializer.Serialize(e, IndexJson))
-            .SequenceEqual(next.Events.Take(previous.Events.Count).Select(e => JsonSerializer.Serialize(e, IndexJson)));
+        && previous.Events.Select(e => JsonSerializer.Serialize(e with { AvailableFields = null }, IndexJson))
+            .SequenceEqual(next.Events.Take(previous.Events.Count).Select(e => JsonSerializer.Serialize(e with { AvailableFields = null }, IndexJson)));
 
     private async Task<(IReadOnlyDictionary<string, ClaudeSource> Sources, IndexStatus Index, int Conflicts, int Failures, int Retained, LedgerRead<ClaudeSource>? History)> ReadSourcesAsync(
         List<string> diagnostics, CancellationToken ct)
@@ -128,7 +131,7 @@ public sealed partial class ClaudeCodeUsageReader
             try
             {
                 var index = JsonSerializer.Deserialize<ClaudeIndex>(await File.ReadAllTextAsync(indexPath, ct), IndexJson);
-                if (index is { Version: 3 } && index.Zone == TimeZoneInfo.Local.Id && index.Entries is not null)
+                if (index is { Version: 4 } && index.Zone == TimeZoneInfo.Local.Id && index.Entries is not null)
                     cached = new(index.Entries.Where(p => p.Value?.Source?.Events is not null
                         && p.Value.Source.Offset >= 0 && p.Value.Source.Offset <= p.Value.Length
                         && p.Value.Source.Events.All(e => e is not null && e.Tools is not null && e.Skills is not null)), StringComparer.OrdinalIgnoreCase);
@@ -183,7 +186,7 @@ public sealed partial class ClaudeCodeUsageReader
                 var temp = indexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try
                 {
-                    await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new ClaudeIndex(3, TimeZoneInfo.Local.Id, next), IndexJson), ct);
+                    await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new ClaudeIndex(4, TimeZoneInfo.Local.Id, next), IndexJson), ct);
                     File.Move(temp, indexPath, true);
                 }
                 finally { if (File.Exists(temp)) File.Delete(temp); }

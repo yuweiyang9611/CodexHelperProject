@@ -1,4 +1,5 @@
-import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState } from './types'
+import type { AgentRuntime, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
+import { createDemoAnalysis } from './demoAnalysis'
 import { DEMO_HOST_CAPABILITIES } from './hostCapabilities'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
@@ -32,6 +33,7 @@ const interactiveHostMethods = new Set([
   'data.exportAggregates',
   'data.backup',
   'data.restore',
+  'data.clearHistory',
   'diagnostics.export',
   'diagnostics.rebuildIndex',
 ])
@@ -41,10 +43,11 @@ function demoNow(): Date {
 }
 
 class HostBridge {
+  private mockRuntime: AgentRuntime = 'codex'
   private mockSettings: AppSettings = {
     theme: 'dark', showSubagents: false, compactMode: false, statusStripEnabled: false, statusStripPositionLocked: false, desktopMode: false,
     closeToTray: true,
-    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: true, fiveHourAlertPercent: 20,
+    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: false, fiveHourAlertPercent: 20,
     sevenDayAlertPercent: 20, autoRefreshMinutes: 5, incrementalIndexEnabled: true,
     uiScalePercent: 110,
     amountPerThousandCredits: 40,
@@ -57,10 +60,10 @@ class HostBridge {
     includePrereleaseUpdates: false,
     autoInstallUpdates: true,
     monthlyAmountAlert: 0,
-    minimumRateCoverageAlertPercent: 80,
+    minimumRateCoverageAlertPercent: 0,
     globalHotKey: 'Ctrl+U',
     statusStripQuotaMode: 'remaining',
-    statusStripShowTodayTokens: true,
+    statusStripShowTodayTokens: false,
     customModelRates: [],
     isRateCatalogPinned: false,
   }
@@ -242,7 +245,8 @@ class HostBridge {
       } as T
     }
     if (method === 'runtime.select') {
-      return createDemoSnapshot((payload as { runtime: 'codex' | 'claudeCode' }).runtime) as T
+      this.mockRuntime = (payload as { runtime: AgentRuntime }).runtime
+      return createDemoSnapshot(this.mockRuntime) as T
     }
     if (method === 'settings.get') return { ...this.mockSettings } as T
     if (method === 'settings.update') {
@@ -349,7 +353,9 @@ class HostBridge {
         claudeCode: { snapshot: createDemoSnapshot('claudeCode'), readFailed: false },
       } as T
     }
-    if (method.startsWith('usage.')) return createDemoSnapshot('codex') as T
+    if (method === 'usage.query') return createDemoAnalysis(payload as UsageAnalysisRequest, demoNow()) as T
+    if (method === 'data.clearHistory') return { success: true, message: '演示环境：已确认清理入口，未修改真实历史。' } as T
+    if (method.startsWith('usage.')) return createDemoSnapshot(this.mockRuntime) as T
     return {} as T
   }
 }

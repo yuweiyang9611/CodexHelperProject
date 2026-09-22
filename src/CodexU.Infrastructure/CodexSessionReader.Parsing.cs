@@ -29,6 +29,7 @@ public sealed partial class CodexSessionReader
         var tokenCounterState = seed?.TokenCounterState ?? TokenCounterState.Empty;
         var sessionId = seed?.SessionId;
         var workspace = seed?.Workspace;
+        var title = seed?.Title;
         var feature = seed?.Feature ?? "unknown";
         var forkedFromId = seed?.ForkedFromId;
         var currentModel = seed?.CurrentModel ?? "unknown";
@@ -96,6 +97,7 @@ public sealed partial class CodexSessionReader
                     sessionId = GetString(payload, "id");
                     feature = ReadUsageFeature(payload);
                     workspace = WorkspaceScope.Normalize(GetString(payload, "cwd"));
+                    title = GetString(payload, "title");
                     forkedFromId = GetString(payload, "forked_from_id");
                     if (TryReadThreadSpawnParentId(payload, out var discoveredParentId))
                     {
@@ -143,6 +145,10 @@ public sealed partial class CodexSessionReader
                     if (hasCumulative || hasLast)
                     {
                         var observation = TokenCounterNormalizer.Observe(tokenCounterState, cumulative, last);
+                        var cumulativeFields = ValidFields(cumulative);
+                        if (tokenCounterState.HasSamples && observation.State.Epoch == tokenCounterState.Epoch)
+                            cumulativeFields &= tokenCounterState.HighWaterFields;
+                        var availableFields = (UsageBreakdownFields)(cumulativeFields | ValidFields(last)) & UsageBreakdownFields.All;
                         tokenCounterState = observation.State;
                         var delta = observation.Delta;
                         if (delta.VisibleTotalTokens > 0)
@@ -153,7 +159,7 @@ public sealed partial class CodexSessionReader
                                 currentModel,
                                 delta,
                                 Fingerprint(cumulative, last),
-                                isForkReplay));
+                                isForkReplay, availableFields));
                             if (!isForkReplay)
                             {
                                 var key = (localDate, currentModel);
@@ -161,9 +167,10 @@ public sealed partial class CodexSessionReader
                                     ? currentBucket with
                                     {
                                         Tokens = currentBucket.Tokens.Add(delta),
-                                        EventCount = currentBucket.EventCount + 1
+                                        EventCount = currentBucket.EventCount + 1,
+                                        AvailableFields = currentBucket.AvailableFields.GetValueOrDefault() & availableFields
                                     }
-                                    : new SessionUsageBucket(localDate, currentModel, delta, 1);
+                                    : new SessionUsageBucket(localDate, currentModel, delta, 1, availableFields);
                             }
                         }
 
@@ -243,7 +250,8 @@ public sealed partial class CodexSessionReader
             forkedFromId,
             tokenEvents,
             workspace,
-            feature);
+            feature,
+            title);
     }
 
     // Only header metadata is evidence of a session's feature. Never inspect prompt
@@ -475,6 +483,17 @@ public sealed partial class CodexSessionReader
         }
 
         return false;
+    }
+
+    private static TokenUsageFields ValidFields(TokenCounterSample? sample)
+    {
+        if (sample is null) return TokenUsageFields.None;
+        var fields = sample.Fields;
+        if (sample.Tokens.InputTokens < 0) fields &= ~TokenUsageFields.Input;
+        if (sample.Tokens.CachedInputTokens < 0) fields &= ~TokenUsageFields.CachedInput;
+        if (sample.Tokens.OutputTokens < 0) fields &= ~TokenUsageFields.Output;
+        if (sample.Tokens.ReasoningOutputTokens < 0) fields &= ~TokenUsageFields.ReasoningOutput;
+        return fields;
     }
 
     private static bool TryReadLastUsage(JsonElement payload, out TokenCounterSample? usage)

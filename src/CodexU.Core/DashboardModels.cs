@@ -254,7 +254,8 @@ public sealed record DashboardSnapshot(
     IReadOnlyList<string> Diagnostics,
     QuotaForecast? PrimaryForecast = null,
     QuotaForecast? SecondaryForecast = null,
-    UsageHistoryStatus? History = null)
+    UsageHistoryStatus? History = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null)
 {
     public static DashboardSnapshot Empty(AgentRuntime runtime, params string[] diagnostics) => new(
         runtime,
@@ -322,7 +323,8 @@ public sealed record LocalUsageSnapshot(
     TaskLifecycleStats TaskLifecycle,
     IndexStatus IndexStatus,
     IReadOnlyList<string> Diagnostics,
-    UsageHistoryStatus? History = null);
+    UsageHistoryStatus? History = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null);
 
 public sealed record AppServerSnapshot(
     AccountSnapshot? Account,

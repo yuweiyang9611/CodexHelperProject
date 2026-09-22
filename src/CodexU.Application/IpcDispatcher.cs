@@ -122,6 +122,11 @@ public sealed class IpcDispatcher : IDisposable
             case "usage.getCombined":
                 return await _session.LoadCombinedSnapshotsAsync();
 
+            case "usage.query":
+                var query = request.Payload.Deserialize<UsageAnalysisRequest>(IpcJson.Options)
+                    ?? throw new ArgumentException("用量筛选条件无效。");
+                return await _session.QueryUsageAsync(query);
+
             case "runtime.select":
                 var runtimeName = request.Payload.TryGetProperty("runtime", out var runtimeValue)
                     ? runtimeValue.GetString()
@@ -265,7 +270,7 @@ public sealed class IpcDispatcher : IDisposable
                     : "json";
                 var aggregateExportPath = await _userInteraction.PickSaveFileAsync(
                     new HostFileDialogRequest(
-                        "导出 codexU 聚合统计",
+                        "导出当前工具全部本机历史统计",
                         $"codexU-{_session.CurrentRuntime}-{DateTimeOffset.Now:yyyyMMdd}.{exportFormat}",
                         $".{exportFormat}",
                         [new HostFileType(exportFormat == "csv" ? "CSV 文件" : "JSON 文件", [$"*.{exportFormat}"])],
@@ -312,6 +317,15 @@ public sealed class IpcDispatcher : IDisposable
                     {
                         Message = restoredState.Message + FormatRefreshWarning(restoreRefreshWarning)
                     };
+
+            case "data.clearHistory":
+                if (!await _userInteraction.ConfirmAsync(
+                    new HostConfirmationRequest("清理本机用量历史", LocalDataManagementService.ClearHistoryWarning, IsWarning: true),
+                    _session.LifetimeToken))
+                    return new LocalOperationResult(false, "已取消清理历史。");
+                var cleared = await _session.ClearUsageHistoryAsync();
+                var clearRefreshWarning = await TryRefreshAfterCommittedChangeAsync();
+                return clearRefreshWarning is null ? cleared : cleared with { Message = cleared.Message + " " + clearRefreshWarning };
 
             case "diagnostics.export":
                 var diagnosticPath = await _userInteraction.PickSaveFileAsync(

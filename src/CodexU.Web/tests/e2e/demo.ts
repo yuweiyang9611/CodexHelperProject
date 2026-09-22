@@ -17,6 +17,7 @@ export async function openDemo(
   if (options.pinnedRates) parameters.set('pinnedRates', '1')
   await page.goto(`/?${parameters}`)
   await expect(page.locator('.overview-grid')).toBeVisible()
+  await expect(page.locator('.metric-0 strong')).not.toHaveText('—')
   await expect(page.locator('.app-shell')).toHaveClass(theme === 'light' ? /light/ : /app-shell(?!.*light)/)
   await expect(page.locator('.app-shell')).toHaveClass(options.compact ? /compact/ : /app-shell(?!.*compact)/)
   await settleUi(page)
@@ -30,10 +31,8 @@ export async function openDemo(
  * usually still passes — it just stops checking what it was written to check.
  */
 export const TAB_IDS = [
+  'overview',
   'usage',
-  'projects',
-  'skills',
-  'combined',
   'diagnostics',
 ] as const
 
@@ -45,7 +44,7 @@ export async function openTab(page: Page, id: TabId) {
   await expect(tab).toHaveAttribute('aria-selected', 'true')
   // The combined panel loads independently. Wait for its final height before
   // scrolling or capturing it; a short loading panel clamps the scroll position.
-  if (id === 'combined') await expect(page.locator('.combined-columns')).toBeVisible()
+  if (id === 'usage') await expect(page.locator('.analysis-summary')).toBeVisible()
   await settleUi(page)
 }
 

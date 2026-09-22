@@ -162,28 +162,18 @@ public partial class StatusStripWindow : Window
         SecondaryLabel.Text = presentation.SecondaryLabel;
         PrimaryDetailLabel.Text = presentation.PrimaryDetailLabel;
         SecondaryDetailLabel.Text = presentation.SecondaryDetailLabel;
-        TodayBlock.Visibility = presentation.ShowTodayTokens ? Visibility.Visible : Visibility.Collapsed;
-        TodayColumn.Width = presentation.ShowTodayTokens
-            ? new GridLength(1d, GridUnitType.Star)
-            : new GridLength(0d);
-
         PrimaryText.Text = presentation.PrimaryQuota.Text;
+        PrimaryBlock.ToolTip = presentation.PrimaryQuota.AccessibleText;
+        SecondaryBlock.ToolTip = presentation.SecondaryQuota.AccessibleText;
         SecondaryText.Text = presentation.SecondaryQuota.Text;
-        TodayText.Text = presentation.Today.Text;
-        WeekText.Text = presentation.SevenDays.Text;
-        LifetimeText.Text = presentation.Lifetime.Text;
+        PrimaryResetText.Text = $"5 小时额度 · {presentation.PrimaryQuota.ResetText}";
+        SecondaryResetText.Text = $"7 天额度 · {presentation.SecondaryQuota.ResetText}";
 
         AutomationProperties.SetName(PrimaryBlock, presentation.PrimaryQuota.AccessibleText);
         AutomationProperties.SetName(SecondaryBlock, presentation.SecondaryQuota.AccessibleText);
-        AutomationProperties.SetName(TodayBlock, presentation.Today.AccessibleText);
-        AutomationProperties.SetName(WeekBlock, presentation.SevenDays.AccessibleText);
-        AutomationProperties.SetName(LifetimeBlock, presentation.Lifetime.AccessibleText);
 
         PrimaryText.Foreground = MetricBrush(presentation.PrimaryQuota.IsAvailable, degraded: false);
         SecondaryText.Foreground = MetricBrush(presentation.SecondaryQuota.IsAvailable, degraded: false);
-        TodayText.Foreground = MetricBrush(presentation.Today.IsAvailable, presentation.Today.IsDegraded);
-        WeekText.Foreground = MetricBrush(presentation.SevenDays.IsAvailable, presentation.SevenDays.IsDegraded);
-        LifetimeText.Foreground = MetricBrush(presentation.Lifetime.IsAvailable, presentation.Lifetime.IsDegraded);
 
         RenderQuotaProgress(
             PrimaryProgress,
