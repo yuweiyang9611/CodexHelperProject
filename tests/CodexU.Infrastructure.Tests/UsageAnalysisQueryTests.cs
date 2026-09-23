@@ -71,6 +71,41 @@ public sealed class UsageAnalysisQueryTests
         Assert.Equal(3, UsageAnalysisQuery.Execute(data, new(Page: int.MaxValue, PageSize: 1)).Page);
     }
 
+    [Theory]
+    [InlineData("D:/Project/")]
+    [InlineData("D:/Project/child/..")]
+    public void ProjectFilter_MatchesTheReadersNormalizedPath(string requestedProject)
+    {
+        var storedProject = WorkspaceScope.Normalize("D:/Project");
+        var data = UsageHistoryProjection.BuildAnalysis([
+            Row("parent", Day, 100, project: storedProject),
+            Row("child", Day, 20, project: storedProject) with { ParentSessionId = "parent" },
+            Row("adjacent", Day, 60, project: storedProject + "2")], [], [Rate], true);
+        var result = UsageAnalysisQuery.Execute(data, new(Model: "model-a", Project: requestedProject));
+        Assert.Equal(120, result.Totals.Tokens);
+        Assert.Equal(2, Assert.Single(result.Sessions).Members.Count);
+    }
+
+    [Fact]
+    public void ProjectFilter_ExpandsWindowsShortNamesLikeTheReader()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        // Existing system alias needs no fixture directory or privileged writes.
+        var aliasDirectory = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "PROGRA~1");
+        if (!Directory.Exists(aliasDirectory)) return;
+        var requestedProject = Path.Combine(aliasDirectory, "codexu-query-fixture");
+        var storedProject = WorkspaceScope.Normalize(requestedProject);
+        var data = UsageHistoryProjection.BuildAnalysis([Row("parent", Day, 120, project: storedProject)], [], [Rate], true);
+        Assert.Equal(120, UsageAnalysisQuery.Execute(data, new(Model: "model-a", Project: requestedProject)).Totals.Tokens);
+    }
+
+    [Fact]
+    public void ProjectFilter_InvalidPathCannotBecomeAnUnfilteredQuery()
+    {
+        var data = UsageHistoryProjection.BuildAnalysis([Row("parent", Day, 120)], [], [Rate], true);
+        Assert.Throws<ArgumentException>(() => UsageAnalysisQuery.Execute(data, new(Project: "invalid\0path")));
+    }
+
     [Fact]
     public void LegacyRemainder_IsNotAFakeSession_AndIsNotAllocatedToAProjectOrModel()
     {

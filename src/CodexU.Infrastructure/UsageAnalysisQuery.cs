@@ -13,12 +13,13 @@ public static class UsageAnalysisQuery
         Validate(request);
         var all = data?.Entries ?? [];
         var model = string.IsNullOrWhiteSpace(request.Model) ? null : UsageCredits.NormalizeModel(request.Model);
-        var project = string.IsNullOrWhiteSpace(request.Project) ? null : request.Project;
+        var project = NormalizeProjectFilter(request.Project);
         bool DateMatches(DateOnly date) => (request.From is null || date >= request.From)
             && (request.To is null || date <= request.To);
         var selected = all.Where(e => DateMatches(e.Date)
             && (model is null || string.Equals(e.Model, model, StringComparison.OrdinalIgnoreCase))
-            && (project is null || string.Equals(e.Project ?? UnknownProject, project, StringComparison.OrdinalIgnoreCase))).ToArray();
+            && (project is null || string.Equals(e.Project is null ? UnknownProject : WorkspaceScope.Normalize(e.Project),
+                project, StringComparison.OrdinalIgnoreCase))).ToArray();
 
         // Resolve lineage from the complete dataset, not the filtered subset. A
         // parent's model may be filtered out while its child's contribution remains.
@@ -90,6 +91,17 @@ public static class UsageAnalysisQuery
             throw new ArgumentException("分页范围无效。", nameof(request));
         if (request.Model?.Length > 256 || request.Project?.Length > 32768)
             throw new ArgumentException("筛选条件过长。", nameof(request));
+        _ = NormalizeProjectFilter(request.Project);
+    }
+
+    private static string? NormalizeProjectFilter(string? project)
+    {
+        if (string.IsNullOrWhiteSpace(project)) return null;
+        if (string.Equals(project, UnknownProject, StringComparison.OrdinalIgnoreCase)) return UnknownProject;
+        // Readers expand Windows short names and normalize separators before
+        // storing cwd. Apply the same identity rule to a requested project.
+        return WorkspaceScope.Normalize(project)
+            ?? throw new ArgumentException("项目路径无效。", nameof(project));
     }
 
     internal static UsageAnalysisTotals Total(IEnumerable<UsageAnalysisEntry> entries)
