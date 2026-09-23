@@ -1,96 +1,59 @@
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
-import { createApp, type App } from 'vue'
+import { createApp, nextTick, type App } from 'vue'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import OverviewCards from '../../src/components/OverviewCards.vue'
-import { snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
-
+import { createDemoAnalysis } from '../../src/demoAnalysis'
+import { snapshot } from './fixtures'
 let pinia: Pinia
 let app: App | null
-
-beforeEach(() => {
-  pinia = createPinia()
-  setActivePinia(pinia)
-  app = null
-})
-
-afterEach(() => {
-  app?.unmount()
-  document.body.replaceChildren()
-})
-
-function mountOverview(overviewSnapshot: ReturnType<typeof snapshot>) {
-  const container = document.createElement('div')
-  document.body.append(container)
-  app = createApp(OverviewCards, { snapshot: overviewSnapshot })
-  app.use(pinia)
-  app.mount(container)
+beforeEach(() => { pinia = createPinia(); setActivePinia(pinia); app = null; localStorage.clear() })
+afterEach(() => { app?.unmount(); document.body.replaceChildren() })
+function mountOverview(analysis = createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25, from: '2026-07-14', to: '2026-07-14' }, new Date('2026-07-14T12:00:00+09:00'))) {
+  const container = document.createElement('div'); document.body.append(container)
+  app = createApp(OverviewCards, { snapshot: snapshot(), analysis }); app.use(pinia); app.mount(container)
   return container
 }
-
-describe('OverviewCards local token activity', () => {
-  it('uses the local JSONL periods for every token metric', () => {
-    const container = mountOverview(snapshot({
-      tokens: {
-        today: tokenPeriod({ tokens: 2_480_545_769 }),
-        sevenDays: tokenPeriod({ tokens: 2_900_000_000 }),
-        month: tokenPeriod({ tokens: 3_100_000_000 }),
-        lifetime: tokenPeriod({ tokens: 3_758_082_435 }),
-      },
-    }))
-
-    const tokenCard = container.querySelector('.token-card')
-    expect(tokenCard?.textContent).toContain('本机原始统计')
-    expect(tokenCard?.textContent).toContain('今日2.48B')
-    expect(tokenCard?.textContent).toContain('近 7 天2.90B')
-    expect(tokenCard?.textContent).toContain('本月3.10B')
-    expect(tokenCard?.textContent).toContain('累计3.76B')
-    expect(tokenCard?.textContent).toContain('来自本机日志原始事件')
-    expect(tokenCard?.textContent).not.toContain('官方账户统计')
+describe('OverviewCards uses unified analysis', () => {
+  it('shows queried totals rather than the independent snapshot periods', () => {
+    const container = mountOverview()
+    expect(container.querySelector('.token-card')?.textContent).toContain('总量58.0K')
+    expect(container.querySelector('.token-card')?.textContent).toContain('会话组1')
+    expect(container.querySelector('.token-card')?.textContent).toContain('缓存已包含在输入中')
+    expect(container.querySelector('.token-card')?.textContent).toContain('其中推理输出未知')
+    expect(container.querySelector('.quota-card')?.textContent).toContain('账户额度 · 独立于本机筛选')
   })
-
-  it('shows each token split as a share of the visible total', () => {
-    const container = mountOverview(snapshot({
-      tokens: {
-        today: tokenPeriod({
-          breakdown: tokenBreakdown({
-            uncachedInputTokens: 500,
-            billableCachedInputTokens: 300,
-            outputTokens: 200,
-          }),
-        }),
-        sevenDays: tokenPeriod(),
-        month: tokenPeriod(),
-        lifetime: tokenPeriod(),
-      },
-    }))
-
-    const legend = container.querySelector('.split-legend')
-    expect(legend?.textContent).toContain('未缓存输入 500 · 50.0%')
-    expect(legend?.textContent).toContain('缓存读取 300 · 30.0%')
-    expect(legend?.textContent).toContain('输出 200 · 20.0%')
+  it('never renders unavailable old token components or unknown amount as zero', () => {
+    const analysis = createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25, model: 'unknown' }, new Date('2026-07-14T12:00:00+09:00'))
+    analysis.totals.availableBreakdownFields = []
+    const container = mountOverview(analysis)
+    expect(container.querySelector('.value-main')?.textContent).toContain('金额未知')
+    expect(container.textContent).toContain('Token 分项不可用')
+    expect(container.textContent).not.toContain('输入（含缓存）0')
   })
-
-  it('includes cache writes in the token split denominator', () => {
-    const container = mountOverview(snapshot({
-      tokens: {
-        today: tokenPeriod({
-          breakdown: tokenBreakdown({
-            uncachedInputTokens: 400,
-            billableCachedInputTokens: 200,
-            billableCacheWriteTokens: 200,
-            outputTokens: 200,
-          }),
-        }),
-        sevenDays: tokenPeriod(),
-        month: tokenPeriod(),
-        lifetime: tokenPeriod(),
-      },
-    }))
-
-    const legend = container.querySelector('.split-legend')
-    expect(legend?.textContent).toContain('未缓存输入 400 · 40.0%')
-    expect(legend?.textContent).toContain('缓存读取 200 · 20.0%')
-    expect(legend?.textContent).toContain('缓存写入 200 · 20.0%')
-    expect(legend?.textContent).toContain('输出 200 · 20.0%')
+  it('labels a partially priced estimate as a lower bound and keeps legacy estimate separate', async () => {
+    const analysis = createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25 }, new Date('2026-07-14T12:00:00+09:00'))
+    const container = mountOverview(analysis)
+    expect(container.querySelector('.value-main')?.textContent).toContain('≥')
+    ;(container.querySelector('.value-toggle') as HTMLButtonElement).click(); await nextTick()
+    expect(container.textContent).toContain('旧版金额估值')
+    expect(container.textContent).not.toMatch(/回本|净等价|净收益/)
+    expect(container.querySelector('.value-summary-grid')).toBeNull()
+  })
+  it('shows subscription comparison only after the optional preference is enabled', async () => {
+    localStorage.setItem('codexu.subscriptionComparison', 'true')
+    const container = mountOverview()
+    ;(container.querySelector('.value-toggle') as HTMLButtonElement).click(); await nextTick()
+    expect(container.textContent).toContain('订阅月费参考')
+    expect(container.textContent).toContain('所选日期范围可能不足或超过一个月')
+  })
+  it('uses missing-rate diagnostics across all pages rather than treating any unknown amount as a rate gap', async () => {
+    const analysis = createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25 }, new Date('2026-07-14T12:00:00+09:00'))
+    analysis.totals.creditsUsed = null
+    analysis.totals.unratedTokens = analysis.totals.tokens
+    analysis.missingRates = [{ model: 'unpriced-model', date: '2026-07-01', tokens: 42 }]
+    const container = mountOverview(analysis)
+    ;(container.querySelector('.value-toggle') as HTMLButtonElement).click(); await nextTick()
+    expect(container.textContent).toContain('所选范围缺少适用日期的费率：unpriced-model')
+    expect(container.textContent).not.toContain('费率：gpt-6-astra')
   })
 })

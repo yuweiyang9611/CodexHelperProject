@@ -25,7 +25,6 @@ import {
 } from 'electron';
 import { createHostRequestHandler } from './hostRequests';
 import { StatusStripHost, type SurfaceData } from './statusStrip';
-import { DesktopWidgetHost, startDesktopWidget } from './desktopWidget';
 import {
   DEFAULT_HOST_SETTINGS,
   nativeActivationAction,
@@ -121,7 +120,6 @@ let mainWindow: BrowserWindow | undefined;
 let sidecar: SidecarClient | undefined;
 let sidecarExecutablePath: string | undefined;
 let statusStrip: StatusStripHost | undefined;
-let desktopWidget: DesktopWidgetHost | undefined;
 let surfaceSettings: SurfaceData = {};
 let tray: Tray | undefined;
 let persistentLog: PersistentLog | undefined;
@@ -166,16 +164,16 @@ const rendererReady = new Promise<void>((resolve) => {
 });
 
 if (process.argv.includes('--desktop-widget')) {
-  void startDesktopWidget(resolveRendererRoot()).catch(error => { console.error(error); app.exit(1); });
+  // A helper from an older installation must not re-create the retired replica.
+  app.exit(0);
 } else startElectronHost();
 
 function updateSurfaces(data: SurfaceData): void {
   for (const key of ['presentation', 'theme', 'statusStripEnabled', 'statusStripPositionLocked',
-    'statusStripShowTodayTokens', 'statusStripQuotaMode', 'desktopMode', 'todayAmount', 'layout', 'refreshing', 'refreshError']) {
+    'layout', 'refreshing', 'refreshError']) {
     if (key in data) surfaceSettings[key] = data[key];
   }
   statusStrip?.update(surfaceSettings);
-  desktopWidget?.update(surfaceSettings);
 }
 
 async function handleSurfaceAction(action: string): Promise<unknown> {
@@ -361,15 +359,6 @@ async function bootstrap(): Promise<void> {
   if (!smokeTest && process.platform === 'win32') {
     statusStrip = new StatusStripHost(process.env.CODEXU_DATA_DIRECTORY
       || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'codexU'), handleSurfaceAction);
-    desktopWidget = new DesktopWidgetHost(sidecarExecutablePath, handleSurfaceAction, message => {
-      runtimeLog('warn', 'desktop-widget', message);
-      forwardRendererEvent({ version: 1, type: 'event', method: 'desktop.stateChanged', payload: { attached: false, message } });
-      forwardRendererEvent({ version: 1, type: 'event', method: 'app.projectionWarning',
-        payload: { area: 'desktop', message } });
-    }, (attached, message) => {
-      forwardRendererEvent({ version: 1, type: 'event', method: 'desktop.stateChanged', payload: { attached, message } });
-      runtimeLog('info', 'desktop-widget.state', message);
-    });
     ipcMain.handle('codexu:surface', async (event, action: unknown) => {
       if (!statusStrip?.owns(event) || typeof action !== 'string') throw new Error('Untrusted surface.');
       return statusStrip.request(action);
@@ -596,7 +585,7 @@ function registerLifecycleHandlers(): void {
     updateWindowBackground();
     if (surfaceSettings.theme === 'system') {
       const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-      statusStrip?.update({ theme }); desktopWidget?.update({ theme });
+      statusStrip?.update({ theme });
     }
   });
 
@@ -1230,7 +1219,6 @@ function applyStartupRegistrationVerified(enabled: boolean): boolean {
 
 function disposeNativeShell(): void {
   statusStrip?.dispose(); statusStrip = undefined;
-  desktopWidget?.dispose(); desktopWidget = undefined;
   if (sidecarRecoveryTimer) clearTimeout(sidecarRecoveryTimer);
   if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
   sidecarRecoveryTimer = undefined;

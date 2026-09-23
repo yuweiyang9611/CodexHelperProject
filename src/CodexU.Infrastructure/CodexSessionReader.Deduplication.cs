@@ -33,7 +33,8 @@ public sealed partial class CodexSessionReader
     private SessionUsageBucket[] EffectiveBuckets(ResolvedSessionFile file) => UsageReadContext.For(indexDirectory)
         .Get("codex-buckets", () => new BucketCache()).Values.GetValue(file, source => EffectiveTokenEvents(source)
             .GroupBy(e => (e.Date, e.Model)).Select(g => new SessionUsageBucket(g.Key.Date, g.Key.Model,
-                g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens)), g.Count())).ToArray());
+                g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens)), g.Count(),
+                g.Aggregate(UsageBreakdownFields.All, (fields, e) => fields & e.AvailableFields.GetValueOrDefault()))).ToArray());
     /// <summary>
     /// Resolves physical rollout files into one local token ledger. The strict
     /// parent/child longest-common-prefix rule follows the MIT-licensed codexU

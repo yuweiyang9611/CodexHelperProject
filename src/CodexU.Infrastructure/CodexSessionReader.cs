@@ -20,6 +20,7 @@ public sealed record SessionAnalytics(
 {
     public IReadOnlyList<ProjectUsage> Projects { get; init; } = [];
     public UsageHistoryStatus? History { get; init; }
+    public UsageAnalysisData? AnalysisData { get; init; }
 }
 
 public sealed partial class CodexSessionReader(
@@ -227,7 +228,9 @@ public sealed partial class CodexSessionReader(
                 projectBuckets[projectKey].Add(bucket);
                 attributed.Add(new(parsed.SessionId ?? resolved.Source.Path, parsed.Workspace,
                     bucket.Date, bucket.Model, bucket.Tokens, bucket.EventCount, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live",
-                    Feature: parsed.Feature));
+                    Feature: parsed.Feature,
+                    ParentSessionId: parsed.Feature == "subagents" ? parsed.ForkedFromId ?? parsed.ForkReplayParentId : null,
+                    Title: parsed.Title, AvailableFields: bucket.AvailableFields));
                 lifetime.Add(bucket);
                 if (!daily.TryGetValue(bucket.Date, out var dailyPeriod))
                 {
@@ -388,6 +391,7 @@ public sealed partial class CodexSessionReader(
             skippedFiles,
             diagnostics)
         {
+            AnalysisData = UsageHistoryProjection.BuildAnalysis(attributed, [], customRates, completeRateCatalog),
             Projects = projectBuckets.Select(pair =>
             {
                 var accumulator = new PeriodAccumulator();
@@ -405,7 +409,8 @@ public sealed partial class CodexSessionReader(
             DailyUsage = projection.Daily,
             Models = projection.Models,
             Projects = projection.Projects,
-            History = projection.History
+            History = projection.History,
+            AnalysisData = projection.AnalysisData
         };
     }
 
@@ -536,7 +541,8 @@ public sealed partial class CodexSessionReader(
 
 }
 
-public sealed record SessionUsageBucket(DateOnly Date, string Model, TokenBreakdown Tokens, int EventCount);
+public sealed record SessionUsageBucket(DateOnly Date, string Model, TokenBreakdown Tokens, int EventCount,
+    UsageBreakdownFields? AvailableFields = null);
 
 public sealed record ParsedSessionFile(
     IReadOnlyList<SessionUsageBucket> UsageBuckets,
@@ -555,14 +561,16 @@ public sealed record ParsedSessionFile(
     string? ForkedFromId,
     IReadOnlyList<SessionTokenEvent> TokenEvents,
     string? Workspace = null,
-    string Feature = "unknown");
+    string Feature = "unknown",
+    string? Title = null);
 
 public sealed record SessionTokenEvent(
     DateOnly Date,
     string Model,
     TokenBreakdown Tokens,
     SessionTokenEventFingerprint Identity,
-    bool IsStructuralReplay);
+    bool IsStructuralReplay,
+    UsageBreakdownFields? AvailableFields = null);
 
 public sealed record SessionTokenEventFingerprint(ulong First, ulong Second);
 

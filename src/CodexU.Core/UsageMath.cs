@@ -87,6 +87,7 @@ public static class UsageCredits
     private const string Catalog2026081Version = "2026.08.1";
     private const string Catalog2026082Version = "2026.08.2";
     private const string Catalog2026091Version = "2026.09.1";
+    private const string Catalog2026092Version = "2026.09.2";
     private const string OpenAiStandardSource = "OpenAI API 官方 Standard 短上下文价目与 Changelog";
     private const string OpenAiSolPromotionSource =
         "OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）";
@@ -99,7 +100,7 @@ public static class UsageCredits
     private const string CatalogAnthropic2026071Source = "Anthropic 公布的 Claude API 价目";
     private const string CatalogAnthropic2026091Version = "anthropic-2026.09.1";
     private const string CatalogAnthropic2026091Source = "Anthropic 公布的 Claude API 价目（Sonnet 5 首发优惠到期）";
-    public const string CurrentCatalogVersion = Catalog2026091Version;
+    public const string CurrentCatalogVersion = Catalog2026092Version;
     public const string CurrentCatalogSource = BuiltInCatalogSource;
 
     // Cache writes are priced as a fixed multiple of the model's base input rate
@@ -156,6 +157,10 @@ public static class UsageCredits
         OpenAiApi(Catalog2026082Version, OpenAiSolPromotionSource, new DateOnly(2026, 8, 21), "gpt-5.6-sol", 4d, 0.4d, 20d),
         OpenAiApi(Catalog2026082Version, OpenAiSolPromotionSource, new DateOnly(2026, 8, 21), "gpt-daybreak-blue", 4d, 0.4d, 20d),
         OpenAiApi(Catalog2026091Version, OpenAiStandardSource, new DateOnly(2026, 9, 3), "gpt-6-astra", 10d, 1d, 50d),
+        // Official release and Standard short-context pricing: 2026-09-22.
+        // https://developers.openai.com/api/docs/changelog
+        OpenAiApi(Catalog2026092Version, OpenAiStandardSource, new DateOnly(2026, 9, 22), "gpt-6-sol", 2d, 0.2d, 10d),
+        OpenAiApi(Catalog2026092Version, OpenAiStandardSource, new DateOnly(2026, 9, 22), "gpt-6-luna", 0.1d, 0.01d, 0.5d),
 
         // Anthropic list prices converted at CreditsPerDollar. Cached input is the
         // published 0.1x cache-read multiple, matching the OpenAI rows above.
@@ -208,7 +213,7 @@ public static class UsageCredits
         RateCatalogSchemaVersion,
         CurrentCatalogVersion,
         BuiltInCatalogSource,
-        new DateOnly(2026, 9, 9),
+        new DateOnly(2026, 9, 22),
         Rates.Count);
 
     public static RateCatalogSnapshot CatalogSnapshot => new(BuiltInCatalog, Rates);

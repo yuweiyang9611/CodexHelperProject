@@ -33,6 +33,15 @@ public sealed class UsageDistributionTests
             Assert.Equal(100, day.Tokens);
             Assert.Contains(day.Distribution!, s => s.Feature == "tasks" && s.Tokens == 70);
             Assert.Contains(day.Distribution!, s => s.Feature == "subagents" && s.Tokens == 30);
+            var analysis = UsageAnalysisQuery.Execute(snapshot.AnalysisData, new(AgentRuntime.ClaudeCode));
+            var session = Assert.Single(analysis.Sessions);
+            Assert.Equal("session:session", session.Id);
+            Assert.Equal(100, session.Totals.Tokens);
+            Assert.Equal(2, session.Members.Count);
+            foreach (var file in Directory.EnumerateFiles(projects)) File.Delete(file);
+            var retained = await new ClaudeCodeUsageReader(paths, applicationDataDirectory: root).ReadAsync();
+            Assert.Equal(100, Assert.Single(UsageAnalysisQuery.Execute(retained.AnalysisData, new(AgentRuntime.ClaudeCode)).Sessions).Totals.Tokens);
+            Assert.All(retained.AnalysisData!.Entries, e => Assert.Equal("retained", e.Source));
         }
         finally { Directory.Delete(root, true); }
     }
@@ -69,10 +78,18 @@ public sealed class UsageDistributionTests
             Assert.Contains(today.Distribution!, s => s.Model == "model-a" && s.Feature == "tasks" && s.Tokens == 100);
             Assert.Contains(today.Distribution!, s => s.Model == "model-b" && s.Feature == "subagents" && s.Tokens == 40);
             Assert.Equal(today.Tokens, today.Distribution!.Sum(s => s.Tokens));
+            var analysis = UsageAnalysisQuery.Execute(first.AnalysisData, new());
+            var group = Assert.Single(analysis.Sessions);
+            Assert.Equal("parent", group.Id);
+            Assert.Equal(140, group.Totals.Tokens);
+            Assert.Equal(2, group.Members.Count);
+            Assert.Equal(40, Assert.Single(group.Members, e => e.Id == "child").Totals.Tokens);
+            Assert.Equal(hasLegacy ? 60 : 0, analysis.Unattributed.Sum(e => e.Tokens));
             File.Delete(parent);
             File.Delete(child);
             var retained = await reader.ReadAsync();
             Assert.Equal(today.Distribution, Assert.Single(retained.DailyUsage, d => d.Tokens > 0).Distribution);
+            Assert.Equal(140, Assert.Single(UsageAnalysisQuery.Execute(retained.AnalysisData, new()).Sessions).Totals.Tokens);
         }
         finally { Directory.Delete(root, true); }
     }

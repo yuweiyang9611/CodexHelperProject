@@ -295,6 +295,25 @@ public sealed class ApplicationSession : IDisposable
         }
     }
 
+    public async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
+        try
+        {
+            ThrowIfStateMutationUnavailable();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+            timeout.CancelAfter(SnapshotTimeout);
+            while (true)
+            {
+                var service = _dashboardService;
+                var result = await service.QueryUsageAsync(request, timeout.Token);
+                if (ReferenceEquals(service, _dashboardService)) return result;
+            }
+        }
+        finally { _refreshGate.Release(); }
+    }
+
     public Task<ImportedRateCatalog> ImportRateCatalogAsync(string path) =>
         _rateCatalogFileService.ImportAsync(path, _lifetimeCancellation.Token);
 
@@ -359,12 +378,11 @@ public sealed class ApplicationSession : IDisposable
         return _lastUpdateResult;
     }
 
-    public Task<LocalOperationResult> ExportAggregatesAsync(string path, string format)
+    public async Task<LocalOperationResult> ExportAggregatesAsync(string path, string format)
     {
-        var snapshot = LastSnapshot
-            ?? throw new InvalidOperationException("尚未生成可导出的数据快照。");
-        return _dataManagementService.ExportAggregatesAsync(
-            snapshot,
+        var analysis = await QueryUsageAsync(new(CurrentRuntime));
+        return await _dataManagementService.ExportUsageAnalysisAsync(
+            analysis,
             path,
             format,
             _lifetimeCancellation.Token);
@@ -522,6 +540,31 @@ public sealed class ApplicationSession : IDisposable
     }
 
     public void CancelLifetime() => _lifetimeCancellation.Cancel();
+
+    public async Task<LocalOperationResult> ClearUsageHistoryAsync()
+    {
+        var ct = _lifetimeCancellation.Token;
+        await _stateMutationGate.WaitAsync(ct);
+        try
+        {
+            ThrowIfStateMutationUnavailable();
+            await _refreshGate.WaitAsync(ct);
+            try
+            {
+                var replacement = _dashboardServiceFactory(_settings);
+                var result = await _dataManagementService.ClearUsageHistoryAsync(ct);
+                _dashboardService = replacement;
+                return result;
+            }
+            catch (LocalDataRestoreRollbackException)
+            {
+                EnterFailedRestoreState();
+                throw;
+            }
+            finally { _refreshGate.Release(); }
+        }
+        finally { _stateMutationGate.Release(); }
+    }
 
     public void Dispose()
     {

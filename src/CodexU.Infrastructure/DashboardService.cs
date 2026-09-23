@@ -6,7 +6,9 @@ public sealed class DashboardService(
     IAppServerClient appServerClient,
     ILocalUsageReader localUsageReader,
     ILocalUsageReader? claudeUsageReader = null,
-    QuotaForecastCollector? quotaForecastCollector = null) : IDashboardService
+    QuotaForecastCollector? quotaForecastCollector = null,
+    ILocalUsageReader? localAnalysisReader = null,
+    ILocalUsageReader? claudeAnalysisReader = null) : IDashboardService
 {
     public static DashboardService CreateDefault(
         string? configuredCodexHome = null,
@@ -37,7 +39,11 @@ public sealed class DashboardService(
                 completeRateCatalog,
                 applicationDataDirectory,
                 incrementalIndexEnabled),
-            new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)));
+            new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)),
+            new CodexLocalUsageReader(paths, incrementalIndexEnabled, null, showSubagents,
+                customRates, completeRateCatalog, applicationDataDirectory),
+            new ClaudeCodeUsageReader(paths, null, showSubagents, customRates,
+                completeRateCatalog, applicationDataDirectory, incrementalIndexEnabled));
     }
 
     public async Task<DashboardSnapshot> LoadAsync(
@@ -83,7 +89,7 @@ public sealed class DashboardService(
             local.Goals,
             local.TaskLifecycle,
             local.IndexStatus,
-            diagnostics.Distinct().ToArray(), History: local.History);
+            diagnostics.Distinct().ToArray(), History: local.History, AnalysisData: local.AnalysisData);
         return await WithForecastsAsync(snapshot, primary, secondary, cancellationToken);
     }
 
@@ -178,7 +184,25 @@ public sealed class DashboardService(
         local.Goals,
         local.TaskLifecycle,
         local.IndexStatus,
-        local.Diagnostics, History: local.History);
+        local.Diagnostics, History: local.History, AnalysisData: local.AnalysisData);
+
+    public async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request, CancellationToken cancellationToken = default)
+    {
+        UsageAnalysisQuery.Validate(request);
+        var reader = request.Runtime switch
+        {
+            AgentRuntime.Codex => localAnalysisReader ?? localUsageReader,
+            AgentRuntime.ClaudeCode => claudeAnalysisReader ?? claudeUsageReader ?? throw new InvalidOperationException("Claude Code 用量来源不可用。"),
+            _ => throw new ArgumentException("不支持的工具。", nameof(request))
+        };
+        // Queries do not need account quota, and must not turn a failed local
+        // read into a plausible empty result. The caller surfaces the failure.
+        var local = await reader.ReadAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (local.AnalysisData is null)
+            throw new InvalidOperationException("本机用量读取未完成，暂不能查询明细。" + string.Join("；", local.Diagnostics));
+        return UsageAnalysisQuery.Execute(local.AnalysisData, request, local.Diagnostics);
+    }
 
     private async Task<AppServerSnapshot> ReadAppServerSafelyAsync(CancellationToken cancellationToken)
     {

@@ -4,10 +4,10 @@ namespace CodexU.Infrastructure;
 
 internal sealed class SessionIndexCache
 {
-    // Version 13 adds the normalized feature from session header metadata.
+    // Version 14 reads a provided session title and observed token-field availability.
     // under the field-validating, last-only-aware normalizer semantics. Global
     // canonicalization and parent-prefix removal are recomputed on every read.
-    private const int CurrentVersion = 13;
+    private const int CurrentVersion = 14;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _path;
 

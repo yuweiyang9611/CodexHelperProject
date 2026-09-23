@@ -1,4 +1,5 @@
-import type { AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState } from './types'
+import type { AgentRuntime, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
+import { createDemoAnalysis } from './demoAnalysis'
 import { DEMO_HOST_CAPABILITIES } from './hostCapabilities'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
@@ -32,6 +33,7 @@ const interactiveHostMethods = new Set([
   'data.exportAggregates',
   'data.backup',
   'data.restore',
+  'data.clearHistory',
   'diagnostics.export',
   'diagnostics.rebuildIndex',
 ])
@@ -41,10 +43,11 @@ function demoNow(): Date {
 }
 
 class HostBridge {
+  private mockRuntime: AgentRuntime = 'codex'
   private mockSettings: AppSettings = {
     theme: 'dark', showSubagents: false, compactMode: false, statusStripEnabled: false, statusStripPositionLocked: false, desktopMode: false,
     closeToTray: true,
-    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: true, fiveHourAlertPercent: 20,
+    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: false, fiveHourAlertPercent: 20,
     sevenDayAlertPercent: 20, autoRefreshMinutes: 5, incrementalIndexEnabled: true,
     uiScalePercent: 110,
     amountPerThousandCredits: 40,
@@ -57,10 +60,10 @@ class HostBridge {
     includePrereleaseUpdates: false,
     autoInstallUpdates: true,
     monthlyAmountAlert: 0,
-    minimumRateCoverageAlertPercent: 80,
+    minimumRateCoverageAlertPercent: 0,
     globalHotKey: 'Ctrl+U',
     statusStripQuotaMode: 'remaining',
-    statusStripShowTodayTokens: true,
+    statusStripShowTodayTokens: false,
     customModelRates: [],
     isRateCatalogPinned: false,
   }
@@ -242,7 +245,8 @@ class HostBridge {
       } as T
     }
     if (method === 'runtime.select') {
-      return createDemoSnapshot((payload as { runtime: 'codex' | 'claudeCode' }).runtime) as T
+      this.mockRuntime = (payload as { runtime: AgentRuntime }).runtime
+      return createDemoSnapshot(this.mockRuntime) as T
     }
     if (method === 'settings.get') return { ...this.mockSettings } as T
     if (method === 'settings.update') {
@@ -287,10 +291,10 @@ class HostBridge {
       return {
         builtIn: {
           schemaVersion: 1,
-          catalogVersion: '2026.09.1',
+          catalogVersion: '2026.09.2',
           source: '内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）',
-          publishedOn: '2026-09-09',
-          rateCount: 30,
+          publishedOn: '2026-09-22',
+          rateCount: 32,
         },
         // A representative slice of the real catalog rather than an empty list:
         // the rate editor seeds a new row from these, so an empty array would
@@ -312,6 +316,8 @@ class HostBridge {
           { model: 'gpt-5.6-sol', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
           { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
           { model: 'gpt-6-astra', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-03', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.1', matchMode: 'exact' },
+          { model: 'gpt-6-sol', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
+          { model: 'gpt-6-luna', inputCreditsPerMillion: 2.5, cachedInputCreditsPerMillion: 0.25, outputCreditsPerMillion: 12.5, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
         ],
       } as T
     }
@@ -349,7 +355,9 @@ class HostBridge {
         claudeCode: { snapshot: createDemoSnapshot('claudeCode'), readFailed: false },
       } as T
     }
-    if (method.startsWith('usage.')) return createDemoSnapshot('codex') as T
+    if (method === 'usage.query') return createDemoAnalysis(payload as UsageAnalysisRequest, demoNow()) as T
+    if (method === 'data.clearHistory') return { success: true, message: '演示环境：已确认清理入口，未修改真实历史。' } as T
+    if (method.startsWith('usage.')) return createDemoSnapshot(this.mockRuntime) as T
     return {} as T
   }
 }

@@ -71,7 +71,8 @@ public sealed class CodexLocalUsageReader(
             hasSessionTokens ? session.TaskLifecycle : sqlite.TaskLifecycle,
             session.IndexStatus,
             diagnostics.Distinct().ToArray(),
-            session.History);
+            session.History,
+            session.AnalysisData);
     }
 
     private async Task<LocalUsageSnapshot> ReadSqliteSafelyAsync(CancellationToken cancellationToken)

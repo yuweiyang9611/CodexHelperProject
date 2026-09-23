@@ -35,19 +35,19 @@ test('primary navigation is reachable and operable with the keyboard', async ({ 
   await expect(compactToggle).toHaveAttribute('aria-disabled', 'false')
   await expect(compactToggle).toBeFocused()
 
-  const usageTab = page.getByRole('tab', { name: '用量趋势', exact: true })
+  const usageTab = page.getByRole('tab', { name: '用量分析', exact: true })
   await usageTab.focus()
   await page.keyboard.press('Enter')
   await expect(usageTab).toHaveAttribute('aria-selected', 'true')
 
-  const openFilter = page.getByRole('button', { name: '7 天', exact: true })
-  const todayFilter = page.getByRole('button', { name: '30 天', exact: true })
-  await expect(openFilter).toHaveAttribute('aria-pressed', 'true')
-  await expect(todayFilter).toHaveAttribute('aria-pressed', 'false')
-  await todayFilter.focus()
-  await page.keyboard.press('Space')
-  await expect(todayFilter).toHaveAttribute('aria-pressed', 'true')
+  const openFilter = page.getByRole('button', { name: '近 7 天', exact: true })
+  const todayFilter = page.getByRole('button', { name: '近 30 天', exact: true })
   await expect(openFilter).toHaveAttribute('aria-pressed', 'false')
+  await expect(todayFilter).toHaveAttribute('aria-pressed', 'true')
+  await openFilter.focus()
+  await page.keyboard.press('Space')
+  await expect(todayFilter).toHaveAttribute('aria-pressed', 'false')
+  await expect(openFilter).toHaveAttribute('aria-pressed', 'true')
 
   // This block is about End and the ArrowLeft/ArrowRight wrap, so the locator is
   // "the last tab" rather than a fixed position. The .settings-card assertion below

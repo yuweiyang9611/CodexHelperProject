@@ -364,7 +364,7 @@ public sealed class SidecarHostRpcTests
         Assert.Contains(HostCapabilityNames.StartupRegistration, capabilities);
         Assert.DoesNotContain(HostCapabilityNames.NativeNotifications, capabilities);
         Assert.Contains(HostCapabilityNames.StatusStripControl, capabilities);
-        Assert.Contains(HostCapabilityNames.DesktopMode, capabilities);
+        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, capabilities);
         Assert.Equal(
             new[]
             {

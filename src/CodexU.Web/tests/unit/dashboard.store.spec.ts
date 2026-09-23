@@ -61,9 +61,34 @@ function emit(event: string, payload: unknown) {
 }
 
 beforeEach(() => {
+  localStorage.clear()
   setActivePinia(createPinia())
   mocks.request.mockReset()
   mocks.listeners.clear()
+})
+
+describe('runtime preference', () => {
+  it('restores the last successfully selected runtime when initialized', async () => {
+    localStorage.setItem('codexu.runtime', 'claudeCode')
+    routeRequests({ 'usage.getSnapshot': snapshot({ runtime: 'codex' }), 'runtime.select': snapshot({ runtime: 'claudeCode' }) })
+    const store = useDashboardStore()
+    await store.initialize()
+    expect(store.runtime).toBe('claudeCode')
+    expect(mocks.request).toHaveBeenCalledWith('runtime.select', { runtime: 'claudeCode' })
+  })
+  it('persists event-confirmed switches and ignores invalid saved values', async () => {
+    localStorage.setItem('codexu.runtime', 'other-runtime')
+    routeRequests({})
+    const store = useDashboardStore()
+    await store.initialize()
+    expect(mocks.request.mock.calls.some(([method]) => method === 'runtime.select')).toBe(false)
+    const runtimeSwitch = deferred<DashboardSnapshot>()
+    mocks.request.mockImplementation(async method => method === 'runtime.select' ? runtimeSwitch.promise : snapshot())
+    const pending = store.selectRuntime('claudeCode')
+    emit('usage.snapshotChanged', snapshot({ runtime: 'claudeCode' }))
+    runtimeSwitch.resolve(snapshot({ runtime: 'claudeCode' })); await pending
+    expect(localStorage.getItem('codexu.runtime')).toBe('claudeCode')
+  })
 })
 
 describe('automatic updates', () => {

@@ -131,6 +131,48 @@ public sealed class IpcDispatcherTests
     }
 
     [Fact]
+    public async Task UsageQueryDoesNotSwitchTheSelectedRuntimeOrPublishAnAccountSnapshot()
+    {
+        using var context = TestContext.Create(new ImmediateDashboardService());
+        var result = Assert.IsType<UsageAnalysisResult>(await context.Dispatcher.DispatchAsync(
+            Request("usage.query", new { runtime = "claudeCode", page = 1, pageSize = 10 })));
+        Assert.Equal(AgentRuntime.ClaudeCode, result.Runtime);
+        Assert.Equal(AgentRuntime.Codex, context.Session.CurrentRuntime);
+        Assert.Empty(context.EventSink.EventsFor("usage.snapshotChanged"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClearHistoryRequiresNativeConfirmation(bool confirmed)
+    {
+        var interaction = new ConfirmingUserInteractionService(confirmed);
+        using var context = TestContext.Create(new ImmediateDashboardService(), interaction);
+        var history = new DailyUsageHistoryStore(context.DataDirectory);
+        await history.SaveAsync(AgentRuntime.Codex,
+            [new(DateOnly.FromDateTime(DateTime.Today), new(100, 0, 0, 0, 100), 0, 0, DataQuality.Detailed)], "all");
+        var result = Assert.IsType<LocalOperationResult>(await context.Dispatcher.DispatchAsync(Request("data.clearHistory")));
+        Assert.Equal(confirmed, result.Success);
+        Assert.Equal(confirmed, (await history.LoadAsync(AgentRuntime.Codex, "all")).Count == 0);
+        Assert.Equal(confirmed ? 1 : 0, context.EventSink.EventsFor("usage.snapshotChanged").Count);
+        Assert.Contains("原始日志", Assert.Single(interaction.Confirmations).Message);
+    }
+
+    [Fact]
+    public async Task ClearHistoryWaitsForAConcurrentAnalysisRead()
+    {
+        var service = new BlockingDashboardService();
+        using var context = TestContext.Create(service);
+        var query = context.Session.QueryUsageAsync(new());
+        await service.Started.WaitAsync(TimeSpan.FromSeconds(5));
+        var clear = context.Session.ClearUsageHistoryAsync();
+        try { await Assert.ThrowsAsync<TimeoutException>(() => clear.WaitAsync(TimeSpan.FromMilliseconds(150))); }
+        finally { service.Release(); }
+        await query;
+        Assert.True((await clear).Success);
+    }
+
+    [Fact]
     public async Task BackupWaitsForAnActiveRefreshBeforeReadingHistory()
     {
         var dashboardService = new BlockingDashboardService();
@@ -529,7 +571,7 @@ public sealed class IpcDispatcherTests
         private readonly string _rootDirectory;
         private readonly string _dataDirectory;
 
-        private TestContext(IDashboardService dashboardService)
+        private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -551,7 +593,7 @@ public sealed class IpcDispatcherTests
                 Session,
                 hostEnvironment,
                 EventSink,
-                new ConfirmingUserInteractionService(),
+                interaction ?? new ConfirmingUserInteractionService(),
                 new NoOpWindowCommands(),
                 new UnsupportedExternalUriLauncher());
         }
@@ -566,7 +608,7 @@ public sealed class IpcDispatcherTests
 
         public RecordingEventSink EventSink { get; }
 
-        public static TestContext Create(IDashboardService dashboardService) => new(dashboardService);
+        public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null) => new(dashboardService, interaction);
 
         public void Dispose()
         {
@@ -719,8 +761,9 @@ public sealed class IpcDispatcherTests
         }
     }
 
-    private sealed class ConfirmingUserInteractionService : IUserInteractionService
+    private sealed class ConfirmingUserInteractionService(bool confirmed = true) : IUserInteractionService
     {
+        public List<HostConfirmationRequest> Confirmations { get; } = [];
         public Task<string?> PickSaveFileAsync(
             HostFileDialogRequest request,
             CancellationToken cancellationToken = default) =>
@@ -733,8 +776,11 @@ public sealed class IpcDispatcherTests
 
         public Task<bool> ConfirmAsync(
             HostConfirmationRequest request,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(true);
+            CancellationToken cancellationToken = default)
+        {
+            Confirmations.Add(request);
+            return Task.FromResult(confirmed);
+        }
     }
 
     private sealed class UnsupportedExternalUriLauncher : IExternalUriLauncher

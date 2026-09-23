@@ -13,8 +13,8 @@ export const HOST_CAPABILITY = Object.freeze({
 
 export type HostCapabilityName = typeof HOST_CAPABILITY[keyof typeof HOST_CAPABILITY]
 
-// The browser demo emulates the legacy Windows host so every desktop setting can
-// still be exercised by visual and interaction tests. Native hosts advertise only
+// The browser demo emulates supported Windows capabilities for visual and
+// interaction tests. Native hosts advertise only
 // the capabilities they actually implement in app.initialize.
 export const DEMO_HOST_CAPABILITIES: readonly string[] = Object.freeze([
   'usage',
@@ -30,7 +30,6 @@ export const DEMO_HOST_CAPABILITIES: readonly string[] = Object.freeze([
   HOST_CAPABILITY.nativeDialogs,
   HOST_CAPABILITY.nativeNotifications,
   HOST_CAPABILITY.statusStripControl,
-  HOST_CAPABILITY.desktopMode,
   HOST_CAPABILITY.tray,
   HOST_CAPABILITY.alwaysOnTop,
   HOST_CAPABILITY.globalHotKey,

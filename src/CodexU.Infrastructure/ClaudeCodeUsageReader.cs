@@ -52,7 +52,9 @@ public sealed partial class ClaudeCodeUsageReader(
                 usageEvents += summary.Count;
                 var bucket = new UsageBucket(date, model, tokens);
                 attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.Count, item.Branch, history?.Kind(sourceId) ?? "live",
-                    source.Identity is null ? "unknown" : source.Identity.Contains("/agent:", StringComparison.Ordinal) ? "subagents" : "tasks"));
+                    source.Identity is null ? "unknown" : source.Identity.Contains("/agent:", StringComparison.Ordinal) ? "subagents" : "tasks",
+                    ParentSessionId: source.Identity is { } identity && identity.IndexOf("/agent:", StringComparison.Ordinal) is var agentStart && agentStart > 0
+                        ? identity[..agentStart] : null, AvailableFields: item.AvailableFields));
                 lifetime.Add(bucket);
 
             }
@@ -106,7 +108,8 @@ public sealed partial class ClaudeCodeUsageReader(
             TaskLifecycleStats.Empty,
             indexStatus,
             diagnostics.Distinct().ToArray(),
-            projection.History);
+            projection.History,
+            projection.AnalysisData);
     }
 
     private static bool IsAssistantMessage(JsonElement root, out JsonElement message)
@@ -188,6 +191,30 @@ public sealed partial class ClaudeCodeUsageReader(
         oneHour = Math.Min(oneHour, total);
         fiveMinute = Math.Max(0, total - oneHour);
         return (fiveMinute, oneHour);
+    }
+
+    private static UsageBreakdownFields ReadAvailableFields(JsonElement root, JsonElement message)
+    {
+        var usage = message.TryGetProperty("usage", out var nested) && nested.ValueKind == JsonValueKind.Object
+            ? nested : root.TryGetProperty("usage", out var direct) && direct.ValueKind == JsonValueKind.Object ? direct : default;
+        if (usage.ValueKind != JsonValueKind.Object) return UsageBreakdownFields.None;
+        static bool Has(JsonElement obj, string name) => obj.ValueKind == JsonValueKind.Object
+            && obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var count) && count >= 0;
+        var fields = UsageBreakdownFields.None;
+        if (Has(usage, "input_tokens") && Has(usage, "cache_creation_input_tokens") && Has(usage, "cache_read_input_tokens"))
+            fields |= UsageBreakdownFields.Input;
+        if (Has(usage, "cache_read_input_tokens")) fields |= UsageBreakdownFields.CachedInput;
+        if (Has(usage, "output_tokens")) fields |= UsageBreakdownFields.Output;
+        if (Has(usage, "cache_creation_input_tokens"))
+        {
+            var total = usage.GetProperty("cache_creation_input_tokens").GetInt64();
+            if (total == 0) fields |= UsageBreakdownFields.CacheWrite5m | UsageBreakdownFields.CacheWrite1h;
+            else if (usage.TryGetProperty("cache_creation", out var creation)
+                && Has(creation, "ephemeral_5m_input_tokens") && Has(creation, "ephemeral_1h_input_tokens")
+                && creation.GetProperty("ephemeral_5m_input_tokens").GetInt64() + creation.GetProperty("ephemeral_1h_input_tokens").GetInt64() == total)
+                fields |= UsageBreakdownFields.CacheWrite5m | UsageBreakdownFields.CacheWrite1h;
+        }
+        return fields;
     }
 
     private static void CountTools(

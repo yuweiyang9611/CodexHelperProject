@@ -48,7 +48,6 @@
                     <ColumnDefinition Width="20" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition x:Name="TodayColumn" Width="*" />
                     <ColumnDefinition Width="28" />
                 </Grid.ColumnDefinitions>
                 <Button Content="C" Click="Open_Click" Width="27" Height="27" Padding="0" FontSize="12"
@@ -74,12 +73,7 @@
                     <Run x:Name="SecondaryLabel" Text="7d 剩余  " />
                     <Run x:Name="SecondaryText" Foreground="White" FontWeight="SemiBold" Text="--" />
                 </TextBlock>
-                <TextBlock x:Name="TodayBlock" Grid.Column="4" VerticalAlignment="Center"
-                           Foreground="#8E9AB4" FontSize="11" Text="今日  "
-                           TextTrimming="CharacterEllipsis">
-                    <Run x:Name="TodayText" Foreground="White" FontWeight="SemiBold" Text="--" />
-                </TextBlock>
-                <ToggleButton x:Name="ExpandToggle" Grid.Column="5" Width="26" Height="26" Padding="0"
+                <ToggleButton x:Name="ExpandToggle" Grid.Column="4" Width="26" Height="26" Padding="0"
                               BorderThickness="0" Background="Transparent" Foreground="#77839C" Cursor="Hand"
                               Click="ExpandToggle_Click"
                               PreviewKeyDown="ExpandToggle_PreviewKeyDown"
@@ -118,22 +112,8 @@
                                    VerticalAlignment="Top" Foreground="#F0B35A" FontSize="10"
                                    IsHitTestVisible="False" />
                     </Grid>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel x:Name="WeekBlock">
-                            <TextBlock Text="近 7 天" Foreground="#707C96" FontSize="11" />
-                            <TextBlock x:Name="WeekText" Text="--" Foreground="White" FontSize="15"
-                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                        <StackPanel x:Name="LifetimeBlock" Grid.Column="1">
-                            <TextBlock Text="累计" Foreground="#707C96" FontSize="11" />
-                            <TextBlock x:Name="LifetimeText" Text="--" Foreground="White" FontSize="15"
-                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                    </Grid>
+                    <TextBlock x:Name="PrimaryResetText" Foreground="#9FA9BE" FontSize="11" Margin="0,2,0,2" Text="5 小时额度 · 刷新时间未知" />
+                    <TextBlock x:Name="SecondaryResetText" Foreground="#9FA9BE" FontSize="11" Margin="0,2,0,2" Text="7 天额度 · 刷新时间未知" />
                     <Grid Margin="0,14,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
