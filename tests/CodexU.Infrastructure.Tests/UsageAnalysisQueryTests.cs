@@ -191,6 +191,26 @@ public sealed class UsageAnalysisQueryTests
         Assert.Equal(expected.CreditsUsed, data.Entries[0].CreditsUsed);
     }
 
+    [Theory]
+    [InlineData("gpt-6-sol", 2d)]
+    [InlineData("gpt-6-luna", 0.1d)]
+    public void NewCodexModels_RepriceRetainedUsageWithTheApplicableCatalog(string model, double inputDollars)
+    {
+        var release = new DateOnly(2026, 9, 22);
+        var data = UsageHistoryProjection.BuildAnalysis([
+            Row("pre-release", release.AddDays(-1), 1_000_000, model),
+            Row("retained", release, 1_000_000, model) with { SourceKind = "retained" }], [], null, false);
+        var before = UsageAnalysisQuery.Execute(data, new(To: release.AddDays(-1)));
+        Assert.Null(before.Totals.CreditsUsed);
+        Assert.Single(before.MissingRates!);
+        var after = UsageAnalysisQuery.Execute(data, new(From: release));
+        Assert.Equal(inputDollars, UsageCredits.ToAmount(after.Totals.CreditsUsed!.Value), 8);
+        Assert.Equal(1_000_000, after.Totals.RatedTokens);
+        Assert.Empty(after.MissingRates!);
+        Assert.Equal("retained", Assert.Single(Assert.Single(after.Sessions).Members).Sources.Single());
+        Assert.Equal("2026.09.2", Assert.Single(data.Entries, e => e.Date == release).Rate!.CatalogVersion);
+    }
+
     private static AttributedUsage Row(string source, DateOnly date, long tokens, string model = "model-a", string? project = "D:/Project") =>
         new(source, project, date, model, new(tokens, 0, 0, 0, tokens), 1, Feature: "tasks",
             AvailableFields: UsageBreakdownFields.Input | UsageBreakdownFields.Output | UsageBreakdownFields.CachedInput);

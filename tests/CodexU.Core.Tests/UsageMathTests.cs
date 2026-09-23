@@ -505,14 +505,47 @@ public sealed class UsageMathTests
     [Fact]
     public void BuiltInCatalog_IdentifiesCurrentOfficialOpenAiCatalog()
     {
-        Assert.Equal("2026.09.1", UsageCredits.BuiltInCatalog.CatalogVersion);
-        Assert.Equal(new DateOnly(2026, 9, 9), UsageCredits.BuiltInCatalog.PublishedOn);
+        Assert.Equal("2026.09.2", UsageCredits.BuiltInCatalog.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 9, 22), UsageCredits.BuiltInCatalog.PublishedOn);
         Assert.Contains("OpenAI API Standard", UsageCredits.BuiltInCatalog.Source, StringComparison.Ordinal);
 
         var astra = Assert.Single(UsageCredits.BuiltInRates, rate => rate.Model == "gpt-6-astra");
         Assert.Equal("2026.09.1", astra.CatalogVersion);
         Assert.Equal(new DateOnly(2026, 9, 3), astra.EffectiveFrom);
         Assert.Contains("OpenAI API", astra.Source, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("gpt-6-sol", 2d, 0.2d, 10d)]
+    [InlineData("gpt-6-luna", 0.1d, 0.01d, 0.5d)]
+    public void September22Models_UseOfficialRatesOnlyFromRelease(string model, double input, double cached, double output)
+    {
+        var release = new DateOnly(2026, 9, 22);
+        Assert.Null(UsageCredits.FindRate(model, release.AddDays(-1), null));
+        var rate = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(model, release, null));
+        Assert.Equal(input * UsageCredits.CreditsPerDollar, rate.InputCreditsPerMillion);
+        Assert.Equal(cached * UsageCredits.CreditsPerDollar, rate.CachedInputCreditsPerMillion);
+        Assert.Equal(output * UsageCredits.CreditsPerDollar, rate.OutputCreditsPerMillion);
+        Assert.Equal(release, rate.EffectiveFrom);
+        Assert.Equal("2026.09.2", rate.CatalogVersion);
+        Assert.Equal("exact", rate.MatchMode);
+
+        // Cached input is included in input, so price 1M uncached + 1M cached + 1M output.
+        var tokens = new TokenBreakdown(2_000_000, 1_000_000, 1_000_000, 0, 3_000_000);
+        var priced = UsageCredits.Calculate([new DatedModelTokenUsage(release, model, tokens)]);
+        Assert.Equal(input + cached + output, UsageCredits.ToAmount(priced.CreditsUsed), 8);
+        Assert.Equal(0, priced.UnratedTokens);
+        var historical = UsageCredits.Calculate([new DatedModelTokenUsage(release.AddDays(-1), model, tokens)]);
+        Assert.Equal(3_000_000, historical.UnratedTokens);
+        Assert.Empty(historical.ByModel);
+
+        var custom = new ModelCreditRate(model, 1, 1, 1, release);
+        Assert.Same(custom, UsageCredits.FindRate(model, release, [custom]));
+        var pinned = new[] { new ModelCreditRate("gpt-5.6-sol", 100, 10, 500) };
+        Assert.Null(UsageCredits.FindRate(model, release, pinned, completeRateCatalog: true));
+        Assert.Null(UsageCredits.FindRate(model + "-unannounced", release, null));
+        var exported = UsageCredits.CreateCatalogDocument();
+        Assert.Contains(rate, exported.Rates);
     }
 
     [Theory]

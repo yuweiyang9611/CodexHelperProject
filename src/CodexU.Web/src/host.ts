@@ -291,10 +291,10 @@ class HostBridge {
       return {
         builtIn: {
           schemaVersion: 1,
-          catalogVersion: '2026.09.1',
+          catalogVersion: '2026.09.2',
           source: '内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）',
-          publishedOn: '2026-09-09',
-          rateCount: 30,
+          publishedOn: '2026-09-22',
+          rateCount: 32,
         },
         // A representative slice of the real catalog rather than an empty list:
         // the rate editor seeds a new row from these, so an empty array would
@@ -316,6 +316,8 @@ class HostBridge {
           { model: 'gpt-5.6-sol', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
           { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
           { model: 'gpt-6-astra', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-03', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.1', matchMode: 'exact' },
+          { model: 'gpt-6-sol', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
+          { model: 'gpt-6-luna', inputCreditsPerMillion: 2.5, cachedInputCreditsPerMillion: 0.25, outputCreditsPerMillion: 12.5, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
         ],
       } as T
     }

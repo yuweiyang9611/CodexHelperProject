@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AppSettings, IpcEnvelope } from '../../src/types'
+import type { AppSettings, IpcEnvelope, RateCatalogSnapshot } from '../../src/types'
+import { builtInModelNames, newestBuiltInRateFor } from '../../src/builtInRates'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
 type WebViewMessageListener = (event: MessageEvent) => void
@@ -117,5 +118,25 @@ describe('HostBridge transport selection', () => {
 
     expect(host.isNative).toBe(false)
     await expect(settingsRequest).resolves.toMatchObject({ theme: 'dark', globalHotKey: 'Ctrl+U' })
+  })
+
+  it('offers September 22 models with dated official rates in the rate editor', async () => {
+    vi.useFakeTimers()
+    const { host } = await import('../../src/host')
+    const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
+    await vi.advanceTimersByTimeAsync(180)
+    const catalog = await request
+    expect(catalog.builtIn).toMatchObject({ catalogVersion: '2026.09.2', publishedOn: '2026-09-22', rateCount: 32 })
+    for (const [model, input, cached, output] of [
+      ['gpt-6-sol', 50, 5, 250], ['gpt-6-luna', 2.5, 0.25, 12.5],
+    ] as const) {
+      expect(builtInModelNames(catalog.builtInRates)).toContain(model)
+      expect(newestBuiltInRateFor(catalog.builtInRates, model, '2026-09-21')).toBeNull()
+      expect(newestBuiltInRateFor(catalog.builtInRates, model, '2026-09-22')).toMatchObject({
+        inputCreditsPerMillion: input, cachedInputCreditsPerMillion: cached, outputCreditsPerMillion: output,
+        effectiveFrom: '2026-09-22', catalogVersion: '2026.09.2', matchMode: 'exact',
+      })
+    }
+    expect(newestBuiltInRateFor(catalog.builtInRates, 'gpt-6-astra', '2026-09-22')?.catalogVersion).toBe('2026.09.1')
   })
 })

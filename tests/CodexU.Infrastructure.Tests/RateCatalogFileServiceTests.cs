@@ -49,8 +49,13 @@ public sealed class RateCatalogFileServiceTests
             Assert.Equal(UsageCredits.CurrentCatalogVersion, imported.BaseCatalogVersion);
             Assert.Contains(imported.Rates, rate =>
                 rate.Model == "gpt-6-astra"
-                && rate.CatalogVersion == UsageCredits.CurrentCatalogVersion
+                && rate.CatalogVersion == "2026.09.1"
                 && rate.MatchMode == "exact");
+            foreach (var model in new[] { "gpt-6-sol", "gpt-6-luna" })
+                Assert.Contains(imported.Rates, rate => rate.Model == model
+                    && rate.CatalogVersion == UsageCredits.CurrentCatalogVersion
+                    && rate.EffectiveFrom == new DateOnly(2026, 9, 22)
+                    && rate.MatchMode == "exact");
             Assert.Null(UsageCredits.FindRate(
                 "gpt-5.2-premium",
                 new DateOnly(2026, 7, 16),
