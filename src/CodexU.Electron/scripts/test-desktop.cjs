@@ -110,6 +110,40 @@ const os = require('node:os');
       : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
     assert(strings(exported).every(value => !value.includes(root)), 'aggregate export excludes full project paths');
     assert(strings(exported).every(value => !value.includes('session:desktop-e2e')), 'aggregate export excludes session identities');
+    const selectedExport = path.join(root, 'selected.json');
+    await application.evaluate(({ dialog }, destination) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
+    }, selectedExport);
+    await page.locator('#tab-usage').click();
+    await page.getByRole('button', { name: '全部历史', exact: true }).click();
+    await page.getByLabel(/^模型/).selectOption('claude-sonnet-4-5');
+    await page.locator('.analysis-summary').waitFor();
+    await page.getByRole('button', { name: '导出 JSON', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '当前筛选的全部匹配用量' }).waitFor();
+    const selected = JSON.parse(await fs.readFile(selectedExport, 'utf8'));
+    assert.equal(selected.schemaVersion, 3);
+    assert.equal(selected.filters.model, 'claude-sonnet-4-5');
+    assert.equal(selected.totals.tokens, 120);
+    assert(Array.isArray(selected.appliedRates));
+    assert(strings(selected).every(value => !value.includes(root)));
+    await application.evaluate(({ dialog }) => {
+      dialog.showSaveDialog = async () => ({ canceled: true });
+    });
+    await page.getByRole('button', { name: '导出 CSV', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '已取消导出' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '导出 JSON', exact: true }).isEnabled(), true);
+    // An empty filtered CSV still carries metadata through the real renderer/preload/Sidecar bridge.
+    const emptyExport = path.join(root, 'empty.csv');
+    await application.evaluate(({ dialog }, destination) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
+    }, emptyExport);
+    assert.equal((await request(page, 'data.exportAggregates', {
+      format: 'csv', query: { runtime: 'claudeCode', from: '2099-01-01' },
+    })).success, true);
+    const emptyCsv = await fs.readFile(emptyExport, 'utf8');
+    assert(emptyCsv.includes('metadata,'));
+    assert(!emptyCsv.includes('day,'));
+    await page.locator('#tab-overview').click();
     const backup = path.join(root, 'backup.json');
     await application.evaluate(({ dialog }, backup) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: backup });

@@ -8,6 +8,7 @@ $electronPackager = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU
 $electronLegalVerifier = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\scripts\verify-legal-payload.mjs') -Raw -Encoding utf8
 $electronReleaseIntegrity = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\scripts\release-integrity.mjs') -Raw -Encoding utf8
 $electronMain = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\main.ts') -Raw -Encoding utf8
+$electronLifecycle = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\lifecycle.ts') -Raw -Encoding utf8
 $electronWindowsHost = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\windowsHost.ts') -Raw -Encoding utf8
 $electronNativeNotifications = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\nativeNotifications.ts') -Raw -Encoding utf8
 $sidecarHostRpc = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Sidecar\SidecarHostRpc.cs') -Raw -Encoding utf8
@@ -147,14 +148,22 @@ Assert-NotContains $installer 'Name: "{app}\*"' `
     'Installer must never recursively delete the whole installation directory.'
 Assert-Matches $installer 'function\s+InitializeUninstall\(\):\s*Boolean;.*?--maintenance-shutdown.*?ewWaitUntilTerminated.*?ResultCode\s*=\s*0' `
     'Uninstall must fail closed while waiting for the resident Electron process to shut down.'
-Assert-Contains $electronMain `
-    'const maintenanceShutdownRequests = new CompletionQueue<string, MaintenanceShutdownOutcome>();' `
+Assert-Contains $electronMain 'const shutdown = new ShutdownCoordinator({' `
+    'Electron must use the shared shutdown coordinator.'
+Assert-Contains $electronMain 'if (shutdown.begin()) event.preventDefault();' `
+    'Electron must keep its before-quit barrier until the coordinator completes.'
+Assert-Contains $electronMain 'shutdown.requestMaintenance(marker);' `
+    'Maintenance requests must enter the shared shutdown coordinator.'
+Assert-Contains $electronMain 'closeSidecars: shutdownActiveSidecars,' `
+    'Shutdown must wait for the real Sidecar drain.'
+Assert-Contains $electronLifecycle `
+    'private readonly requests = new CompletionQueue<string, ShutdownOutcome>();' `
     'Maintenance shutdown requests must retain late markers until the shutdown outcome is known.'
-Assert-Matches $electronMain `
-    '(?s)function\s+completeApplicationShutdown.*?maintenanceShutdownRequests\.complete\(outcome\).*?acknowledgeMaintenanceShutdown' `
+Assert-Matches $electronLifecycle `
+    '(?s)private\s+async\s+finish.*?this\.requests\.complete\(outcome\).*?this\.acknowledge' `
     'Every queued maintenance marker must receive the completed shutdown outcome.'
 Assert-Matches $electronMain `
-    '(?s)function\s+acknowledgeMaintenanceShutdown.*?else\s+writeMaintenanceShutdownFailureMarker\(maintenanceMarker\)' `
+    '(?s)acknowledge:\s*\(marker,\s*outcome\)\s*=>.*?else\s+writeMaintenanceShutdownFailureMarker\(marker\)' `
     'A failed Sidecar shutdown must explicitly fail the maintenance handshake.'
 Assert-Contains $electronWindowsHost "export const WINDOWS_LOGIN_ITEM_NAME = 'codexU';" `
     'Electron startup registration must use the installer-owned stable value name.'

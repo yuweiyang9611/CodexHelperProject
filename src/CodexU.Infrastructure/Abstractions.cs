@@ -14,10 +14,14 @@ public interface ILocalUsageReader
 
 public interface IDashboardService
 {
+    /// <summary>Discard reconstructible query state after local maintenance. Refresh also invalidates it.</summary>
+    void InvalidateUsageAnalysis() { }
+
     Task<DashboardSnapshot> LoadAsync(
         AgentRuntime runtime = AgentRuntime.Codex,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Query the current read revision; call LoadAsync or invalidate after source changes.</summary>
     async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request, CancellationToken cancellationToken = default)
     {
         var snapshot = await LoadAsync(request.Runtime, cancellationToken);

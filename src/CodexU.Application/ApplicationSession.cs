@@ -378,14 +378,15 @@ public sealed class ApplicationSession : IDisposable
         return _lastUpdateResult;
     }
 
-    public async Task<LocalOperationResult> ExportAggregatesAsync(string path, string format)
+    public async Task<LocalOperationResult> ExportAggregatesAsync(string path, string format, UsageAnalysisRequest? query = null)
     {
-        var analysis = await QueryUsageAsync(new(CurrentRuntime));
+        var analysis = await QueryUsageAsync(query ?? new(CurrentRuntime));
         return await _dataManagementService.ExportUsageAnalysisAsync(
             analysis,
             path,
             format,
-            _lifetimeCancellation.Token);
+            _lifetimeCancellation.Token,
+            query);
     }
 
     public async Task<LocalOperationResult> BackupStateAsync(string path)
@@ -531,6 +532,7 @@ public sealed class ApplicationSession : IDisposable
         await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
         try
         {
+            _dashboardService.InvalidateUsageAnalysis();
             return await _dataManagementService.RebuildSessionIndexAsync(_lifetimeCancellation.Token);
         }
         finally

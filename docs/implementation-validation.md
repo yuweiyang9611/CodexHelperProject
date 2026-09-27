@@ -1,5 +1,7 @@
 # 六项实施验证记录
 
+本文是 2026-09-12 的历史记录，包含已退役桌面副本的旧实现。当前功能与待验收范围以 [用量历史与桌面功能](usage-history-and-desktop.md) 和 [Windows 验收矩阵](windows-acceptance.md) 为准。
+
 日期：2026-09-12。首次实施代码和本机验证已落地；合并后的主线 CI 已通过安装生命周期。专用 Windows 桌面矩阵仍未验收，因此不声明所有平台验收完成，不发布稳定版。
 
 远端补充证据：[主线 19f7c1c 的 CI](https://github.com/yuweiyang9611/CodexHelperProject/actions/runs/34665919361) 已成功，包含真实 Electron、打包 smoke、视觉/无障碍，以及安装、从 v0.5.0 升级和卸载。下方性能表是优化前记录，不代表后续缓存修复的性能。

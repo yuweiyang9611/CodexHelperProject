@@ -105,16 +105,35 @@ public sealed class LocalDataManagementService(
         return new LocalOperationResult(true, $"聚合报表已导出：{path}", path);
     }
 
-    /// <summary>Export the whole-history query's aggregate views without source identifiers or private metadata.</summary>
+    /// <summary>Export aggregate views with optional selection metadata, excluding private source identifiers.</summary>
     public async Task<LocalOperationResult> ExportUsageAnalysisAsync(
         UsageAnalysisResult analysis,
         string path,
         string format,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        UsageAnalysisRequest? selection = null)
     {
         ArgumentNullException.ThrowIfNull(analysis);
-        if (analysis.From is not null || analysis.To is not null)
+        if (selection is null && (analysis.From is not null || analysis.To is not null))
             throw new ArgumentException("导出需要当前工具的全部历史查询。", nameof(analysis));
+        if (selection is not null)
+        {
+            UsageAnalysisQuery.Validate(selection);
+            if (selection.Runtime != analysis.Runtime || selection.From != analysis.From || selection.To != analysis.To)
+                throw new ArgumentException("导出筛选与查询结果不一致。", nameof(selection));
+        }
+        var filters = selection is null ? null : new
+        {
+            selection.From,
+            selection.To,
+            model = string.IsNullOrWhiteSpace(selection.Model) ? null : UsageCredits.NormalizeModel(selection.Model),
+            project = string.IsNullOrWhiteSpace(selection.Project) ? null
+                : string.Equals(selection.Project, UsageAnalysisQuery.UnknownProject, StringComparison.OrdinalIgnoreCase) ? "未知项目"
+                : Path.GetFileName(WorkspaceScope.Normalize(selection.Project)!.TrimEnd('/', '\\')),
+            projectPathOmitted = !string.IsNullOrWhiteSpace(selection.Project)
+                && !string.Equals(selection.Project, UsageAnalysisQuery.UnknownProject, StringComparison.OrdinalIgnoreCase)
+        };
+        var scope = selection is null ? "当前工具全部本机历史" : "当前筛选的全部匹配用量（不限当前页）";
         if (!string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("仅支持 CSV 或 JSON 导出。", nameof(format));
@@ -128,9 +147,23 @@ public sealed class LocalDataManagementService(
             {
                 var historical = analysis.LegacyEstimates.ToDictionary(e => e.Date);
                 var builder = new StringBuilder("date,tokens,credits_used,unrated_tokens,unattributed_tokens,legacy_whole_day_estimate_not_additive\r\n");
+                if (selection is not null)
+                {
+                    // One metadata row also preserves filters and rate provenance for an empty range.
+                    builder.Clear().Append("record_type,date,tokens,credits_used,unrated_tokens,unattributed_tokens,legacy_whole_day_estimate_not_additive,selection_json,applied_rates_json\r\n");
+                    builder.Append("metadata,,,,,,,").Append(QuoteCsv(JsonSerializer.Serialize(new
+                    {
+                        schemaVersion = 3,
+                        runtime = analysis.Runtime == AgentRuntime.Codex ? "codex" : "claudeCode",
+                        scope,
+                        filters
+                    }, JsonOptions))).Append(',')
+                        .Append(QuoteCsv(JsonSerializer.Serialize(analysis.AppliedRates ?? [], JsonOptions))).Append("\r\n");
+                }
                 foreach (var day in analysis.Days)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (selection is not null) builder.Append("day,");
                     builder.Append(day.Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
                         .Append(day.Totals.Tokens).Append(',')
                         .Append(day.Totals.CreditsUsed?.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
@@ -138,7 +171,7 @@ public sealed class LocalDataManagementService(
                         .Append(day.Totals.UnattributedTokens).Append(',')
                         .Append(historical.TryGetValue(day.Date, out var estimate)
                             ? estimate.CreditsUsed.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) : "")
-                        .Append("\r\n");
+                        .Append(selection is null ? "\r\n" : ",,\r\n");
                 }
                 await File.WriteAllTextAsync(temporaryPath, builder.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken);
             }
@@ -146,9 +179,11 @@ public sealed class LocalDataManagementService(
             {
                 var export = new
                 {
-                    schemaVersion = 2,
+                    schemaVersion = selection is null ? 2 : 3,
                     exportedAt = DateTimeOffset.Now,
-                    scope = "当前工具全部本机历史",
+                    scope,
+                    filters,
+                    appliedRates = analysis.AppliedRates ?? [],
                     runtime = analysis.Runtime == AgentRuntime.Codex ? "codex" : "claudeCode",
                     analysis.AvailableFrom,
                     analysis.AvailableTo,
@@ -173,8 +208,10 @@ public sealed class LocalDataManagementService(
         {
             DeleteTemporaryFile(temporaryPath);
         }
-        return new LocalOperationResult(true, $"当前工具全部本机历史报表已导出：{path}。旧整日估值仅供参考，不与明细金额相加。", path);
+        return new LocalOperationResult(true, $"{scope}报表已导出：{path}。旧整日估值仅供参考，不与明细金额相加。", path);
     }
+
+    private static string QuoteCsv(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
 
     public async Task<LocalOperationResult> BackupAsync(
         AppSettings settings,

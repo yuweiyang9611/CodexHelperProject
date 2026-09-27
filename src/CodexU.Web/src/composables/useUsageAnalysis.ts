@@ -31,6 +31,8 @@ export function useUsageAnalysis(runtime: Ref<AgentRuntime>, revision: Ref<unkno
   const error = ref<string | null>(null)
   let generation = 0
   let disposed = false
+  let running = false
+  let pending: { generation: number, request: UsageAnalysisRequest } | null = null
   const range = computed(() => {
     // A host refresh after midnight advances rolling periods without resetting filters.
     void revision.value
@@ -41,29 +43,46 @@ export function useUsageAnalysis(runtime: Ref<AgentRuntime>, revision: Ref<unkno
   const request = computed<UsageAnalysisRequest>(() => ({ runtime: runtime.value,
     ...range.value, model: model.value || null, project: project.value || null, page: page.value, pageSize: 25 }))
 
-  async function refresh() {
+  async function drain() {
+    if (running) return
+    running = true
+    try {
+      while (pending && !disposed) {
+        const current = pending
+        pending = null
+        try {
+          const data = await host.request<UsageAnalysisResult>('usage.query', current.request)
+          if (current.generation === generation && !disposed) {
+            result.value = data
+            options.value = { models: data.availableModels, projects: data.availableProjects }
+          }
+        } catch (reason) {
+          if (current.generation === generation && !disposed) error.value = reason instanceof Error ? reason.message : String(reason)
+        } finally {
+          if (current.generation === generation && !disposed) loading.value = false
+        }
+      }
+    } finally { running = false }
+  }
+
+  function refresh() {
     const current = ++generation
+    pending = null
     result.value = null
     error.value = validation.value
     if (validation.value) { loading.value = false; return }
     if (!revision.value) { loading.value = false; return }
     loading.value = true
-    try {
-      const data = await host.request<UsageAnalysisResult>('usage.query', request.value)
-      if (current === generation && !disposed) {
-        result.value = data
-        options.value = { models: data.availableModels, projects: data.availableProjects }
-      }
-    } catch (reason) {
-      if (current === generation && !disposed) error.value = reason instanceof Error ? reason.message : String(reason)
-    } finally { if (current === generation && !disposed) loading.value = false }
+    // At most one active request and one latest selection; intermediate filters never enter IPC.
+    pending = { generation: current, request: request.value }
+    void drain()
   }
   watch(runtime, () => { model.value = ''; project.value = ''; page.value = 1; options.value = { models: [], projects: [] } }, { flush: 'sync' })
   watch([period, customFrom, customTo, model, project], () => { page.value = 1 }, { flush: 'sync' })
   watch([request, revision], refresh, { immediate: true })
-  onScopeDispose(() => { disposed = true; generation++ })
+  onScopeDispose(() => { disposed = true; generation++; pending = null })
   function selectDate(date: string) { customFrom.value = date; customTo.value = date; period.value = 'custom' }
-  return { period, customFrom, customTo, model, project, metric, page, result, options, loading, error, range, refresh, selectDate }
+  return { period, customFrom, customTo, model, project, metric, page, result, options, loading, error, range, request, refresh, selectDate }
 }
 
 export type UsageAnalysisState = ReturnType<typeof useUsageAnalysis>

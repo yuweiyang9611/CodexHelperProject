@@ -37,12 +37,44 @@ describe('usage analysis filtering and source consistency', () => {
     const runtime = ref<AgentRuntime>('codex')
     const state = scope.run(() => useUsageAnalysis(runtime, ref('ready')))!
     runtime.value = 'claudeCode'; await flush()
-    pending[1]!(createDemoAnalysis({ runtime: 'claudeCode', page: 1, pageSize: 25 }, new Date())); await flush()
+    expect(pending).toHaveLength(1)
     pending[0]!(createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25 }, new Date())); await flush()
+    expect(state.result.value).toBeNull()
+    pending[1]!(createDemoAnalysis({ runtime: 'claudeCode', page: 1, pageSize: 25 }, new Date())); await flush()
     expect(state.result.value!.runtime).toBe('claudeCode')
     state.period.value = 'all'; await flush()
     expect(state.result.value).toBeNull()
     expect(state.loading.value).toBe(true)
+  })
+  it('coalesces rapid filter changes and continues after an obsolete request fails', async () => {
+    let fail!: (reason: Error) => void
+    request.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+    const state = scope.run(() => useUsageAnalysis(ref<AgentRuntime>('codex'), ref('ready')))!
+    state.period.value = '7'; await flush()
+    state.period.value = 'all'; await flush()
+    state.model.value = 'gpt-6-astra'; await flush()
+    expect(request).toHaveBeenCalledTimes(1)
+    fail(new Error('obsolete read failed')); await flush()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenLastCalledWith('usage.query', expect.objectContaining({ from: null, to: null, model: 'gpt-6-astra' }))
+    expect(state.error.value).toBeNull()
+    expect(state.result.value).not.toBeNull()
+  })
+  it('drops queued work on invalid input or disposal', async () => {
+    let finish!: (data: UsageAnalysisResult) => void
+    request.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const state = scope.run(() => useUsageAnalysis(ref<AgentRuntime>('codex'), ref('ready')))!
+    state.period.value = 'all'; await flush()
+    state.period.value = 'custom'; state.customFrom.value = '2026-09-23'; await flush()
+    finish(createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25 }, new Date())); await flush()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(state.error.value).not.toBeNull()
+    state.period.value = 'all'; await flush()
+    state.period.value = '7'; await flush()
+    scope.stop()
+    finish(createDemoAnalysis({ runtime: 'codex', page: 1, pageSize: 25 }, new Date())); await flush()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(state.result.value).toBeNull()
   })
   it('does not query an invalid custom range and recovers after correction', async () => {
     const state = scope.run(() => useUsageAnalysis(ref<AgentRuntime>('codex'), ref('ready')))!
