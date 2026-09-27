@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { UsageAnalysisState } from '../composables/useUsageAnalysis'
 import { analysisValue, featureLabel, sourceLabel } from '../analysisFormatting'
 import TokenDetails from '../components/TokenDetails.vue'
@@ -24,6 +24,14 @@ const share = (totals: UsageAnalysisTotals) => {
   return total > 0 ? `${(magnitude(totals) / total * 100).toFixed(1)}%` : '—'
 }
 const missingRates = computed(() => data.value?.missingRates?.map(row => `${row.model} · ${row.date}`) ?? [])
+const exportBusy = computed(() => store.isRunningLocalOperation || store.isUpdatingSettings || store.isInstallingUpdate)
+const exportStatus = ref<string | null>(null)
+async function exportSelection(format: 'json' | 'csv') {
+  if (exportBusy.value || props.state.loading.value || !data.value) return
+  exportStatus.value = null
+  await store.runLocalOperation('data.exportAggregates', { format, query: { ...props.state.request.value } })
+  exportStatus.value = store.operationStatus
+}
 </script>
 <template>
   <div class="analysis-view">
@@ -35,7 +43,12 @@ const missingRates = computed(() => data.value?.missingRates?.map(row => `${row.
         <div><span>{{ metric === 'tokens' ? '本机原始 Token' : 'API 等效金额' }}</span><strong>{{ value(data.totals) }}</strong></div>
         <div><span>会话组</span><strong>{{ data.sessionCount }}</strong></div>
         <div><span>未归属历史用量</span><strong>{{ compactNumber(data.totals.unattributedTokens) }} <small>Token</small></strong></div>
+        <div class="analysis-export">
+          <span>导出当前筛选 · 全部匹配会话</span>
+          <div><button type="button" :disabled="exportBusy" @click="exportSelection('json')">导出 JSON</button><button type="button" :disabled="exportBusy" @click="exportSelection('csv')">导出 CSV</button></div>
+        </div>
       </div>
+      <p v-if="exportStatus" class="analysis-note" role="status">{{ exportStatus }}</p>
       <p class="analysis-note" v-if="metric === 'amount'">金额按用量日期匹配费率，是参考估算而非账单。占比以已核算金额为分母；尚有 {{ compactNumber(data.totals.unratedTokens) }} Token 金额未知，不当作零。</p>
       <details class="inner-card"><summary>Token 分项与包含关系</summary><TokenDetails :totals="data.totals" :runtime="snapshot.runtime" /></details>
       <p v-if="!data.totals.tokens" class="analysis-state" role="status">所选范围暂无本机用量，调整日期、模型或项目后重试。</p>
@@ -87,6 +100,10 @@ const missingRates = computed(() => data.value?.missingRates?.map(row => `${row.
   </div>
 </template>
 <style scoped>
+.analysis-export { margin-left: auto; }
+.analysis-export > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.analysis-export button { font: inherit; font-size: 12px; color: var(--text-primary); background: var(--surface-strong); border: 1px solid var(--stroke); border-radius: 7px; padding: 8px 10px; cursor: pointer; }
+.analysis-export button:hover:not(:disabled) { background: var(--surface-subtle); }
 .analysis-view { display: grid; gap: 16px; }
 details.inner-card { min-height: 0; }
 .analysis-state { padding: 30px 10px; text-align: center; color: var(--text-secondary); }

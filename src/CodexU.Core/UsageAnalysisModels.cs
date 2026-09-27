@@ -103,4 +103,5 @@ public sealed record UsageAnalysisResult(
     IReadOnlyList<string> AvailableModels,
     IReadOnlyList<UsageProjectOption> AvailableProjects,
     IReadOnlyList<string> Diagnostics,
-    IReadOnlyList<UsageMissingRate>? MissingRates = null);
+    IReadOnlyList<UsageMissingRate>? MissingRates = null,
+    IReadOnlyList<ModelCreditRate>? AppliedRates = null);

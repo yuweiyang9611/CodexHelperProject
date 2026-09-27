@@ -10,6 +10,20 @@ public sealed class DashboardService(
     ILocalUsageReader? localAnalysisReader = null,
     ILocalUsageReader? claudeAnalysisReader = null) : IDashboardService
 {
+    private readonly SemaphoreSlim _analysisGate = new(1, 1);
+    private readonly Lock _analysisStateGate = new();
+    private readonly Dictionary<AgentRuntime, UsageAnalysisQuery> _analysisQueries = [];
+    private long _analysisRevision;
+
+    public void InvalidateUsageAnalysis()
+    {
+        lock (_analysisStateGate)
+        {
+            _analysisRevision++;
+            _analysisQueries.Clear();
+        }
+    }
+
     public static DashboardService CreateDefault(
         string? configuredCodexHome = null,
         bool incrementalIndexEnabled = true,
@@ -50,6 +64,8 @@ public sealed class DashboardService(
         AgentRuntime runtime = AgentRuntime.Codex,
         CancellationToken cancellationToken = default)
     {
+        // A refresh starts a new read revision, including when the source fails.
+        InvalidateUsageAnalysis();
         if (runtime == AgentRuntime.ClaudeCode)
         {
             var claude = await ReadLocalSafelyAsync(
@@ -195,13 +211,39 @@ public sealed class DashboardService(
             AgentRuntime.ClaudeCode => claudeAnalysisReader ?? claudeUsageReader ?? throw new InvalidOperationException("Claude Code 用量来源不可用。"),
             _ => throw new ArgumentException("不支持的工具。", nameof(request))
         };
-        // Queries do not need account quota, and must not turn a failed local
-        // read into a plausible empty result. The caller surfaces the failure.
-        var local = await reader.ReadAsync(cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (local.AnalysisData is null)
-            throw new InvalidOperationException("本机用量读取未完成，暂不能查询明细。" + string.Join("；", local.Diagnostics));
-        return UsageAnalysisQuery.Execute(local.AnalysisData, request, local.Diagnostics);
+        await _analysisGate.WaitAsync(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                long revision;
+                UsageAnalysisQuery? query;
+                lock (_analysisStateGate)
+                {
+                    revision = _analysisRevision;
+                    _analysisQueries.TryGetValue(request.Runtime, out query);
+                }
+                if (query is null)
+                {
+                    // Failed reads are never cached or disguised as empty results.
+                    var local = await reader.ReadAsync(cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (local.AnalysisData is null)
+                        throw new InvalidOperationException("本机用量读取未完成，暂不能查询明细。" + string.Join("；", local.Diagnostics));
+                    query = new UsageAnalysisQuery(local.AnalysisData, local.Diagnostics);
+                }
+                var result = query.Execute(request);
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (_analysisStateGate)
+                {
+                    if (revision != _analysisRevision) continue;
+                    _analysisQueries[request.Runtime] = query;
+                    return result;
+                }
+            }
+        }
+        finally { _analysisGate.Release(); }
     }
 
     private async Task<AppServerSnapshot> ReadAppServerSafelyAsync(CancellationToken cancellationToken)

@@ -3,14 +3,36 @@ using CodexU.Core;
 namespace CodexU.Infrastructure;
 
 /// <summary>All views share this selection; paging never changes aggregate denominators.</summary>
-public static class UsageAnalysisQuery
+public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<string>? diagnostics = null)
 {
     public const string UnknownProject = "__unknown__";
+    private readonly Lock _gate = new();
+    private UsageAnalysisRequest? _selectionRequest;
+    private Func<int, int, UsageAnalysisResult>? _page;
 
     public static UsageAnalysisResult Execute(UsageAnalysisData? data, UsageAnalysisRequest request,
-        IReadOnlyList<string>? diagnostics = null)
+        IReadOnlyList<string>? diagnostics = null) => new UsageAnalysisQuery(data, diagnostics).Execute(request);
+
+    /// <summary>Retains only the last selection. Paging reuses its aggregates and builds only visible members.</summary>
+    public UsageAnalysisResult Execute(UsageAnalysisRequest request)
     {
         Validate(request);
+        var selection = request with { Page = 1, PageSize = 25 };
+        lock (_gate)
+        {
+            if (_selectionRequest != selection)
+            {
+                var page = Prepare(data, selection, diagnostics);
+                _page = page;
+                _selectionRequest = selection;
+            }
+            return _page!(request.Page, request.PageSize);
+        }
+    }
+
+    private static Func<int, int, UsageAnalysisResult> Prepare(UsageAnalysisData? data, UsageAnalysisRequest request,
+        IReadOnlyList<string>? diagnostics)
+    {
         var all = data?.Entries ?? [];
         var model = string.IsNullOrWhiteSpace(request.Model) ? null : UsageCredits.NormalizeModel(request.Model);
         var project = NormalizeProjectFilter(request.Project);
@@ -26,6 +48,8 @@ public static class UsageAnalysisQuery
         var parents = all.Where(e => e.SessionId is not null).GroupBy(e => e.SessionId!, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Select(e => e.ParentSessionId).Distinct().Count() == 1
                 ? g.First().ParentSessionId : null, StringComparer.Ordinal);
+        var titles = all.Where(e => e.SessionId is not null && e.Title is not null)
+            .GroupBy(e => e.SessionId!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Title, StringComparer.Ordinal);
         string Root(string session)
         {
             var visited = new HashSet<string>(StringComparer.Ordinal) { session };
@@ -41,8 +65,7 @@ public static class UsageAnalysisQuery
 
         var groups = selected.Where(e => e.SessionId is not null).GroupBy(e => Root(e.SessionId!), StringComparer.Ordinal)
             .OrderByDescending(g => g.Sum(e => e.Tokens)).ThenBy(g => g.Key, StringComparer.Ordinal).ToArray();
-        var page = Math.Min(request.Page, Math.Max(1, (groups.Length + request.PageSize - 1) / request.PageSize));
-        var sessions = groups.Skip((page - 1) * request.PageSize).Take(request.PageSize).Select(group =>
+        UsageSessionGroup[] Sessions(int page, int pageSize) => groups.Skip((page - 1) * pageSize).Take(pageSize).Select(group =>
         {
             var members = group.GroupBy(e => e.SessionId!, StringComparer.Ordinal).Select(member => new UsageSessionMember(
                 member.Key, parents.GetValueOrDefault(member.Key), member.FirstOrDefault(e => e.Title is not null)?.Title,
@@ -51,7 +74,7 @@ public static class UsageAnalysisQuery
                 member.Select(e => e.Source).Distinct().Order().ToArray(),
                 member.OrderBy(e => e.Date).ThenBy(e => e.Model, StringComparer.Ordinal).ToArray()))
                 .OrderBy(e => e.Id == group.Key ? 0 : 1).ThenByDescending(e => e.Totals.Tokens).ThenBy(e => e.Id, StringComparer.Ordinal).ToArray();
-            return new UsageSessionGroup(group.Key, all.FirstOrDefault(e => e.SessionId == group.Key && e.Title is not null)?.Title,
+            return new UsageSessionGroup(group.Key, titles.GetValueOrDefault(group.Key),
                 group.Min(e => e.Date), group.Max(e => e.Date), Total(group), members);
         }).ToArray();
 
@@ -66,20 +89,27 @@ public static class UsageAnalysisQuery
         notes.Add("输入已包含缓存读取及来源支持的缓存写入；推理 Token 已包含在输出中，不能再次相加。分项仅覆盖有明细的用量。");
         var estimates = model is null && project is null
             ? (data?.LegacyEstimates ?? []).Where(e => DateMatches(e.Date)).OrderBy(e => e.Date).ToArray() : [];
-        return new(request.Runtime, request.From, request.To,
+        var result = new UsageAnalysisResult(request.Runtime, request.From, request.To,
             all.Count == 0 ? null : all.Min(e => e.Date), all.Count == 0 ? null : all.Max(e => e.Date),
             Total(selected), selected.GroupBy(e => e.Date).OrderBy(g => g.Key).Select(g => new UsageAnalysisDay(g.Key, Total(g))).ToArray(),
             Groups(selected, e => e.Model, id => id == "unknown" ? "未知模型" : id),
             Groups(selected, e => e.Feature, id => id),
             Groups(selected, e => e.Project ?? UnknownProject, ProjectLabel),
-            sessions, groups.Length, page, request.PageSize,
+            [], groups.Length, 1, request.PageSize,
             selected.Where(e => e.SessionId is null).OrderBy(e => e.Date).ToArray(), estimates,
             all.Select(e => e.Model).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             all.Select(e => e.Project ?? UnknownProject).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)
                 .Select(id => new UsageProjectOption(id, ProjectLabel(id))).ToArray(), notes.Distinct().ToArray(),
             selected.Where(e => e.Model is not ("unknown" or "legacy-unattributed") && e.Rate is null)
                 .GroupBy(e => (e.Model, e.Date)).OrderBy(g => g.Key.Model).ThenBy(g => g.Key.Date)
-                .Select(g => new UsageMissingRate(g.Key.Model, g.Key.Date, g.Sum(e => e.Tokens))).ToArray());
+                .Select(g => new UsageMissingRate(g.Key.Model, g.Key.Date, g.Sum(e => e.Tokens))).ToArray(),
+            selected.Where(e => e.Rate is not null).Select(e => e.Rate!).Distinct()
+                .OrderBy(e => e.Model, StringComparer.Ordinal).ThenBy(e => e.EffectiveFrom).ToArray());
+        return (requestedPage, pageSize) =>
+        {
+            var page = Math.Min(requestedPage, Math.Max(1, (groups.Length + pageSize - 1) / pageSize));
+            return result with { Sessions = Sessions(page, pageSize), Page = page, PageSize = pageSize };
+        };
     }
 
     internal static void Validate(UsageAnalysisRequest request)
@@ -108,13 +138,20 @@ public static class UsageAnalysisQuery
     {
         var rows = entries.ToArray();
         var rated = rows.Where(e => e.CreditsUsed is not null).ToArray();
+        // Eager intersection avoids a nested LINQ iterator for every retained row.
+        HashSet<string>? available = null;
+        foreach (var row in rows.Where(e => e.Breakdown is not null))
+        {
+            if (available is null) available = new(row.AvailableBreakdownFields ?? [], StringComparer.Ordinal);
+            else available.IntersectWith(row.AvailableBreakdownFields ?? []);
+            if (available.Count == 0) break;
+        }
         return new(rows.Sum(e => e.Tokens), rows.Aggregate(TokenBreakdown.Zero, (sum, row) => sum.Add(row.Breakdown ?? TokenBreakdown.Zero)),
             rows.Where(e => e.Breakdown is not null).Sum(e => e.Tokens),
             rated.Length > 0 ? rated.Sum(e => e.CreditsUsed!.Value) : null,
             rated.Sum(e => e.Tokens), rows.Where(e => e.CreditsUsed is null).Sum(e => e.Tokens),
             rows.Where(e => e.SessionId is null).Sum(e => e.Tokens),
-            rows.Where(e => e.Breakdown is not null).Select(e => e.AvailableBreakdownFields ?? [])
-                .Aggregate((IEnumerable<string>?)null, (common, fields) => common is null ? fields : common.Intersect(fields))?.ToArray() ?? []);
+            available?.ToArray() ?? []);
     }
 
     private static UsageAnalysisGroup[] Groups(IEnumerable<UsageAnalysisEntry> entries,

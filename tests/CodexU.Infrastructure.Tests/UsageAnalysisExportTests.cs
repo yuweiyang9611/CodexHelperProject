@@ -70,6 +70,89 @@ public sealed class UsageAnalysisExportTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(_root, "*.tmp"));
     }
 
+    [Theory]
+    [InlineData("json")]
+    [InlineData("csv")]
+    public async Task FilteredExportIncludesScopeAndOffPageRatesWithoutPrivatePaths(string format)
+    {
+        var from = new DateOnly(2025, 1, 10);
+        var query = new UsageAnalysisRequest(From: from, Model: "model-a", Project: "D:/private-parent-directory/safe-project", PageSize: 1);
+        var rate = new ModelCreditRate("model-a", 100, 10, 200, new(2020, 1, 1), "test-source", "v1");
+        var data = UsageHistoryProjection.BuildAnalysis(Enumerable.Range(0, 30).Select(i => new AttributedUsage(
+            $"private-session-{i}", query.Project, from.AddDays(i), "model-a", new(40, 0, 0, 0, 40), 1,
+            AvailableFields: UsageBreakdownFields.Input | UsageBreakdownFields.Output | UsageBreakdownFields.CachedInput)).ToArray(),
+            [], [rate, rate with { EffectiveFrom = from.AddDays(10), CatalogVersion = "v2" }], true);
+        var result = UsageAnalysisQuery.Execute(data, query);
+        Assert.Single(result.Sessions);
+        var path = Path.Combine(_root, "filtered." + format);
+        await Service.ExportUsageAnalysisAsync(result, path, format, selection: query);
+        var text = await File.ReadAllTextAsync(path);
+        Assert.Contains("v1", text);
+        Assert.Contains("v2", text);
+        Assert.Contains("test-source", text);
+        Assert.DoesNotContain("private-parent-directory", text);
+        Assert.DoesNotContain("private-session", text);
+        if (format == "json")
+        {
+            using var json = JsonDocument.Parse(text);
+            Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(1200, json.RootElement.GetProperty("totals").GetProperty("tokens").GetInt64());
+            Assert.Equal(30, json.RootElement.GetProperty("dailyUsage").GetArrayLength());
+            var filters = json.RootElement.GetProperty("filters");
+            Assert.Equal("2025-01-10", filters.GetProperty("from").GetString());
+            Assert.Equal("safe-project", filters.GetProperty("project").GetString());
+            Assert.True(filters.GetProperty("projectPathOmitted").GetBoolean());
+        }
+        else
+        {
+            using var parser = new Microsoft.VisualBasic.FileIO.TextFieldParser(new StringReader(text));
+            parser.SetDelimiters(",");
+            parser.HasFieldsEnclosedInQuotes = true;
+            Assert.Equal(9, parser.ReadFields()!.Length);
+            var metadata = parser.ReadFields()!;
+            Assert.Equal(9, metadata.Length);
+            Assert.Equal("metadata", metadata[0]);
+            using var metadataJson = JsonDocument.Parse(metadata[7]);
+            Assert.Equal("2025-01-10", metadataJson.RootElement.GetProperty("filters").GetProperty("from").GetString());
+            using var ratesJson = JsonDocument.Parse(metadata[8]);
+            Assert.Equal(2, ratesJson.RootElement.GetArrayLength());
+            var days = 0;
+            while (!parser.EndOfData)
+            {
+                var fields = parser.ReadFields()!;
+                Assert.Equal(9, fields.Length);
+                Assert.Equal("day", fields[0]);
+                days++;
+            }
+            Assert.Equal(30, days);
+        }
+    }
+
+    [Fact]
+    public async Task EmptyFilteredCsvStillRecordsSelection()
+    {
+        var query = new UsageAnalysisRequest(From: new(2099, 1, 1), Model: "=untrusted,model");
+        var path = Path.Combine(_root, "empty.csv");
+        await Service.ExportUsageAnalysisAsync(UsageAnalysisQuery.Execute(new([], []), query), path, "csv", selection: query);
+        var text = await File.ReadAllTextAsync(path);
+        Assert.Contains("metadata,", text);
+        Assert.Contains("2099-01-01", text);
+        Assert.DoesNotContain("day,", text);
+        Assert.Contains("\"\"model\"\"", text); // JSON is enclosed as one escaped CSV cell, never a formula cell.
+    }
+
+    [Fact]
+    public async Task UnknownProjectExportAcceptsTheSameCaseInsensitiveSentinelAsQuery()
+    {
+        var query = new UsageAnalysisRequest(Project: "__UNKNOWN__");
+        var path = Path.Combine(_root, "unknown.json");
+        await Service.ExportUsageAnalysisAsync(UsageAnalysisQuery.Execute(new([], []), query), path, "json", selection: query);
+        using var json = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var filters = json.RootElement.GetProperty("filters");
+        Assert.Equal("未知项目", filters.GetProperty("project").GetString());
+        Assert.False(filters.GetProperty("projectPathOmitted").GetBoolean());
+    }
+
     [Fact]
     public async Task Export_RejectsManagedTargetsAndDatedQueries()
     {

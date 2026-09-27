@@ -10,7 +10,7 @@ const { tmpdir } = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { requestTimeoutForMethod } = require('../dist/ipcRequestTimeouts.js');
-const { decideQuitRequest } = require('../dist/lifecycle.js');
+const { decideQuitRequest, ShutdownCoordinator } = require('../dist/lifecycle.js');
 const {
   PersistentLog,
   OVERSIZED_STDERR_LINE,
@@ -51,6 +51,83 @@ test('continues the normal quit path for a successful exit', () => {
     exitCode: 0,
     action: 'quit',
   });
+});
+
+function shutdownFixture(overrides = {}) {
+  const calls = [];
+  let release;
+  const closed = new Promise(resolve => { release = resolve; });
+  const coordinator = new ShutdownCoordinator({
+    stopUpdates: () => calls.push('stop'),
+    closeSidecars: () => { calls.push('close'); return closed; },
+    installUpdate: async () => { calls.push('install'); },
+    acknowledge: (marker, outcome) => calls.push({ marker, success: outcome.success }),
+    quit: decision => calls.push(decision),
+    reportFailure: () => calls.push('failure'),
+    ...overrides,
+  });
+  return { coordinator, calls, release };
+}
+
+test('one quit barrier drains sidecars before update installation and final quit', async () => {
+  const { coordinator, calls, release } = shutdownFixture();
+  assert.equal(coordinator.begin(), true);
+  assert.equal(coordinator.begin(), true);
+  assert.equal(coordinator.isShuttingDown, true);
+  assert.deepEqual(calls, ['stop', 'close']);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['stop', 'close', 'install', { exitCode: 0, action: 'quit' }]);
+  assert.equal(coordinator.canQuit, true);
+  assert.equal(coordinator.begin(), false);
+});
+
+test('maintenance arriving during drain suppresses update and acknowledges pending and late markers', async () => {
+  const { coordinator, calls, release } = shutdownFixture();
+  coordinator.begin();
+  coordinator.requestMaintenance('first');
+  coordinator.requestMaintenance('first');
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(!calls.includes('install'));
+  assert.equal(calls.filter(c => c.marker === 'first').length, 2); // One acknowledgement per registered request.
+  coordinator.requestMaintenance('late');
+  assert.deepEqual(calls.at(-2), { marker: 'late', success: true });
+});
+
+test('failed sidecar drain records failed maintenance outcome and skips installer', async () => {
+  const { coordinator, calls } = shutdownFixture({ closeSidecars: async () => { throw new Error('locked'); } });
+  coordinator.requestMaintenance('waiting');
+  coordinator.begin();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(!calls.includes('install'));
+  assert(calls.some(c => c.marker === 'waiting' && c.success === false));
+  assert.deepEqual(calls.at(-1), { exitCode: 1, action: 'exit' });
+});
+
+test('installer rejection completes quit instead of leaving an unhandled promise and frozen barrier', async () => {
+  const { coordinator, calls, release } = shutdownFixture({ installUpdate: async () => { throw new Error('installer'); } });
+  coordinator.begin();
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(coordinator.canQuit, true);
+  assert.deepEqual(calls.at(-1), { exitCode: 1, action: 'exit' });
+});
+
+test('late fatal quit remains nonzero and marker write failures do not strand other acknowledgements', async () => {
+  const { coordinator, calls, release } = shutdownFixture({ acknowledge: marker => {
+    if (marker === 'broken') throw new Error('write denied');
+    calls.push(marker);
+  } });
+  coordinator.begin();
+  coordinator.requestMaintenance('broken');
+  coordinator.requestMaintenance('healthy');
+  coordinator.request(2);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(calls.includes('healthy'));
+  assert(!calls.includes('install'));
+  assert.deepEqual(calls.at(-1), { exitCode: 2, action: 'exit' });
 });
 
 test('budgets settings updates for startup mutation and compensating rollback', () => {

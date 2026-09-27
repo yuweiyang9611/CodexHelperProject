@@ -264,20 +264,24 @@ public sealed class IpcDispatcher : IDisposable
                 return new { opened = true };
 
             case "data.exportAggregates":
+                var exportQuery = request.Payload.TryGetProperty("query", out var exportQueryValue)
+                    ? exportQueryValue.Deserialize<UsageAnalysisRequest>(IpcJson.Options)
+                        ?? throw new InvalidOperationException("缺少导出筛选条件。")
+                    : null;
                 var exportFormat = request.Payload.TryGetProperty("format", out var formatValue)
                     && string.Equals(formatValue.GetString(), "csv", StringComparison.OrdinalIgnoreCase)
                     ? "csv"
                     : "json";
                 var aggregateExportPath = await _userInteraction.PickSaveFileAsync(
                     new HostFileDialogRequest(
-                        "导出当前工具全部本机历史统计",
-                        $"codexU-{_session.CurrentRuntime}-{DateTimeOffset.Now:yyyyMMdd}.{exportFormat}",
+                        exportQuery is null ? "导出当前工具全部本机历史统计" : "导出当前筛选统计（全部匹配会话）",
+                        $"codexU-{exportQuery?.Runtime ?? _session.CurrentRuntime}-{DateTimeOffset.Now:yyyyMMdd}.{exportFormat}",
                         $".{exportFormat}",
                         [new HostFileType(exportFormat == "csv" ? "CSV 文件" : "JSON 文件", [$"*.{exportFormat}"])],
                         OverwritePrompt: true),
                     _session.LifetimeToken);
                 return aggregateExportPath is not null
-                    ? await _session.ExportAggregatesAsync(aggregateExportPath, exportFormat)
+                    ? await _session.ExportAggregatesAsync(aggregateExportPath, exportFormat, exportQuery)
                     : new LocalOperationResult(false, "已取消导出。");
 
             case "data.backup":

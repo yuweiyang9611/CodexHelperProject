@@ -128,6 +128,8 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         File.Delete(a);
         File.Delete(b);
         File.Delete(database);
+        // Source changes become visible on the next refresh revision; paging shares the current one.
+        service.InvalidateUsageAnalysis();
         var retained = await service.QueryUsageAsync(new());
         Assert.Equal(300, retained.Totals.Tokens);
         Assert.Equal("Reliable title", Assert.Single(retained.Sessions, e => e.Id == "session-a").Title);

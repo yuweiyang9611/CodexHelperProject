@@ -36,7 +36,7 @@ import {
   windowLayout,
   type HostSettings,
 } from './hostSettings';
-import { decideQuitRequest } from './lifecycle';
+import { ShutdownCoordinator, type QuitRequestDecision } from './lifecycle';
 import { AutomaticUpdater, supportsAutomaticUpdates } from './automaticUpdates';
 import { requestTimeoutForMethod } from './ipcRequestTimeouts';
 import {
@@ -63,7 +63,6 @@ import {
 } from './security';
 import { RecoverySupervisor } from './recoverySupervisor';
 import {
-  CompletionQueue,
   GenerationFence,
   RecoveryPromptQueue,
   SingleFlightOperation,
@@ -97,10 +96,6 @@ const SMOKE_READY_TIMEOUT_MS = 60_000;
 const WINDOW_STATE_FILE_NAME = 'window-state.json';
 const WINDOW_STATE_SAVE_DELAY_MS = 300;
 
-type MaintenanceShutdownOutcome =
-  | { success: true }
-  | { success: false; reason: unknown };
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -130,11 +125,7 @@ let isGlobalHotKeyRegistered = false;
 let appliedCompactMode: boolean | undefined;
 let expandedWindowBounds: Rectangle | undefined;
 let sidecarHandshakeVersion = 'unknown';
-let allowQuit = false;
-let shutdownStarted = false;
-let desiredExitCode = 0;
 let automaticUpdater: AutomaticUpdater | undefined;
-let maintenanceQuit = false;
 let windowStateSaveTimer: NodeJS.Timeout | undefined;
 let sidecarRecoveryTimer: NodeJS.Timeout | undefined;
 let rendererRecoveryTimer: NodeJS.Timeout | undefined;
@@ -152,7 +143,17 @@ const rendererFailureGeneration = new GenerationFence();
 const settingsUpdateGeneration = new GenerationFence();
 const rendererNavigation = new SingleFlightOperation();
 const startupRegistrationRefresh = new SingleFlightOperation();
-const maintenanceShutdownRequests = new CompletionQueue<string, MaintenanceShutdownOutcome>();
+const shutdown = new ShutdownCoordinator({
+  stopUpdates: () => automaticUpdater?.stop(),
+  closeSidecars: shutdownActiveSidecars,
+  installUpdate: async () => automaticUpdater?.installOnQuit(),
+  acknowledge: (marker, outcome) => {
+    if (outcome.success) writeMaintenanceShutdownMarker(marker);
+    else writeMaintenanceShutdownFailureMarker(marker);
+  },
+  quit: performQuit,
+  reportFailure: (reason) => runtimeLog('error', 'shutdown', 'shutdown step failed', reason),
+});
 const recoveryPrompts = new RecoveryPromptQueue<{
   component: string;
   retry: () => void;
@@ -277,7 +278,7 @@ function initializeWindowsDesktopIdentity(): void {
 function registerWindowsNotificationActivation(): void {
   if (!windowsDesktopIdentityConfigured || smokeTest) return;
   Notification.handleActivation((details) => {
-    if (shutdownStarted || allowQuit) return;
+    if (shutdown.isShuttingDown || shutdown.canQuit) return;
     runtimeLog('info', 'notification.activation', `type=${details.type}`);
     if (!mainWindow || mainWindow.isDestroyed()) {
       notificationActivationPending = true;
@@ -373,7 +374,7 @@ async function bootstrap(): Promise<void> {
       installDirectory: path.dirname(process.execPath),
       fetch: (url, options) => net.fetch(url instanceof URL ? url.href : url, options),
       check: async force => {
-        if (!sidecar || shutdownStarted) throw new Error('后端暂不可用。');
+        if (!sidecar || shutdown.isShuttingDown) throw new Error('后端暂不可用。');
         const result = await sidecar.request('update.check', { force });
         forwardRendererEvent({ version: 1, type: 'event', method: 'update.checked', payload: result });
         return result;
@@ -487,7 +488,7 @@ async function startSidecar(): Promise<void> {
   client.on('protocolError', (error: Error) => {
     candidateFailure ??= error;
     runtimeLog('error', 'sidecar.protocol', error);
-    if (sidecar === client && !shutdownStarted && !allowQuit) {
+    if (sidecar === client && !shutdown.isShuttingDown && !shutdown.canQuit) {
       sidecar = undefined;
       scheduleSidecarRecovery();
     }
@@ -503,7 +504,7 @@ async function startSidecar(): Promise<void> {
       parseHostSettings(rawSettings),
     );
     await applyHostSettings(initialSettings, client);
-    if (shutdownStarted || allowQuit) {
+    if (shutdown.isShuttingDown || shutdown.canQuit) {
       throw new Error('Sidecar completed startup after application shutdown began.');
     }
     if (candidateFailure || !activeSidecars.has(client)) {
@@ -565,19 +566,7 @@ function registerLifecycleHandlers(): void {
   app.on('window-all-closed', () => app.quit());
 
   app.on('before-quit', (event) => {
-    if (allowQuit) return;
-    event.preventDefault();
-    if (shutdownStarted) return;
-    shutdownStarted = true;
-    automaticUpdater?.stop();
-
-    void shutdownActiveSidecars().then(
-      async () => {
-        if (!maintenanceQuit && desiredExitCode === 0) await automaticUpdater?.installOnQuit();
-        completeApplicationShutdown({ success: true });
-      },
-      (reason) => completeApplicationShutdown({ success: false, reason }),
-    );
+    if (shutdown.begin()) event.preventDefault();
   });
 
   app.on('will-quit', () => disposeNativeShell());
@@ -594,39 +583,7 @@ function registerLifecycleHandlers(): void {
 }
 
 function registerMaintenanceShutdownRequest(marker: string): void {
-  maintenanceQuit = true;
-  const registration = maintenanceShutdownRequests.register(marker);
-  if (registration.completed) {
-    if (registration.outcome) acknowledgeMaintenanceShutdown(marker, registration.outcome);
-    requestQuit(desiredExitCode);
-    return;
-  }
-  if (!shutdownStarted) requestQuit(0);
-}
-
-function completeApplicationShutdown(outcome: MaintenanceShutdownOutcome): void {
-  if (!outcome.success) {
-    runtimeLog('error', 'sidecar.shutdown', 'one or more Sidecars did not close', outcome.reason);
-    desiredExitCode = 1;
-  }
-  for (const marker of maintenanceShutdownRequests.complete(outcome)) {
-    acknowledgeMaintenanceShutdown(marker, outcome);
-  }
-  allowQuit = true;
-  requestQuit(desiredExitCode);
-}
-
-function acknowledgeMaintenanceShutdown(
-  maintenanceMarker: string,
-  outcome: MaintenanceShutdownOutcome,
-): void {
-  try {
-    if (outcome.success) writeMaintenanceShutdownMarker(maintenanceMarker);
-    else writeMaintenanceShutdownFailureMarker(maintenanceMarker);
-  } catch (reason) {
-    desiredExitCode = 1;
-    runtimeLog('error', 'shutdown.maintenance', 'failed to write maintenance marker', reason);
-  }
+  shutdown.requestMaintenance(marker);
 }
 
 function registerAppProtocol(rendererRoot: string): void {
@@ -661,7 +618,7 @@ function registerRendererIpc(): void {
         throw new Error(`IPC request rejected: method is not allowed (${String(method)}).`);
       }
       validateRendererPayload(method, payload);
-      if (shutdownStarted) throw new Error('应用正在退出，请稍后重试。');
+      if (shutdown.isShuttingDown) throw new Error('应用正在退出，请稍后重试。');
       if (method === 'update.state') return automaticUpdater?.getState();
       if (method === 'update.download') {
         if (!automaticUpdater) throw new Error('当前宿主不支持自动更新。');
@@ -744,7 +701,7 @@ async function createMainWindow(settings: HostSettings): Promise<BrowserWindow> 
     flushWindowStateSave(window);
     const trayAvailable = shouldEnableNativeDesktopFeatures(process.platform, smokeTest)
       && Boolean(tray && !tray.isDestroyed());
-    if (shouldHideWindowOnClose(hostSettings, shutdownStarted || allowQuit, trayAvailable)) {
+    if (shouldHideWindowOnClose(hostSettings, shutdown.isShuttingDown || shutdown.canQuit, trayAvailable)) {
       event.preventDefault();
       window.hide();
     }
@@ -801,7 +758,7 @@ function windowStateFilePath(): string {
 }
 
 function scheduleWindowStateSave(window: BrowserWindow): void {
-  if (smokeTest || shutdownStarted || window.isDestroyed()) return;
+  if (smokeTest || shutdown.isShuttingDown || window.isDestroyed()) return;
   clearWindowStateSaveTimer();
   windowStateSaveTimer = setTimeout(() => {
     windowStateSaveTimer = undefined;
@@ -922,7 +879,7 @@ async function applyChangedSettings(source: SidecarClient, event: SidecarEvent):
     updateSurfaces(event.payload as SurfaceData);
     if (sidecar === source) forwardRendererEvent(event);
   } catch (reason) {
-    if (shutdownStarted || allowQuit) return;
+    if (shutdown.isShuttingDown || shutdown.canQuit) return;
     if (sidecar !== source) {
       runtimeLog('warn', 'settings.changed', 'ignored failure from a retired Sidecar', reason);
       return;
@@ -1172,7 +1129,7 @@ async function reconcileStartupRegistrationState(
 async function refreshStartupRegistrationState(): Promise<void> {
   await startupRegistrationRefresh.run(async () => {
     const client = sidecar;
-    if (!client || shutdownStarted || allowQuit
+    if (!client || shutdown.isShuttingDown || shutdown.canQuit
         || !shouldApplyStartupRegistration(process.platform, app.isPackaged, smokeTest)) {
       return;
     }
@@ -1180,15 +1137,15 @@ async function refreshStartupRegistrationState(): Promise<void> {
     try {
       const updateGeneration = settingsUpdateGeneration.snapshot();
       const isCurrent = () => sidecar === client
-        && !shutdownStarted
-        && !allowQuit
+        && !shutdown.isShuttingDown
+        && !shutdown.canQuit
         && settingsUpdateGeneration.isCurrent(updateGeneration);
       const current = parseHostSettings(await client.request('settings.get', {}));
       if (!isCurrent()) return;
       const synchronized = await reconcileStartupRegistrationState(client, current, isCurrent);
       if (isCurrent()) hostSettings = synchronized;
     } catch (reason) {
-      if (shutdownStarted || allowQuit || sidecar !== client) return;
+      if (shutdown.isShuttingDown || shutdown.canQuit || sidecar !== client) return;
       runtimeLog(
         'warn',
         'startup.registration',
@@ -1239,7 +1196,7 @@ function disposeNativeShell(): void {
 function handleSidecarExit(client: SidecarClient, exit: SidecarExit): void {
   if (sidecar !== client) return;
   sidecar = undefined;
-  if (shutdownStarted || allowQuit) return;
+  if (shutdown.isShuttingDown || shutdown.canQuit) return;
   runtimeLog(
     'error',
     'sidecar.lifecycle',
@@ -1249,7 +1206,7 @@ function handleSidecarExit(client: SidecarClient, exit: SidecarExit): void {
 }
 
 function scheduleSidecarRecovery(): void {
-  if (shutdownStarted || allowQuit || sidecar || sidecarRecoveryTimer || sidecarRecoveryRunning) return;
+  if (shutdown.isShuttingDown || shutdown.canQuit || sidecar || sidecarRecoveryTimer || sidecarRecoveryRunning) return;
   suspendRendererRecoveryForSidecar();
   if (smokeTest) {
     failAndQuit(new Error('The Sidecar exited during the Electron smoke test.'));
@@ -1279,7 +1236,7 @@ function scheduleSidecarRecovery(): void {
 }
 
 async function recoverSidecar(attempt: number): Promise<void> {
-  if (shutdownStarted || allowQuit || sidecarRecoveryRunning) return;
+  if (shutdown.isShuttingDown || shutdown.canQuit || sidecarRecoveryRunning) return;
   sidecarRecoveryRunning = true;
   try {
     if (!sidecarRecovery.markRecoveryStarted(attempt)) {
@@ -1312,7 +1269,7 @@ async function recoverSidecar(attempt: number): Promise<void> {
 }
 
 function scheduleRendererRecovery(window: BrowserWindow): void {
-  if (shutdownStarted || allowQuit || window.isDestroyed()
+  if (shutdown.isShuttingDown || shutdown.canQuit || window.isDestroyed()
       || rendererRecoveryTimer || rendererRecoveryRunning) return;
   // A Sidecar recovery always performs one renderer navigation after publishing
   // the fully initialized replacement. Let it own that reload instead of opening
@@ -1346,7 +1303,7 @@ function scheduleRendererRecovery(window: BrowserWindow): void {
 }
 
 async function recoverRenderer(window: BrowserWindow, attempt: number): Promise<void> {
-  if (shutdownStarted || allowQuit || window.isDestroyed() || rendererRecoveryRunning) return;
+  if (shutdown.isShuttingDown || shutdown.canQuit || window.isDestroyed() || rendererRecoveryRunning) return;
   rendererRecoveryRunning = true;
   try {
     if (!rendererRecovery.markRecoveryStarted(attempt)) {
@@ -1404,16 +1361,16 @@ function cancelRecoveryFailure(key: string): void {
 }
 
 function queueRecoveryFailure(key: string, component: string, retry: () => void): void {
-  if (shutdownStarted || allowQuit) return;
+  if (shutdown.isShuttingDown || shutdown.canQuit) return;
   if (!recoveryPrompts.enqueue(key, { component, retry })) return;
   void drainRecoveryFailureQueue();
 }
 
 async function drainRecoveryFailureQueue(): Promise<void> {
-  if (recoveryDialogDraining || shutdownStarted || allowQuit) return;
+  if (recoveryDialogDraining || shutdown.isShuttingDown || shutdown.canQuit) return;
   recoveryDialogDraining = true;
   try {
-    while (!shutdownStarted && !allowQuit) {
+    while (!shutdown.isShuttingDown && !shutdown.canQuit) {
       const queued = recoveryPrompts.take();
       if (!queued) break;
       let exitRequested = false;
@@ -1436,7 +1393,7 @@ async function drainRecoveryFailureQueue(): Promise<void> {
     }
   } finally {
     recoveryDialogDraining = false;
-    if (recoveryPrompts.size > 0 && !shutdownStarted && !allowQuit) {
+    if (recoveryPrompts.size > 0 && !shutdown.isShuttingDown && !shutdown.canQuit) {
       void drainRecoveryFailureQueue();
     }
   }
@@ -1446,7 +1403,7 @@ async function presentRecoveryFailure(
   key: string,
   prompt: { component: string; retry: () => void },
 ): Promise<boolean> {
-  while (!shutdownStarted && !allowQuit) {
+  while (!shutdown.isShuttingDown && !shutdown.canQuit) {
     const controller = new AbortController();
     const options = {
       type: 'error' as const,
@@ -1659,8 +1616,10 @@ async function shutdownActiveSidecars(): Promise<void> {
 }
 
 function requestQuit(exitCode: number): void {
-  const decision = decideQuitRequest(desiredExitCode, exitCode, allowQuit);
-  desiredExitCode = decision.exitCode;
+  shutdown.request(exitCode);
+}
+
+function performQuit(decision: QuitRequestDecision): void {
   if (decision.action === 'exit') {
     const window = mainWindow;
     if (window && !window.isDestroyed()) flushWindowStateSave(window);

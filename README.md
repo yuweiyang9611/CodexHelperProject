@@ -23,6 +23,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - session JSONL：精细 token delta、每日桶、工具和 Skill 计数。
 - session 增量索引：复用未变化文件，并从已记录字节偏移续读增长中的 rollout。
 - 统一日期／模型／项目筛选，默认近 30 天，支持今日、近 7 天、本月、全部历史及自定义日期；图表、分布、排行与会话明细共用统计范围。
+- 分析查询在同一刷新轮次内复用本机数据，翻页复用汇总，仅生成当前页会话明细；快速筛选只保留一个进行中请求和最新待执行条件。手动／自动刷新、相关设置变化及维护操作使缓存失效。
 - 用量分析支持每日趋势、模型／功能分布、项目排行和会话下钻；默认按原始 Token，可切换 API 等效金额。主会话汇总确认的子代理去重贡献，并可展开查看。缺失标题使用简短 ID，旧日汇总的未归属差额单列并解释，无法确认的分类保持未知。
 - 诊断保留数据来源、索引和日志健康信息；不提供任务生命周期、今日任务、待办或目标管理页面。
 - 主导航为总览、用量分析、设置。记住上次选择的工具；两工具并排比较是总览中的可选视图。Skill 和工具调用归入累计辅助分析，并明确其筛选限制。
@@ -39,6 +40,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - Electron 顶部额度悬浮条只展示账户额度余量、刷新时间和必要控制，支持折叠、刷新、打开主界面、拖动、锁定、预览与找回。完整桌面副本已经移除，旧配置不会重新开启。
 - 每日 GitHub Release 更新检查。Windows 安装版默认在后台下载、校验 SHA-256，并在正常退出时静默安装；可点击“重启并更新”立即安装并重新打开。设置中可关闭自动下载与安装、选择是否接收预发布版本。关闭到托盘不会安装；ZIP 便携版和旧 WPF 宿主仍通过发布页手动更新。
 - 聚合 JSON/CSV 导出、带 SHA-256 清单的本地备份恢复、脱敏诊断包和非破坏式索引重建。主动清理历史需原生确认：只删除留存账本，不删除原始日志或设置；仍存在的原始日志将在刷新时重新计入。
+- 用量分析页可导出当前日期／模型／项目筛选的全部匹配统计，不受会话分页限制；JSON schema 3 和筛选 CSV 记录筛选范围及实际适用费率，省略完整项目路径。设置页继续导出当前工具全部历史，原有 CSV 列与 JSON schema 2 保持兼容。
 - 每用户 Inno Setup 安装包：开始菜单、卸载项和可选桌面快捷方式；开机启动由应用内设置统一管理，Release 可按仓库密钥配置进行 Authenticode 签名。
 - 浏览器开发模式内置可重复的演示数据，不会影响桌面应用中的真实本地数据。
 - Playwright 视觉回归、axe 无障碍扫描与键盘导航测试覆盖深浅主题、主要视图和紧凑布局；失败截图、差异图和 trace 可由 CI 留存。
@@ -48,6 +50,8 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 2026-09-22 已确认的产品重整范围、统计规则和验收标准见 [产品需求确认稿](docs/product-requirements.md)。该文档描述后续目标，不表示全部功能已经实现；本页“当前能力”描述现有实现。
 
 本轮改造的实现范围、回归覆盖和本地验证结果见 [用量分析改造与验收记录](docs/usage-analysis-validation.md)。
+
+查询复用、筛选导出与退出协调的后续改进见 [2026-09-27 完善记录](docs/improvements-2026-09-27.md)；原生多屏与 Explorer 场景的待验状态见 [Windows 验收矩阵](docs/windows-acceptance.md)。
 
 Electron 职责边界为：`Electron main → sandbox preload → Vue renderer → .NET Sidecar → Application/Core/Infrastructure`。Electron 自带 Chromium，不依赖系统 WebView2；旧 WPF 宿主仅作为兼容与功能对照基线保留。
 

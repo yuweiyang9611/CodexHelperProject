@@ -148,12 +148,23 @@ fails if the legacy package is reintroduced or the hardened implementation disap
 
 The v0.5.0 release remains the legacy WPF build, while v0.6.0-beta.1 is the first
 Electron prerelease. This packaging readiness does not imply
-complete Windows acceptance: the status strip and isolated desktop widget are implemented,
-but Explorer restart, Win+D and mixed-DPI recovery require a disposable Windows 10/11 matrix.
+complete Windows acceptance: the quota-only status strip is implemented; the full desktop
+replica has been retired and `--desktop-widget` exits without creating a window.
+Explorer restart, Win+D and mixed-DPI recovery still require a disposable Windows 10/11 matrix.
 Startup registration rollback, window work-area/DPI recovery, and
-Windows notifications are implemented. The first Electron version should still be
-validated as a prerelease. The shipped ASAR has no runtime npm dependency tree. Linux has
+Windows notifications are implemented. Track current acceptance in
+[the Windows matrix](../../docs/windows-acceptance.md); the old desktop-attachment checks
+are no longer release requirements. The shipped ASAR has no runtime npm dependency tree. Linux has
 not yet been validated.
+
+The quit barrier, update-install ordering and maintenance acknowledgements are owned by
+`ShutdownCoordinator` in `lifecycle.ts`. The main process provides native actions and reads
+its state; it does not independently toggle competing quit flags. Both Sidecar shutdown
+failure and installer rejection finish the barrier with a nonzero exit.
+
+The WPF host remains a v0.5.0 compatibility reference and a solution build target. New
+Electron window features belong here; shared data, query and export behavior belongs in
+Application/Core/Infrastructure and remains available to both hosts.
 
 ## Automated checks
 
