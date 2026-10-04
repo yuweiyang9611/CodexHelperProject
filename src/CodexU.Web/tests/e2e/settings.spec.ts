@@ -8,10 +8,10 @@ async function openRateEditor(page: import('@playwright/test').Page) {
   await expect(editor).toHaveAttribute('open', '')
 }
 
-test('September models seed their official prices in the settings editor', async ({ page }, testInfo) => {
+test('current catalog models seed their official prices in the settings editor', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-dark-100')
   await openDemo(page, testInfo)
-  await page.clock.setFixedTime(new Date('2026-09-23T12:00:00+09:00'))
+  await page.clock.setFixedTime(new Date('2026-10-05T12:00:00+09:00'))
   await openTab(page, 'diagnostics')
   await openRateEditor(page)
   await page.getByRole('button', { name: '添加费率版本' }).click()
@@ -19,6 +19,10 @@ test('September models seed their official prices in the settings editor', async
   const modelInput = row.getByRole('combobox', { name: '模型', exact: true })
   for (const [model, prices] of [
     ['gpt-6-sol', ['50', '5', '250']], ['gpt-6-luna', ['2.5', '0.25', '12.5']],
+    ['gpt-6.1-sol', ['50', '2.5', '250']], ['gpt-rosalind-research', ['125', '12.5', '625']],
+    ['claude-fable-5-1', ['250', '6.25', '1250']], ['claude-mythos-5-1', ['250', '6.25', '1250']],
+    ['claude-opus-5-5', ['100', '5', '500']], ['claude-sonnet-5-5', ['50', '5', '250']],
+    ['claude-sonnet-5', ['50', '5', '250']],
   ] as const) {
     await expect(page.locator(`#built-in-rate-models option[value="${model}"]`)).toHaveCount(1)
     await modelInput.fill(model)

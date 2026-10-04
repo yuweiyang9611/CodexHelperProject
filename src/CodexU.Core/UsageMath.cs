@@ -88,9 +88,12 @@ public static class UsageCredits
     private const string Catalog2026082Version = "2026.08.2";
     private const string Catalog2026091Version = "2026.09.1";
     private const string Catalog2026092Version = "2026.09.2";
+    private const string Catalog2026101Version = "2026.10.1";
     private const string OpenAiStandardSource = "OpenAI API 官方 Standard 短上下文价目与 Changelog";
     private const string OpenAiSolPromotionSource =
         "OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）";
+    private const string OpenAiRosalindSource =
+        "OpenAI API 官方专业模型价目与 Changelog（GPT-Rosalind 自 2026-10-05 起计费）";
     // Shown in the settings page for the built-in catalog as a whole. The per-row
     // Source still names each vendor's own table; this only has to stop claiming the
     // combined catalog is OpenAI-only now that it spans more than one lineage.
@@ -98,9 +101,9 @@ public static class UsageCredits
         "内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）";
     private const string CatalogAnthropic2026071Version = "anthropic-2026.07.1";
     private const string CatalogAnthropic2026071Source = "Anthropic 公布的 Claude API 价目";
-    private const string CatalogAnthropic2026091Version = "anthropic-2026.09.1";
-    private const string CatalogAnthropic2026091Source = "Anthropic 公布的 Claude API 价目（Sonnet 5 首发优惠到期）";
-    public const string CurrentCatalogVersion = Catalog2026092Version;
+    private const string CatalogAnthropic2026101Version = "anthropic-2026.10.1";
+    private const string CatalogAnthropic2026101Source = "Anthropic 官方 Claude API 模型页与发布记录";
+    public const string CurrentCatalogVersion = Catalog2026101Version;
     public const string CurrentCatalogSource = BuiltInCatalogSource;
 
     // Cache writes are priced as a fixed multiple of the model's base input rate
@@ -124,8 +127,8 @@ public static class UsageCredits
         return safeCredits / 1_000d * safeRate;
     }
 
-    // Built-in rows form an append-only history. Never replace a published row when
-    // prices change; append a row with a new version and EffectiveFrom date instead.
+    // Actual price changes append dated rows; retain the prices that truly took effect.
+    // Cancelled forecasts are not historical prices (Sonnet 5's Sep 1 increase never happened).
     private static readonly IReadOnlyList<ModelCreditRate> Rates =
     [
         BuiltIn(Catalog2026071Version, Catalog2026071Source, null, "gpt-5.6-sol", 125d, 12.5d, 750d),
@@ -161,24 +164,30 @@ public static class UsageCredits
         // https://developers.openai.com/api/docs/changelog
         OpenAiApi(Catalog2026092Version, OpenAiStandardSource, new DateOnly(2026, 9, 22), "gpt-6-sol", 2d, 0.2d, 10d),
         OpenAiApi(Catalog2026092Version, OpenAiStandardSource, new DateOnly(2026, 9, 22), "gpt-6-luna", 0.1d, 0.01d, 0.5d),
+        // GPT-6.1 Sol is distinct from GPT-6 Sol, including its lower cache-read price.
+        OpenAiApi(Catalog2026101Version, OpenAiStandardSource, new DateOnly(2026, 9, 29), "gpt-6.1-sol", 2d, 0.1d, 10d),
+        // Billing begins Oct 5; do not guess a price for the earlier release period.
+        OpenAiApi(Catalog2026101Version, OpenAiRosalindSource, new DateOnly(2026, 10, 5), "gpt-rosalind-research", 5d, 0.5d, 25d),
 
-        // Anthropic list prices converted at CreditsPerDollar. Cached input is the
-        // published 0.1x cache-read multiple, matching the OpenAI rows above.
-        // Only the alias is registered: NormalizeModel collapses a dated snapshot
-        // suffix onto it, so claude-haiku-4-5-20251001 resolves through this row.
+        // Anthropic prices converted at CreditsPerDollar. Store each model's explicit
+        // cache-read price: newer versions can differ from the older 0.1x ratio.
+        // Legacy dated snapshots resolve through the existing normalization rules.
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-fable-5", 250d, 25d, 1_250d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-mythos-5", 250d, 25d, 1_250d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-opus-5", 125d, 12.5d, 625d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-opus-4-8", 125d, 12.5d, 625d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-opus-4-7", 125d, 12.5d, 625d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-opus-4-6", 125d, 12.5d, 625d),
-        // Sonnet 5 launched on introductory pricing; the standard rate takes over the
-        // day after it lapses. Usage is replayed against the row effective on its own
-        // date, so historical months keep billing at the introductory rate.
+        // Anthropic cancelled the planned Sep 1 increase on Aug 10. The launch
+        // price became standard; the former 75/7.5/375 row was never effective.
+        // https://platform.claude.com/docs/en/release-notes/overview#august-10-2026
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-sonnet-5", 50d, 5d, 250d),
-        BuiltIn(CatalogAnthropic2026091Version, CatalogAnthropic2026091Source, new DateOnly(2026, 9, 1), "claude-sonnet-5", 75d, 7.5d, 375d),
         BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-sonnet-4-6", 75d, 7.5d, 375d),
-        BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-haiku-4-5", 25d, 2.5d, 125d)
+        BuiltIn(CatalogAnthropic2026071Version, CatalogAnthropic2026071Source, null, "claude-haiku-4-5", 25d, 2.5d, 125d),
+        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 1), "claude-fable-5-1", 250d, 6.25d, 1_250d),
+        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 1), "claude-mythos-5-1", 250d, 6.25d, 1_250d),
+        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 22), "claude-opus-5-5", 100d, 5d, 500d),
+        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 28), "claude-sonnet-5-5", 50d, 5d, 250d)
     ];
 
     public static IReadOnlyList<ModelCreditRate> BuiltInRates => Rates;
@@ -213,7 +222,7 @@ public static class UsageCredits
         RateCatalogSchemaVersion,
         CurrentCatalogVersion,
         BuiltInCatalogSource,
-        new DateOnly(2026, 9, 22),
+        new DateOnly(2026, 10, 5),
         Rates.Count);
 
     public static RateCatalogSnapshot CatalogSnapshot => new(BuiltInCatalog, Rates);

@@ -18,12 +18,11 @@ function rate(overrides: Partial<ModelCreditRate> & { model: string }): ModelCre
   }
 }
 
-// The real catalog shape: Sonnet 5 carries an undated introductory row and a
-// dated standard row that supersedes it.
+// A representative catalog with an undated baseline and an actual dated price
+// change. Cancelled announcements must not become historical versions.
 const CATALOG: ModelCreditRate[] = [
   rate({ model: 'claude-opus-5', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 625 }),
   rate({ model: 'claude-sonnet-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250 }),
-  rate({ model: 'claude-sonnet-5', inputCreditsPerMillion: 75, cachedInputCreditsPerMillion: 7.5, outputCreditsPerMillion: 375, effectiveFrom: '2026-09-01' }),
   rate({ model: 'gpt-5.6-sol', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 750 }),
   rate({ model: 'gpt-5.6-sol', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21' }),
   rate({ model: 'gpt-5.2', inputCreditsPerMillion: 43.75, cachedInputCreditsPerMillion: 4.375, outputCreditsPerMillion: 350 }),
@@ -31,11 +30,9 @@ const CATALOG: ModelCreditRate[] = [
 
 describe('newestBuiltInRateFor', () => {
   it('picks the dated row over the undated one it supersedes', () => {
-    // Sonnet 5's introductory rate is undated and its standard rate starts
-    // 2026-09-01. Seeding a new override from the introductory figure would
-    // quietly underprice every month from then on.
-    expect(newestBuiltInRateFor(CATALOG, 'claude-sonnet-5')?.inputCreditsPerMillion).toBe(75)
-    expect(newestBuiltInRateFor(CATALOG, 'claude-sonnet-5')?.outputCreditsPerMillion).toBe(375)
+    expect(newestBuiltInRateFor(CATALOG, 'gpt-5.6-sol', '2026-08-20')?.inputCreditsPerMillion).toBe(125)
+    expect(newestBuiltInRateFor(CATALOG, 'gpt-5.6-sol', '2026-08-21')?.inputCreditsPerMillion).toBe(100)
+    expect(newestBuiltInRateFor(CATALOG, 'gpt-5.6-sol', '2026-08-21')?.outputCreditsPerMillion).toBe(500)
   })
 
   it('returns the only row when a model has just one', () => {
@@ -86,6 +83,10 @@ describe('normalizeRateModel', () => {
     ['gpt-daybreak-blue-latest', 'gpt-daybreak-blue'],
     ['gpt-daybreak-red-latest', 'gpt-daybreak-red'],
     ['gpt-6-astra-2026-09-03', 'gpt-6-astra'],
+    ['gpt-6.1-sol-2026-09-29', 'gpt-6.1-sol'],
+    ['gpt-rosalind-research-latest', 'gpt-rosalind-research'],
+    ['claude-sonnet-5-5-20260928', 'claude-sonnet-5-5'],
+    ['claude-fable-5-1-20260901', 'claude-fable-5-1'],
     ['claude-opus-5-20260514', 'claude-opus-5'],
   ])('normalizes %s to %s', (model, expected) => {
     expect(normalizeRateModel(model)).toBe(expected)
@@ -98,6 +99,12 @@ describe('normalizeRateModel', () => {
 
   it('keeps an invalid date-like suffix', () => {
     expect(normalizeRateModel('gpt-6-astra-2026-02-30')).toBe('gpt-6-astra-2026-02-30')
+  })
+
+  it('keeps newer model generations distinct from legacy model rates', () => {
+    expect(normalizeRateModel('gpt-6.1-sol')).not.toBe(normalizeRateModel('gpt-6-sol'))
+    expect(normalizeRateModel('claude-sonnet-5-5')).not.toBe(normalizeRateModel('claude-sonnet-5'))
+    expect(normalizeRateModel('claude-opus-5-5')).not.toBe(normalizeRateModel('claude-opus-5'))
   })
 })
 

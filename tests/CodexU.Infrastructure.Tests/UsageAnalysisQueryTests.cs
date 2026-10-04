@@ -211,6 +211,33 @@ public sealed class UsageAnalysisQueryTests
         Assert.Equal("2026.09.2", Assert.Single(data.Entries, e => e.Date == release).Rate!.CatalogVersion);
     }
 
+    [Theory]
+    [InlineData("gpt-6.1-sol", AgentRuntime.Codex, 9, 29, 2d, 0.1d, "2026.10.1")]
+    [InlineData("gpt-rosalind-research", AgentRuntime.Codex, 10, 5, 5d, 0.5d, "2026.10.1")]
+    [InlineData("claude-fable-5-1", AgentRuntime.ClaudeCode, 9, 1, 10d, 0.25d, "anthropic-2026.10.1")]
+    [InlineData("claude-mythos-5-1", AgentRuntime.ClaudeCode, 9, 1, 10d, 0.25d, "anthropic-2026.10.1")]
+    [InlineData("claude-opus-5-5", AgentRuntime.ClaudeCode, 9, 22, 4d, 0.2d, "anthropic-2026.10.1")]
+    [InlineData("claude-sonnet-5-5", AgentRuntime.ClaudeCode, 9, 28, 2d, 0.2d, "anthropic-2026.10.1")]
+    public void OctoberCatalog_RepricesRetainedCacheUsageOnlyFromTheOfficialEffectiveDate(
+        string model, AgentRuntime runtime, int month, int day, double inputDollars, double cachedDollars, string version)
+    {
+        var effective = new DateOnly(2026, month, day);
+        var tokens = new TokenBreakdown(2_000_000, 1_000_000, 0, 0, 2_000_000);
+        var data = UsageHistoryProjection.BuildAnalysis([
+            Row("before", effective.AddDays(-1), tokens.TotalTokens, model) with { Tokens = tokens, SourceKind = "retained" },
+            Row("after", effective, tokens.TotalTokens, model) with { Tokens = tokens, SourceKind = "retained" }], [], null, false);
+        var before = UsageAnalysisQuery.Execute(data, new(runtime, To: effective.AddDays(-1)));
+        Assert.Null(before.Totals.CreditsUsed);
+        Assert.Equal(2_000_000, before.Totals.UnratedTokens);
+        var after = UsageAnalysisQuery.Execute(data, new(runtime, From: effective));
+        Assert.Equal(inputDollars + cachedDollars, UsageCredits.ToAmount(after.Totals.CreditsUsed!.Value), 8);
+        Assert.Equal(2_000_000, after.Totals.RatedTokens);
+        Assert.Empty(after.MissingRates!);
+        var applied = Assert.Single(after.AppliedRates!);
+        Assert.Equal(version, applied.CatalogVersion);
+        Assert.Equal(effective, applied.EffectiveFrom);
+    }
+
     private static AttributedUsage Row(string source, DateOnly date, long tokens, string model = "model-a", string? project = "D:/Project") =>
         new(source, project, date, model, new(tokens, 0, 0, 0, tokens), 1, Feature: "tasks",
             AvailableFields: UsageBreakdownFields.Input | UsageBreakdownFields.Output | UsageBreakdownFields.CachedInput);

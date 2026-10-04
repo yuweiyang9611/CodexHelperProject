@@ -53,7 +53,7 @@ public sealed class RateCatalogFileServiceTests
                 && rate.MatchMode == "exact");
             foreach (var model in new[] { "gpt-6-sol", "gpt-6-luna" })
                 Assert.Contains(imported.Rates, rate => rate.Model == model
-                    && rate.CatalogVersion == UsageCredits.CurrentCatalogVersion
+                    && rate.CatalogVersion == "2026.09.2"
                     && rate.EffectiveFrom == new DateOnly(2026, 9, 22)
                     && rate.MatchMode == "exact");
             Assert.Null(UsageCredits.FindRate(
@@ -82,6 +82,48 @@ public sealed class RateCatalogFileServiceTests
                     Assert.Equal("vendor pricing", second.Source);
                     Assert.Equal(20, second.InputCreditsPerMillion);
                 });
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("gpt-6.1-sol", 9, 29, 50d, 2.5d, 250d, "2026.10.1")]
+    [InlineData("gpt-rosalind-research", 10, 5, 125d, 12.5d, 625d, "2026.10.1")]
+    [InlineData("claude-fable-5-1", 9, 1, 250d, 6.25d, 1_250d, "anthropic-2026.10.1")]
+    [InlineData("claude-mythos-5-1", 9, 1, 250d, 6.25d, 1_250d, "anthropic-2026.10.1")]
+    [InlineData("claude-opus-5-5", 9, 22, 100d, 5d, 500d, "anthropic-2026.10.1")]
+    [InlineData("claude-sonnet-5-5", 9, 28, 50d, 5d, 250d, "anthropic-2026.10.1")]
+    public async Task ExportAndImportAsync_RoundTripsNewOfficialRatesWithoutChangingProvenance(
+        string model, int month, int day, double input, double cached, double output, string version)
+    {
+        var root = CreateRoot();
+        try
+        {
+            var path = Path.Combine(root, "new-model-rates.json");
+            var service = new RateCatalogFileService();
+            var effective = new DateOnly(2026, month, day);
+            var original = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(model, effective, null));
+
+            var export = await service.ExportAsync([], path);
+            var imported = await service.ImportAsync(path);
+
+            Assert.True(export.Success);
+            Assert.Equal("2026.10.1", imported.CatalogVersion);
+            Assert.Equal("2026.10.1", imported.BaseCatalogVersion);
+            var row = Assert.Single(imported.Rates, rate => rate.Model == model);
+            Assert.Equal(original, row);
+            Assert.Equal(version, row.CatalogVersion);
+            Assert.Equal(effective, row.EffectiveFrom);
+            Assert.Equal(input, row.InputCreditsPerMillion);
+            Assert.Equal(cached, row.CachedInputCreditsPerMillion);
+            Assert.Equal(output, row.OutputCreditsPerMillion);
+            Assert.Equal("exact", row.MatchMode);
+            Assert.True(UsageCredits.IsBuiltInRate(row));
+            Assert.Null(UsageCredits.FindRate(model, effective.AddDays(-1), imported.Rates, completeRateCatalog: true));
+            Assert.Equal(original, UsageCredits.FindRate(model, effective, imported.Rates, completeRateCatalog: true));
         }
         finally
         {
