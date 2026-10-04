@@ -1,6 +1,6 @@
 {
   "name": "codexu-electron",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "productName": "CodexU",
   "private": true,
   "description": "Electron desktop host for codexU",
