@@ -44,3 +44,11 @@ Anthropic 于 2026-08-10 取消了原定 9 月 1 日的 Sonnet 5 涨价，2／0.
 - 完整 Playwright 矩阵 43 个有效场景通过，95 个重复组合按既有规则跳过；包含视觉、键盘、无障碍、缩放及设置。界面布局与截图基线未修改。
 - 完整解决方案严格构建通过，含旧 WPF 宿主，0 警告、0 错误；完整格式检查与 `git diff --check` 通过。
 - 独立源码复核确认后端实际 37 行，新增六行、删除 Sonnet 5 错误行，其余真实历史行的价格、日期、来源及版本不变。应用版本仍为 0.6.0。
+
+## CI 构建依赖审计补充
+
+首轮 CI 在运行模型测试前，被 Electron 构建依赖的高危审计项阻止。修复限定在兼容范围内的锁文件版本：`undici` 7.29.0 → 7.30.0、`@electron/asar` 下的 `brace-expansion` 5.0.9 → 5.0.12；直接依赖和 Electron 运行时版本保持原锁定值。
+
+修复依据为 [Undici 安全公告](https://github.com/advisories/GHSA-3wwx-pv8p-q78v) 与 [brace-expansion 安全公告](https://github.com/advisories/GHSA-qhr7-859c-m2p7)，并以原 `npm audit --audit-level=high` 检查验证，不降低审计门槛。这些包属于构建依赖，不进入应用分发的运行时 npm 树。
+
+更新锁文件后以 Node 22.23.2 执行 `npm ci` 成功；原审计命令报告 0 漏洞，依赖策略、Electron 构建／118 项测试及法律文件检查均通过。锁文件仅改变两个包的 version、resolved、integrity，共 6 行。
