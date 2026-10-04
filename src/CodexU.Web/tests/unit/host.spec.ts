@@ -126,7 +126,7 @@ describe('HostBridge transport selection', () => {
     const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
     await vi.advanceTimersByTimeAsync(180)
     const catalog = await request
-    expect(catalog.builtIn).toMatchObject({ catalogVersion: '2026.09.2', publishedOn: '2026-09-22', rateCount: 32 })
+    expect(catalog.builtIn).toMatchObject({ catalogVersion: '2026.10.1', publishedOn: '2026-10-05', rateCount: 37 })
     for (const [model, input, cached, output] of [
       ['gpt-6-sol', 50, 5, 250], ['gpt-6-luna', 2.5, 0.25, 12.5],
     ] as const) {
@@ -138,5 +138,47 @@ describe('HostBridge transport selection', () => {
       })
     }
     expect(newestBuiltInRateFor(catalog.builtInRates, 'gpt-6-astra', '2026-09-22')?.catalogVersion).toBe('2026.09.1')
+  })
+
+  it.each([
+    ['gpt-6.1-sol', '2026-09-28', '2026-09-29', 50, 2.5, 250, '2026.10.1'],
+    ['gpt-rosalind-research', '2026-10-04', '2026-10-05', 125, 12.5, 625, '2026.10.1'],
+    ['claude-fable-5-1', '2026-08-31', '2026-09-01', 250, 6.25, 1250, 'anthropic-2026.10.1'],
+    ['claude-mythos-5-1', '2026-08-31', '2026-09-01', 250, 6.25, 1250, 'anthropic-2026.10.1'],
+    ['claude-opus-5-5', '2026-09-21', '2026-09-22', 100, 5, 500, 'anthropic-2026.10.1'],
+    ['claude-sonnet-5-5', '2026-09-27', '2026-09-28', 50, 5, 250, 'anthropic-2026.10.1'],
+  ] as const)('seeds %s only from its official effective date', async (model, before, effectiveFrom, input, cached, output, catalogVersion) => {
+    vi.useFakeTimers()
+    const { host } = await import('../../src/host')
+    const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
+    await vi.advanceTimersByTimeAsync(180)
+    const { builtInRates } = await request
+
+    expect(builtInModelNames(builtInRates)).toContain(model)
+    expect(newestBuiltInRateFor(builtInRates, model, before)).toBeNull()
+    expect(newestBuiltInRateFor(builtInRates, model, effectiveFrom)).toMatchObject({
+      inputCreditsPerMillion: input, cachedInputCreditsPerMillion: cached, outputCreditsPerMillion: output,
+      effectiveFrom, catalogVersion, matchMode: 'exact',
+    })
+  })
+
+  it('keeps legacy rates distinct and excludes the cancelled Sonnet 5 increase', async () => {
+    vi.useFakeTimers()
+    const { host } = await import('../../src/host')
+    const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
+    await vi.advanceTimersByTimeAsync(180)
+    const { builtInRates } = await request
+
+    expect(newestBuiltInRateFor(builtInRates, 'gpt-6-sol', '2026-10-05')?.cachedInputCreditsPerMillion).toBe(5)
+    expect(newestBuiltInRateFor(builtInRates, 'gpt-6.1-sol', '2026-10-05')?.cachedInputCreditsPerMillion).toBe(2.5)
+    expect(newestBuiltInRateFor(builtInRates, 'claude-opus-5', '2026-10-05')?.inputCreditsPerMillion).toBe(125)
+    expect(newestBuiltInRateFor(builtInRates, 'claude-opus-5-5', '2026-10-05')?.inputCreditsPerMillion).toBe(100)
+    expect(builtInRates?.filter(rate => rate.model === 'claude-sonnet-5')).toEqual([
+      expect.objectContaining({
+        effectiveFrom: null, inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250,
+      }),
+    ])
+    for (const date of ['2026-08-31', '2026-09-01', '2026-10-05'])
+      expect(newestBuiltInRateFor(builtInRates, 'claude-sonnet-5', date)?.inputCreditsPerMillion).toBe(50)
   })
 })

@@ -3,20 +3,19 @@ import type { ModelCreditRate } from './types'
 /**
  * Helpers for seeding the rate editor from the built-in catalog.
  *
- * The catalog is append-only: a model keeps every rate it has ever had, one row
- * per price change, so that historical months replay at the price that applied
- * on the day. That makes "the rate for this model" ambiguous unless a date is
- * chosen, which is what these functions settle.
+ * The catalog retains every price that actually took effect, one row per price
+ * change, so that historical months replay at the price that applied on the day.
+ * That makes "the rate for this model" ambiguous unless a date is chosen, which
+ * is what these functions settle.
  */
 
 /**
  * The built-in rate in force for a model today.
  *
  * Rows with no effective date apply to all history and are the oldest thing
- * there is, so a dated row always wins over them — Sonnet 5's introductory rate
- * is undated and its standard rate starts 2026-09-01, and defaulting a new
- * override to the introductory figure would quietly underprice every future
- * month.
+ * there is, so a dated row in force always wins over them. Future price versions
+ * must not seed today's override; corrections to cancelled announcements do not
+ * count as historical price changes.
  */
 export function newestBuiltInRateFor(
   rates: ModelCreditRate[] | undefined,

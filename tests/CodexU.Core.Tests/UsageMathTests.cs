@@ -505,8 +505,8 @@ public sealed class UsageMathTests
     [Fact]
     public void BuiltInCatalog_IdentifiesCurrentOfficialOpenAiCatalog()
     {
-        Assert.Equal("2026.09.2", UsageCredits.BuiltInCatalog.CatalogVersion);
-        Assert.Equal(new DateOnly(2026, 9, 22), UsageCredits.BuiltInCatalog.PublishedOn);
+        Assert.Equal("2026.10.1", UsageCredits.BuiltInCatalog.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 10, 5), UsageCredits.BuiltInCatalog.PublishedOn);
         Assert.Contains("OpenAI API Standard", UsageCredits.BuiltInCatalog.Source, StringComparison.Ordinal);
 
         var astra = Assert.Single(UsageCredits.BuiltInRates, rate => rate.Model == "gpt-6-astra");
@@ -595,26 +595,26 @@ public sealed class UsageMathTests
     [Fact]
     public void CreateCatalogDocument_DoesNotLetABuiltInDateSupersedeAUserPrice()
     {
-        // claude-sonnet-5 is the first model whose built-in lineage spans two effective
-        // dates. A user's own undated price must keep applying past 2026-09-01 rather
-        // than being silently replaced by the built-in standard rate on that date.
-        var mine = new ModelCreditRate("claude-sonnet-5", 10, 1, 20, null, "my vendor", "mine-v1");
+        // GPT-5.6 Sol has an undated historical rate and an official promotion from
+        // 2026-08-21. A user's undated price must remain authoritative after that date.
+        var mine = new ModelCreditRate("gpt-5.6-sol", 10, 1, 20, null, "my vendor", "mine-v1");
 
         var document = UsageCredits.CreateCatalogDocument([mine]);
         var rows = document.Rates
-            .Where(rate => UsageCredits.NormalizeModel(rate.Model) == "claude-sonnet-5")
+            .Where(rate => UsageCredits.NormalizeModel(rate.Model) == "gpt-5.6-sol")
             .ToArray();
 
         var row = Assert.Single(rows);
+        Assert.Equal(mine, row);
         Assert.Equal("mine-v1", row.CatalogVersion);
         Assert.Null(row.EffectiveFrom);
 
         var afterTheBuiltInDate = UsageCredits.FindRate(
-            "claude-sonnet-5",
+            "gpt-5.6-sol",
             new DateOnly(2026, 12, 1),
             document.Rates);
         Assert.NotNull(afterTheBuiltInDate);
-        Assert.Equal(10, afterTheBuiltInDate.InputCreditsPerMillion);
+        Assert.Equal(mine, afterTheBuiltInDate);
     }
 
     [Fact]
@@ -753,21 +753,21 @@ public sealed class UsageMathTests
         Assert.Equal(output, rate.OutputCreditsPerMillion);
     }
 
-    [Fact]
-    public void BuiltInCatalog_ReplaysSonnet5IntroductoryPricingByUsageDate()
+    [Theory]
+    [InlineData(2026, 8, 31)]
+    [InlineData(2026, 9, 1)]
+    [InlineData(2026, 10, 5)]
+    public void BuiltInCatalog_KeepsSonnet5PricingAfterCancelledIncrease(int year, int month, int day)
     {
-        // Introductory pricing lapses after 2026-08-31; usage before that keeps billing
-        // at the introductory rate rather than being repriced by the later row.
-        var introductory = UsageCredits.FindRate("claude-sonnet-5", new DateOnly(2026, 8, 31), null);
-        var standard = UsageCredits.FindRate("claude-sonnet-5", new DateOnly(2026, 9, 1), null);
+        var rate = Assert.IsType<ModelCreditRate>(UsageCredits.FindRate(
+            "claude-sonnet-5", new DateOnly(year, month, day), null));
 
-        Assert.NotNull(introductory);
-        Assert.Equal(50d, introductory.InputCreditsPerMillion);
-        Assert.Equal(250d, introductory.OutputCreditsPerMillion);
-
-        Assert.NotNull(standard);
-        Assert.Equal(75d, standard.InputCreditsPerMillion);
-        Assert.Equal(375d, standard.OutputCreditsPerMillion);
+        Assert.Equal(50d, rate.InputCreditsPerMillion);
+        Assert.Equal(5d, rate.CachedInputCreditsPerMillion);
+        Assert.Equal(250d, rate.OutputCreditsPerMillion);
+        Assert.Equal("anthropic-2026.07.1", rate.CatalogVersion);
+        Assert.Null(rate.EffectiveFrom);
+        Assert.Single(UsageCredits.BuiltInRates, item => item.Model == "claude-sonnet-5");
     }
 
     [Fact]
