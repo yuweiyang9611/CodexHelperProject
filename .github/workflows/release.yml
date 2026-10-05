@@ -245,6 +245,10 @@ jobs:
         working-directory: src/CodexU.Electron
         run: npm test
 
+      - name: Real Electron updater network tests
+        working-directory: src/CodexU.Electron
+        run: npm run test:updater-network
+
       - name: Install Playwright Chromium
         working-directory: src/CodexU.Web
         run: npx playwright install chromium
