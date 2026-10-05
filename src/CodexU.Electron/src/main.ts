@@ -38,6 +38,7 @@ import {
 } from './hostSettings';
 import { ShutdownCoordinator, type QuitRequestDecision } from './lifecycle';
 import { AutomaticUpdater, supportsAutomaticUpdates } from './automaticUpdates';
+import { createUpdaterFetch } from './updaterFetch';
 import { requestTimeoutForMethod } from './ipcRequestTimeouts';
 import {
   resetMaintenanceShutdownMarker,
@@ -372,7 +373,7 @@ async function bootstrap(): Promise<void> {
       supported: process.arch === 'x64' && supportsAutomaticUpdates(process.platform, app.isPackaged, smokeTest, process.execPath),
       directory: path.join(app.getPath('userData'), 'updates'),
       installDirectory: path.dirname(process.execPath),
-      fetch: (url, options) => net.fetch(url instanceof URL ? url.href : url, options),
+      fetch: createUpdaterFetch(net),
       check: async force => {
         if (!sidecar || shutdown.isShuttingDown) throw new Error('后端暂不可用。');
         const result = await sidecar.request('update.check', { force });

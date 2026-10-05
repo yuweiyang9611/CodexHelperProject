@@ -71,6 +71,12 @@ function Assert-Ordered {
 
 # Installer identity and entry points must remain compatible with the previous
 # per-user Inno installation while switching the shipped host to Electron.
+Assert-Contains $ciWorkflow 'npm run test:updater-network' `
+    'CI must exercise updater redirects through the real Electron network stack.'
+Assert-Contains $releaseWorkflow 'npm run test:updater-network' `
+    'Release validation must exercise updater redirects through the real Electron network stack.'
+Assert-Contains $electronMain 'fetch: createUpdaterFetch(net),' `
+    'The updater must use the tested manual-redirect adapter instead of raw net.fetch.'
 Assert-Contains $installer 'AppId={{A4B05572-70A1-4A5C-A9CE-08FA966F4E8E}' `
     'Installer must preserve the existing product AppId for upgrades.'
 Assert-Contains $installer 'DefaultDirName={localappdata}\Programs\codexU' `

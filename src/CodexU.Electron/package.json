@@ -1,6 +1,6 @@
 {
   "name": "codexu-electron",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "productName": "CodexU",
   "private": true,
   "description": "Electron desktop host for codexU",
@@ -17,6 +17,7 @@
     "package": "npm run build && node scripts/verify-legal-payload.mjs && node scripts/package.mjs",
     "presmoke": "npm run verify:node",
     "smoke": "npm run build && electron . --smoke-test",
+    "test:updater-network": "npm run verify:node && npm run build && node scripts/test-updater-network.cjs",
     "pretest": "npm run verify:node",
     "test": "npm run build && node --test test/automatic-updates.test.cjs test/framing.test.cjs test/host-requests.test.cjs test/host-settings.test.cjs test/lifecycle.test.cjs test/maintenance.test.cjs test/native-notifications.test.cjs test/preload.test.cjs test/security.test.cjs test/sidecar-client.test.cjs test/windows-host.test.cjs test/status-strip.test.cjs"
   },
