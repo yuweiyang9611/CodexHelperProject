@@ -27,7 +27,8 @@ Electron -> Sidecar: { version: 1, id, type: "hostResponse", ok, payload | error
 ```
 
 The reverse-RPC allow-list contains `host.dialog.saveFile`,
-`host.dialog.openFile`, `host.dialog.confirm`, and `host.startup.set`. Successful
+`host.dialog.openFile`, `host.dialog.confirm`, `host.startup.set`, and
+`host.statusStrip.control`. Successful
 file-dialog payloads are the selected path or `null`; confirmation and startup-state
 payloads are booleans. The startup method writes the packaged Windows login item and
 reads it back before the Sidecar commits settings, so a mismatch or native failure rolls
@@ -53,6 +54,15 @@ also restores window bounds against the saved display work area and presents quo
 alerts through the packaged Windows notification identity. A second launch, a
 notification activation, or the shortcut restores and focuses the existing window.
 
+The status strip restores the v0.6.0 collapsed and expanded views: both quota windows,
+optional today's Token usage, seven-day and lifetime totals, today's equivalent amount,
+refresh, and open-main-window actions. Position locking, preview and recovery retain the
+Core projection and layout rules. Optional desktop mode launches a separate Electron
+process with `--desktop-widget`, backed by the same projected snapshot. That helper uses
+a sandboxed renderer and the Sidecar's `--desktop-bridge` process to attach to the Windows
+desktop; it does not start a second usage collector. Desktop attachment state is reported
+through `desktop.stateChanged`, with bounded recovery after helper or Explorer failure.
+
 Unexpected Sidecar and renderer exits are supervised independently with bounded
 exponential backoff and a circuit breaker. Successful Sidecar recovery reloads the Vue
 renderer against the new private transport. Main-process, renderer, and Sidecar failures
@@ -74,6 +84,11 @@ signals termination when needed and returns without adding a fixed cleanup delay
 if the process never reports `close`. If a fatal exit arrives after graceful quit has
 already been authorized, Electron disposes native shell resources before forcing the
 higher non-zero exit code.
+
+Installed Windows builds retain automatic update download and SHA-256 verification.
+`createUpdaterFetch(net)` exposes redirects through Electron's `net.request`, allowing
+the updater to validate each target before following it. This preserves the v0.6.2 fix
+for `Redirect was cancelled` and keeps credentials off the asset CDN.
 
 ## Development
 
@@ -147,14 +162,15 @@ fails if the legacy package is reintroduced or the hardened implementation disap
 ## Migration limitations
 
 The v0.5.0 release remains the legacy WPF build, while v0.6.0-beta.1 is the first
-Electron prerelease. This packaging readiness does not imply
-complete Windows acceptance: the quota-only status strip is implemented; the full desktop
-replica has been retired and `--desktop-widget` exits without creating a window.
-Explorer restart, Win+D and mixed-DPI recovery still require a disposable Windows 10/11 matrix.
+Electron prerelease. The v0.6.0 interface, rich status strip and optional desktop
+dashboard replica are restored while retaining later history, model-catalog, updater and
+lifecycle fixes. This packaging readiness does not imply complete Windows acceptance:
+Explorer attachment and restart, Win+D, multiple monitors and mixed-DPI recovery still
+require a disposable Windows 10/11 matrix.
 Startup registration rollback, window work-area/DPI recovery, and
 Windows notifications are implemented. Track current acceptance in
-[the Windows matrix](../../docs/windows-acceptance.md); the old desktop-attachment checks
-are no longer release requirements. The shipped ASAR has no runtime npm dependency tree. Linux has
+[the Windows matrix](../../docs/windows-acceptance.md). The native matrix remains deferred
+for this round, as agreed with the user. The shipped ASAR has no runtime npm dependency tree. Linux has
 not yet been validated.
 
 The quit barrier, update-install ordering and maintenance acknowledgements are owned by
@@ -174,7 +190,15 @@ npm run smoke
 cd ..\..
 .\tools\Test-PackagedElectron.ps1 `
   -ApplicationDirectory src\CodexU.Electron\out\CodexU-win32-x64
+node src/CodexU.Electron/scripts/test-desktop.cjs
 ```
+
+The current local integration run prints `DESKTOP_E2E_OK` after exercising the real
+Electron/preload/Sidecar path, rich status strip, desktop capability declaration,
+historical queries and exports, backup/restore, and Sidecar/renderer recovery. It did not
+set `CODEXU_RUN_DESKTOP_ATTACH_TEST=1`, so it does not prove native desktop attachment.
+Enable that optional branch only in the dedicated interactive Windows environment and
+complete the matrix separately.
 
 `--smoke-test` keeps the window hidden, waits for the `app://codexu` page to load,
 requires the handshake to advertise both `host.rpc.v1` and `host.state.v1`, and invokes `app.initialize` through

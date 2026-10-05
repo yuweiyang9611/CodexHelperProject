@@ -30,6 +30,7 @@ export const DEMO_HOST_CAPABILITIES: readonly string[] = Object.freeze([
   HOST_CAPABILITY.nativeDialogs,
   HOST_CAPABILITY.nativeNotifications,
   HOST_CAPABILITY.statusStripControl,
+  HOST_CAPABILITY.desktopMode,
   HOST_CAPABILITY.tray,
   HOST_CAPABILITY.alwaysOnTop,
   HOST_CAPABILITY.globalHotKey,

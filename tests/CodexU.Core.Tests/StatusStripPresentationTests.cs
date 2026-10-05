@@ -44,7 +44,7 @@ public sealed class StatusStripPresentationTests
     }
 
     [Fact]
-    public void TokenHistoryQuality_DoesNotDegradeAccountQuotaStrip()
+    public void PartialAndApproximateTokens_HaveExplicitDegradedLabels()
     {
         var presenter = new StatusStripPresenter(new AppSettings());
         var snapshot = HealthySnapshot() with
@@ -60,9 +60,9 @@ public sealed class StatusStripPresentationTests
 
         Assert.Equal("部分 1.2K", presentation.Today.Text);
         Assert.Equal("约 2.3K", presentation.SevenDays.Text);
-        Assert.Equal(StatusStripVisualState.Healthy, presentation.VisualState);
-        Assert.DoesNotContain("Token", presentation.StatusText, StringComparison.Ordinal);
-        Assert.False(presentation.ShowTodayTokens);
+        Assert.Equal(StatusStripVisualState.Degraded, presentation.VisualState);
+        Assert.Contains("降级", presentation.StatusText, StringComparison.Ordinal);
+        Assert.True(presentation.ShowTodayTokens);
         Assert.Contains("部分", presentation.Today.AccessibleText, StringComparison.Ordinal);
         Assert.Contains("估算", presentation.SevenDays.AccessibleText, StringComparison.Ordinal);
     }
@@ -87,7 +87,7 @@ public sealed class StatusStripPresentationTests
         Assert.Equal("6.3B", presentation.Lifetime.Text);
         Assert.DoesNotContain("2.5B", presentation.Today.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("官方账户", presentation.Today.AccessibleText, StringComparison.Ordinal);
-        Assert.Contains("额度更新于", presentation.StatusText, StringComparison.Ordinal);
+        Assert.Contains("本机原始统计", presentation.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -153,28 +153,47 @@ public sealed class StatusStripPresentationTests
         Assert.Contains("未返回新快照", presenter.Current.StatusText, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void RetiredDisplayOptions_CannotHideRemainingQuotaOrResets()
+    [Theory]
+    [InlineData("used", "25%", "已用", true)]
+    [InlineData("remaining", "75%", "剩余", false)]
+    public void DisplayOptions_RespectQuotaModeAndTodayTokensWhileKeepingResetMetadata(
+        string quotaMode, string primaryText, string quotaLabel, bool showTodayTokens)
     {
         var presenter = new StatusStripPresenter(new AppSettings(
-            StatusStripQuotaMode: "used", StatusStripShowTodayTokens: true));
+            StatusStripQuotaMode: quotaMode, StatusStripShowTodayTokens: showTodayTokens));
         var resetsAt = new DateTimeOffset(2026, 9, 22, 12, 30, 0, TimeSpan.Zero);
         var snapshot = HealthySnapshot() with
         {
             PrimaryQuota = new RateLimitWindow(25d, 300, resetsAt),
-            SecondaryQuota = new RateLimitWindow(40d, 10_080, null),
-            Tokens = DashboardSnapshot.Empty(AgentRuntime.Codex).Tokens
+            SecondaryQuota = new RateLimitWindow(40d, 10_080, null)
         };
 
         var presentation = presenter.UpdateSnapshot(snapshot, 99);
 
-        Assert.False(presentation.ShowTodayTokens);
-        Assert.Equal("75%", presentation.PrimaryQuota.Text);
-        Assert.Contains("剩余", presentation.PrimaryLabel, StringComparison.Ordinal);
+        Assert.Equal(showTodayTokens, presentation.ShowTodayTokens);
+        Assert.Equal(primaryText, presentation.PrimaryQuota.Text);
+        Assert.Contains(quotaLabel, presentation.PrimaryLabel, StringComparison.Ordinal);
         Assert.Equal(resetsAt, presentation.PrimaryQuota.ResetsAt);
         Assert.Contains(resetsAt.ToLocalTime().ToString("M/d HH:mm"), presentation.PrimaryQuota.ResetText, StringComparison.Ordinal);
         Assert.Equal("刷新时间未知", presentation.SecondaryQuota.ResetText);
         Assert.Equal(StatusStripVisualState.Healthy, presentation.VisualState);
+        Assert.Equal("99", presentation.TodoText);
+    }
+
+    [Fact]
+    public void ApplySettings_ImmediatelyUpdatesTheExistingStatusStripPresentation()
+    {
+        var presenter = new StatusStripPresenter(new AppSettings(
+            StatusStripQuotaMode: "remaining", StatusStripShowTodayTokens: false));
+        presenter.UpdateSnapshot(HealthySnapshot(), 4);
+
+        var presentation = presenter.ApplySettings(new AppSettings(
+            StatusStripQuotaMode: "used", StatusStripShowTodayTokens: true));
+
+        Assert.True(presentation.ShowTodayTokens);
+        Assert.Equal("25%", presentation.PrimaryQuota.Text);
+        Assert.Contains("已用", presentation.PrimaryLabel, StringComparison.Ordinal);
+        Assert.Equal("4", presentation.TodoText);
     }
 
     private static DashboardSnapshot HealthySnapshot()

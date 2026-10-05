@@ -930,7 +930,7 @@ public sealed class UsageMathTests
         Assert.Equal(0, settings.MonthlyAmountAlert);
         Assert.Equal(100, settings.MinimumRateCoverageAlertPercent);
         Assert.Equal(HotKeyGesture.Default, settings.GlobalHotKey);
-        Assert.Equal("remaining", settings.StatusStripQuotaMode);
+        Assert.Equal("used", settings.StatusStripQuotaMode);
         var rate = Assert.Single(settings.CustomModelRates!);
         Assert.Equal(new ModelCreditRate("claude-sonnet", 3, 4, 5), rate);
     }

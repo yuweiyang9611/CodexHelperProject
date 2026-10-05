@@ -47,7 +47,7 @@ class HostBridge {
   private mockSettings: AppSettings = {
     theme: 'dark', showSubagents: false, compactMode: false, statusStripEnabled: false, statusStripPositionLocked: false, desktopMode: false,
     closeToTray: true,
-    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: false, fiveHourAlertPercent: 20,
+    startAtLogin: false, notificationsEnabled: true, quotaForecastAlertsEnabled: true, fiveHourAlertPercent: 20,
     sevenDayAlertPercent: 20, autoRefreshMinutes: 5, incrementalIndexEnabled: true,
     uiScalePercent: 110,
     amountPerThousandCredits: 40,
@@ -60,10 +60,10 @@ class HostBridge {
     includePrereleaseUpdates: false,
     autoInstallUpdates: true,
     monthlyAmountAlert: 0,
-    minimumRateCoverageAlertPercent: 0,
+    minimumRateCoverageAlertPercent: 80,
     globalHotKey: 'Ctrl+U',
     statusStripQuotaMode: 'remaining',
-    statusStripShowTodayTokens: false,
+    statusStripShowTodayTokens: true,
     customModelRates: [],
     isRateCatalogPinned: false,
   }

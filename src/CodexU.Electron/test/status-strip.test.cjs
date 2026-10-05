@@ -12,9 +12,10 @@ test('only user moves persist; recovery survives restart and clears pending save
   const screen = Object.assign(new EventEmitter(), { getPrimaryDisplay: () => display, getDisplayMatching: () => display,
     screenToDipPoint: p => p, dipToScreenPoint: p => p });
   let window;
+  let lastSurface;
   class Window extends EventEmitter {
     constructor(options) { super(); window = this; this.bounds = { x: 0, y: 0, width: options.width, height: options.height };
-      this.webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {}, send() {} }); }
+      this.webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {}, send(_channel, data) { lastSurface = data; } }); }
     isDestroyed() { return !!this.destroyed; }
     destroy() { this.destroyed = true; }
     showInactive() { this.visible = true; }
@@ -36,7 +37,18 @@ test('only user moves persist; recovery survives restart and clears pending save
   const state = () => host.control({ action: 'getState' });
   const file = path.join(root, 'status-strip-placement.json');
   try {
-    host.update({ statusStripEnabled: true });
+    host.update({ statusStripEnabled: true, statusStripShowTodayTokens: false, statusStripQuotaMode: 'dual',
+      todayAmount: 42, presentation: { title: 'Codex', quotaText: '72%', todayTokensText: '420K' } });
+    await host.request('ready');
+    assert.equal(lastSurface.todayAmount, 42);
+    assert.equal(lastSurface.statusStripQuotaMode, 'dual');
+    assert.equal(lastSurface.presentation.todayTokensText, '420K');
+    await host.control({ action: 'preview', settings: { theme: 'dark', statusStripShowTodayTokens: true } });
+    assert.equal(lastSurface.statusStripShowTodayTokens, true);
+    assert.equal(lastSurface.statusStripQuotaMode, 'dual');
+    await host.request('expand');
+    assert.equal(lastSurface.expanded, true);
+    assert.equal(window.bounds.height, 290);
     assert.equal((await state()).positionMode, 'automatic');
     window.setPosition(-800, 20);
     assert.equal((await state()).hasManualPosition, false);
