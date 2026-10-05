@@ -63,17 +63,23 @@ const os = require('node:os');
     assertGroupedUsage(await query(page), 'live');
     const filtered = await request(page, 'usage.query', { runtime: 'claudeCode', model: 'claude-sonnet-4-5', project: root });
     assertGroupedUsage(filtered, 'live');
-    assert(!capabilities.capabilities.includes('desktopMode'));
-    const migrated = await request(page, 'settings.update', { patch: { desktopMode: true } });
-    assert.equal(migrated.desktopMode, false);
-    assert(!application.windows().some(p => p.url().includes('surface=desktop')));
+    assert(capabilities.capabilities.includes('desktopMode'));
+    if (process.env.CODEXU_RUN_DESKTOP_ATTACH_TEST === '1') {
+      await page.evaluate(() => { window.desktopTestStates = []; window.codexU.onEvent((method, state) => {
+        if (method === 'desktop.stateChanged') window.desktopTestStates.push(state);
+      }); });
+      await request(page, 'settings.update', { patch: { desktopMode: true } });
+      try { await page.waitForFunction(() => window.desktopTestStates.some(state => state.attached), null, { timeout: 45000 }); }
+      catch (error) { console.error('Desktop attachment failed in the isolated test environment'); throw error; }
+      await request(page, 'settings.update', { patch: { desktopMode: false } });
+    }
     const state = await request(page, 'statusStrip.recover'); assert.equal(state.visible, true);
     assert.equal(state.positionMode, 'automatic');
     const strip = application.windows().find(p => p.url().includes('surface=strip')); assert(strip);
     await strip.getByRole('button', { name: '展开或折叠状态条' }).click();
     await strip.getByRole('button', { name: '打开主界面' }).waitFor();
-    assert(!/今日 Token|近 7 天|累计|今日等效金额/.test(await strip.locator('main').innerText()));
-    await strip.getByText('刷新时间未知').first().waitFor();
+    await strip.getByText(/^近 7 天/).waitFor();
+    await strip.getByText(/^累计/).waitFor();
     await strip.getByRole('button', { name: '锁定位置', exact: true }).click();
     await strip.getByRole('button', { name: '解锁位置', exact: true }).waitFor();
     assert.equal((await request(page, 'statusStrip.getState')).positionLocked, true);
@@ -87,10 +93,10 @@ const os = require('node:os');
     assert(await application.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes('surface='))?.isVisible()));
     assert.equal(await strip.getByRole('button', { name: /^待办/ }).count(), 0);
     await strip.getByRole('button', { name: '打开主界面', exact: true }).click();
-    await page.locator('#panel-overview').waitFor({ timeout: 15000 });
+    await page.locator('#panel-usage').waitFor({ timeout: 15000 });
     assert.equal((await request(page, 'statusStrip.preview', { patch: { statusStripShowTodayTokens: false } })).visible, true);
     await strip.getByText('今日 Token', { exact: false }).waitFor({ state: 'hidden' });
-    assert.equal((await request(page, 'settings.get')).statusStripShowTodayTokens, false, 'retired Token display remains disabled');
+    assert.equal((await request(page, 'settings.get')).statusStripShowTodayTokens, true, 'preview does not overwrite the saved today-token choice');
     await request(page, 'statusStrip.preview', { patch: { statusStripShowTodayTokens: true } });
     await strip.screenshot({ path: path.join(artifacts, 'status-strip.png') });
     await request(page, 'settings.update', { patch: { theme: 'light' } });
@@ -114,12 +120,9 @@ const os = require('node:os');
     await application.evaluate(({ dialog }, destination) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
     }, selectedExport);
-    await page.locator('#tab-usage').click();
-    await page.getByRole('button', { name: '全部历史', exact: true }).click();
-    await page.getByLabel(/^模型/).selectOption('claude-sonnet-4-5');
-    await page.locator('.analysis-summary').waitFor();
-    await page.getByRole('button', { name: '导出 JSON', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: '当前筛选的全部匹配用量' }).waitFor();
+    assert.equal((await request(page, 'data.exportAggregates', {
+      format: 'json', query: { runtime: 'claudeCode', model: 'claude-sonnet-4-5' },
+    })).success, true);
     const selected = JSON.parse(await fs.readFile(selectedExport, 'utf8'));
     assert.equal(selected.schemaVersion, 3);
     assert.equal(selected.filters.model, 'claude-sonnet-4-5');
@@ -129,9 +132,10 @@ const os = require('node:os');
     await application.evaluate(({ dialog }) => {
       dialog.showSaveDialog = async () => ({ canceled: true });
     });
-    await page.getByRole('button', { name: '导出 CSV', exact: true }).click();
+    await page.locator('#tab-diagnostics').click();
+    await page.getByRole('button', { name: '导出 CSV 日报', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '已取消导出' }).waitFor();
-    assert.equal(await page.getByRole('button', { name: '导出 JSON', exact: true }).isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: '导出 JSON 统计', exact: true }).isEnabled(), true);
     // An empty filtered CSV still carries metadata through the real renderer/preload/Sidecar bridge.
     const emptyExport = path.join(root, 'empty.csv');
     await application.evaluate(({ dialog }, destination) => {
@@ -143,7 +147,7 @@ const os = require('node:os');
     const emptyCsv = await fs.readFile(emptyExport, 'utf8');
     assert(emptyCsv.includes('metadata,'));
     assert(!emptyCsv.includes('day,'));
-    await page.locator('#tab-overview').click();
+    await page.locator('#tab-usage').click();
     const backup = path.join(root, 'backup.json');
     await application.evaluate(({ dialog }, backup) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: backup });
@@ -250,7 +254,7 @@ const os = require('node:os');
     assertGroupedUsage(await query(page), 'retained');
     await page.locator('.overview-grid').waitFor();
     await page.screenshot({ path: path.join(artifacts, 'main-restored.png'), animations: 'disabled' });
-    console.log('DESKTOP_E2E_OK: settings, all-history private aggregate export, grouped and filtered usage query, retained history after source deletion, backup/restore, clear cancellation and confirmation, quota-only strip, removed desktop replica, sidecar/renderer recovery');
+    console.log('DESKTOP_E2E_OK: settings, all-history private aggregate export, grouped and filtered usage query, retained history after source deletion, backup/restore, clear cancellation and confirmation, rich status strip, desktop capability, sidecar/renderer recovery');
   } finally {
     if (application) await application.close();
     await fs.rm(root, { recursive: true, force: true });

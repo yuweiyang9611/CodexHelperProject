@@ -5,9 +5,10 @@ namespace CodexU.Sidecar.Tests;
 public sealed class SidecarOptionsTests
 {
     [Fact]
-    public void DesktopReplicaIsNotAdvertisedByAnyHost()
+    public void DesktopReplicaIsAdvertisedOnlyByWindowsHosts()
     {
-        Assert.DoesNotContain(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("windows", true));
+        Assert.Contains(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("windows", true));
+        Assert.Contains(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("windows", false));
         Assert.DoesNotContain(HostCapabilityNames.DesktopMode, SidecarOptions.ResolveHostCapabilities("linux", true));
         Assert.Contains(HostCapabilityNames.StatusStripControl, SidecarOptions.ResolveHostCapabilities("windows", true));
     }

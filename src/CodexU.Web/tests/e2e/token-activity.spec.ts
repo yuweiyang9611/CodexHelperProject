@@ -1,30 +1,31 @@
 import { expect, test } from '@playwright/test'
 import { openDemo, openTab } from './demo'
 
-test('overview and analysis share local totals while account quota stays independent', async ({ page }, testInfo) => {
+test('local JSONL periods drive token overview and usage charts', async ({ page }, testInfo) => {
   await openDemo(page, testInfo)
-  const initialQuota = await page.locator('.quota-rings').innerText()
-  const initialTotal = await page.locator('.metric-0 strong').innerText()
-  await expect(page.locator('.token-card')).toContainText('本机原始 Token')
+
+  const tokenCard = page.locator('.token-card')
+  await expect(tokenCard).toContainText('本机原始统计')
+  await expect(tokenCard).toContainText('今日')
+  await expect(tokenCard).toContainText('3.84M')
+  await expect(tokenCard).not.toContainText('官方账户统计')
+
   await openTab(page, 'usage')
-  await expect(page.locator('.analysis-summary > div').first().locator('strong')).toHaveText(initialTotal)
-  await page.getByRole('button', { name: '今日', exact: true }).click()
-  await expect(page.locator('.analysis-summary')).toBeVisible()
-  const dayTotal = await page.locator('.analysis-summary > div').first().locator('strong').innerText()
-  await expect(page.locator('.daily-bars button')).toHaveCount(1)
-  await openTab(page, 'overview')
-  await expect(page.locator('.metric-0 strong')).toHaveText(dayTotal)
-  await expect(page.locator('.quota-rings')).toHaveText(initialQuota, { useInnerText: true })
+  const usagePanel = page.locator('#panel-usage')
+  await expect(usagePanel).toContainText('最近半年本机原始用量')
+  await expect(usagePanel).toContainText('本机原始模型 Token 分布')
+  const latestTooltip = await page.locator('.heat-day').last().getAttribute('title')
+  expect(latestTooltip).toContain('2026-07-14')
+  expect(latestTooltip).toContain('US$')
 })
 
-test('last selected runtime survives reopening without restoring task pages', async ({ page }, testInfo) => {
+test('last selected runtime survives reopening with the restored five tabs', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-dark-100')
   await openDemo(page, testInfo)
   await page.getByRole('button', { name: 'Claude Code', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.token-card')).toContainText('本机原始 Token')
+  await expect(page.locator('.token-card')).toContainText('本机原始统计')
   await page.reload()
   await expect(page.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('tab')).toHaveText(['总览', '用量分析', '设置'])
-  await expect(page.getByRole('button', { name: '近 30 天', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('tab')).toHaveText(['用量趋势', '项目排行', 'Skill 使用', '双运行时', '设置与诊断'])
 })

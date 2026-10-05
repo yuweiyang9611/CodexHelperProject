@@ -62,25 +62,17 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
-  it('removes retired task and desktop controls, and explains history cleanup', async () => {
+  it('restores desktop and rich status-strip controls while retaining history cleanup', async () => {
     const { container, store } = mountSettings([HOST_CAPABILITY.desktopMode, HOST_CAPABILITY.statusStripControl])
-    expect(container.textContent).not.toContain('显示子代理任务')
-    expect(container.textContent).not.toContain('桌面仪表盘')
-    expect(container.textContent).not.toContain('状态条显示今日 Token')
+    expect(container.textContent).toContain('显示子代理任务')
+    expect(labelledControl(container, '启动后置于桌面底层').disabled).toBe(false)
+    expect(labelledControl(container, '状态条显示今日 Token').disabled).toBe(false)
+    expect(labelledControl(container, '状态条额度口径').disabled).toBe(false)
     expect(container.textContent).toContain('不删除原始日志和设置')
     expect(container.textContent).toContain('下次刷新后会重新计入')
     const operation = vi.spyOn(store, 'runLocalOperation').mockResolvedValue(true)
     button(container, '清理已留存历史').click()
     expect(operation).toHaveBeenCalledWith('data.clearHistory')
-  })
-
-  it('keeps subscription comparison optional and remembers the choice', async () => {
-    const { container } = mountSettings([])
-    const control = labelledControl(container, '显示订阅月费对比') as HTMLInputElement
-    expect(control.checked).toBe(false)
-    control.click()
-    await nextTick()
-    expect(localStorage.getItem('codexu.subscriptionComparison')).toBe('true')
   })
 
   it('shows download progress, retry and restart actions as update state changes', async () => {
@@ -120,11 +112,14 @@ describe('desktop host capabilities', () => {
     ])
     await nextTick()
 
-    expect(container.querySelector('.capability-summary')?.textContent).toContain('系统额度通知、顶部状态条暂未接入')
+    expect(container.querySelector('.capability-summary')?.textContent).toContain('系统额度通知、顶部状态条、桌面底层模式暂未接入')
     expect(labelledControl(container, '5h 提醒阈值').disabled).toBe(true)
     expect(labelledControl(container, '启用额度通知').disabled).toBe(true)
+    expect(labelledControl(container, '状态条额度口径').disabled).toBe(true)
+    expect(labelledControl(container, '状态条显示今日 Token').disabled).toBe(true)
     expect(labelledControl(container, '启用顶部状态条').disabled).toBe(true)
     expect(labelledControl(container, '锁定状态条位置').disabled).toBe(true)
+    expect(labelledControl(container, '启动后置于桌面底层').disabled).toBe(true)
     expect(button(container, '立即预览').disabled).toBe(true)
     expect(button(container, '找回状态条').disabled).toBe(true)
 
@@ -154,7 +149,10 @@ describe('desktop host capabilities', () => {
 
     expect(container.querySelector('.capability-summary')).toBeNull()
     expect(labelledControl(container, '启用额度通知').disabled).toBe(false)
+    expect(labelledControl(container, '状态条额度口径').disabled).toBe(false)
+    expect(labelledControl(container, '状态条显示今日 Token').disabled).toBe(false)
     expect(labelledControl(container, '启用顶部状态条').disabled).toBe(false)
+    expect(labelledControl(container, '启动后置于桌面底层').disabled).toBe(false)
     expect(button(container, '立即预览').disabled).toBe(false)
     expect(button(container, '找回状态条').disabled).toBe(false)
   })

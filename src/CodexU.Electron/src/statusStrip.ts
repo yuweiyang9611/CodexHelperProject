@@ -7,6 +7,10 @@ export interface SurfaceData {
   theme?: string;
   statusStripEnabled?: boolean;
   statusStripPositionLocked?: boolean;
+  statusStripShowTodayTokens?: boolean;
+  statusStripQuotaMode?: string;
+  desktopMode?: boolean;
+  todayAmount?: number;
   layout?: { width: number; collapsedHeight: number; expandedHeight: number; margin: number; rightOffset: number; topOffset: number };
   [key: string]: unknown;
 }
@@ -41,7 +45,7 @@ export class StatusStripHost {
       await this.ensure();
       if (this.previewTimer) clearTimeout(this.previewTimer);
       const settings = payload.settings as SurfaceData | undefined;
-      this.preview = { theme: settings?.theme,
+      this.preview = { theme: settings?.theme, statusStripShowTodayTokens: settings?.statusStripShowTodayTokens,
         presentation: payload.presentation as SurfaceData['presentation'] ?? this.data.presentation };
       this.send();
       this.previewTimer = setTimeout(() => { this.previewTimer = undefined; this.preview = undefined; this.update(this.data); }, 10_000);
