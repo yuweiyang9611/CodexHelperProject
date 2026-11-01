@@ -149,7 +149,7 @@ describe('combineSubscription', () => {
     })
   }
 
-  it('adds up what each runtime actually costs', () => {
+  it('adds up the automatically inferred monthly amounts', () => {
     const combined = combineSubscription([withPlan('codex', 200), withPlan('claudeCode', 20)])
 
     expect(combined.amount).toBe(220)
@@ -168,6 +168,58 @@ describe('combineSubscription', () => {
     expect(combined.unknownRuntimes).toEqual(['claudeCode'])
   })
 
+  it('uses an explicitly selected manual amount and identifies its source', () => {
+    const combined = combineSubscription([withPlan('codex', 200), withPlan('claudeCode', null)], {
+      claudeAutoDetectSubscriptionAmount: false,
+      claudeMonthlySubscriptionAmount: 100,
+    })
+
+    expect(combined.amount).toBe(300)
+    expect(combined.isComplete).toBe(true)
+    expect(combined.perRuntime).toEqual([
+      { runtime: 'codex', amount: 200, source: 'auto' },
+      { runtime: 'claudeCode', amount: 100, source: 'manual' },
+    ])
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, undefined])(
+    'leaves an invalid manual amount unknown instead of using an automatic suggestion (%s)', (amount) => {
+      const combined = combineSubscription([withPlan('codex', 200), withPlan('claudeCode', 20)], {
+        claudeAutoDetectSubscriptionAmount: false,
+        claudeMonthlySubscriptionAmount: amount,
+      })
+
+      expect(combined.amount).toBeNull()
+      expect(combined.isComplete).toBe(false)
+      expect(combined.perRuntime[1]).toEqual({ runtime: 'claudeCode', amount: null, source: 'unknown' })
+    },
+  )
+
+  it('accepts a zero manual amount and keeps the runtimes independent', () => {
+    const combined = combineSubscription([withPlan('codex', 200), withPlan('claudeCode', 20)], {
+      codexAutoDetectSubscriptionAmount: false,
+      codexMonthlySubscriptionAmount: 0,
+      claudeAutoDetectSubscriptionAmount: true,
+      claudeMonthlySubscriptionAmount: 100,
+    })
+
+    expect(combined.amount).toBe(20)
+    expect(combined.perRuntime).toEqual([
+      { runtime: 'codex', amount: 0, source: 'manual' },
+      { runtime: 'claudeCode', amount: 20, source: 'auto' },
+    ])
+  })
+
+  it.each([true, undefined])('never substitutes a manual default unless automatic mode is explicitly disabled (%s)', (auto) => {
+    const combined = combineSubscription([withPlan('claudeCode', null)], {
+      claudeAutoDetectSubscriptionAmount: auto,
+      claudeMonthlySubscriptionAmount: 100,
+    })
+
+    expect(combined.amount).toBeNull()
+    expect(combined.perRuntime).toEqual([{ runtime: 'claudeCode', amount: null, source: 'unknown' }])
+  })
+
   it('ignores a runtime the user does not have', () => {
     const combined = combineSubscription([
       withPlan('codex', 200),
@@ -178,14 +230,15 @@ describe('combineSubscription', () => {
     expect(combined.isComplete).toBe(true)
   })
 
-  it('treats a failed runtime as unknown, never as free', () => {
+  it('keeps a failed runtime unknown even when a manual amount is configured', () => {
     const combined = combineSubscription([
       withPlan('codex', 200),
       entry('claudeCode', { contribution: 'failed' }),
-    ])
+    ], { claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100 })
 
     expect(combined.amount).toBeNull()
     expect(combined.unknownRuntimes).toEqual(['claudeCode'])
+    expect(combined.perRuntime[1]?.source).toBe('unknown')
   })
 })
 
@@ -317,6 +370,16 @@ describe('mergeProjects', () => {
 })
 
 describe('earliestExhaustion', () => {
+  it('excludes Desktop history without a reset even when a forecast is present', () => {
+    expect(earliestExhaustion([entry('claudeCode', {
+      snapshot: snapshot({
+        runtime: 'claudeCode',
+        primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
+        primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
+      }),
+    })])).toBeNull()
+  })
+
   function withQuota(
     runtime: AgentRuntime,
     primary: { exhaustsAt: string; exhaustsBeforeReset: boolean } | null,

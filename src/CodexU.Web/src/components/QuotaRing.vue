@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { QuotaForecast, RateLimitWindow } from '../types'
 import { exhaustionTime, resetTime } from '../format'
+import { isDesktopQuota, quotaSampleTime } from '../quotaPresentation'
 
 const props = defineProps<{
   label: string
@@ -15,11 +16,13 @@ const circumference = 2 * Math.PI * radius
 const percent = computed(() => Math.round(props.quota?.remainingPercent ?? 0))
 const dashOffset = computed(() => circumference * (1 - percent.value / 100))
 const gradientId = computed(() => `quota-${props.color}-${props.label.replace(/\W/g, '')}`)
+const isSample = computed(() => isDesktopQuota(props.quota))
+const caption = computed(() => isSample.value ? '采样剩余' : '剩余')
 
 // A window that resets before it would run out is not news, however fast it is being
 // consumed — showing a countdown for it would cry wolf at every busy stretch.
 const burnDown = computed(() =>
-  props.quota && props.forecast?.exhaustsBeforeReset
+  props.quota && !isSample.value && props.forecast?.exhaustsBeforeReset
     ? exhaustionTime(props.forecast.exhaustsAt)
     : '')
 
@@ -28,9 +31,9 @@ const burnRate = computed(() =>
 </script>
 
 <template>
-  <div class="quota-ring" :class="{ unavailable: !quota }">
-    <svg viewBox="0 0 132 132" role="img" :aria-label="`${label} 剩余 ${quota ? percent : '不可用'}${quota ? '%' : ''}`">
-      <title>{{ label }}额度{{ quota ? `剩余 ${percent}%` : '不可用' }}</title>
+  <div class="quota-ring" :class="{ unavailable: !quota, sampled: isSample }">
+    <svg viewBox="0 0 132 132" role="img" :aria-label="`${label} ${caption} ${quota ? percent : '不可用'}${quota ? '%' : ''}`">
+      <title>{{ label }}额度{{ quota ? `${caption} ${percent}%` : '不可用' }}</title>
       <defs>
         <linearGradient :id="gradientId" x1="0" y1="0" x2="1" y2="1">
           <template v-if="color === 'blue'">
@@ -59,9 +62,13 @@ const burnRate = computed(() =>
     <div class="quota-content">
       <span class="quota-label">{{ label }}</span>
       <strong>{{ quota ? percent : '--' }}<small v-if="quota">%</small></strong>
-      <span class="quota-caption">剩余</span>
+      <span class="quota-caption">{{ caption }}</span>
     </div>
-    <span class="reset-time">{{ resetTime(quota?.resetsAt) }}</span>
+    <span v-if="isSample" class="sample-time">
+      <time :datetime="quota?.measuredAt ?? undefined">{{ quotaSampleTime(quota?.measuredAt) }}</time>
+      <span>本地时间 · 非实时</span>
+    </span>
+    <span class="reset-time">{{ isSample && !quota?.resetsAt ? '来源未提供重置时间' : resetTime(quota?.resetsAt) }}</span>
     <span v-if="burnDown" class="burn-down" :title="burnRate">{{ burnDown }}</span>
   </div>
 </template>
@@ -69,6 +76,8 @@ const burnRate = computed(() =>
 <style scoped>
 .quota-ring { position: relative; width: 156px; padding-bottom: 25px; text-align: center; }
 .quota-ring:has(.burn-down) { padding-bottom: 42px; }
+.quota-ring.sampled { padding-bottom: 59px; }
+.sample-time { position: absolute; left: 0; right: 0; bottom: 20px; display: flex; flex-direction: column; color: var(--text-tertiary); font-size: 10px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .quota-ring svg { width: 132px; height: 132px; transform: rotate(-90deg); filter: drop-shadow(0 10px 24px rgba(72, 91, 210, .22)); }
 .ring-track, .ring-progress { fill: none; stroke-width: 9; }
 .ring-track { stroke: rgba(255,255,255,.075); }

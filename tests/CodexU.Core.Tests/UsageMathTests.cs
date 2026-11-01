@@ -640,7 +640,7 @@ public sealed class UsageMathTests
     [Theory]
     [InlineData("free", 0d)]
     [InlineData("pro", 20d)]
-    [InlineData("max", 100d)]
+    [InlineData("ultra", 200d)]
     [InlineData("Max 5x", 100d)]
     [InlineData("max_20x", 200d)]
     public void InferMonthlyAmount_MapsClaudePlans(string planType, double expected) =>
@@ -650,6 +650,7 @@ public sealed class UsageMathTests
     [InlineData("team")]
     [InlineData("enterprise")]
     [InlineData("plus")]
+    [InlineData("max")]
     public void InferMonthlyAmount_LeavesUnpricedClaudePlansToTheManualSetting(string planType)
     {
         // Team and Enterprise are per-seat and negotiated, and "plus" is a ChatGPT

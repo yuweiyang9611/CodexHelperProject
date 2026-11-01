@@ -25,7 +25,9 @@ const activeManualHint = computed(() => {
   if (!autoForCurrentRuntime) return null
   return suggestedSubscriptionAmount.value != null
     ? `当前自动推算：${amountMoney(suggestedSubscriptionAmount.value)} · ${props.snapshot.account?.planType?.toUpperCase() ?? ''}`
-    : '当前套餐无法可靠推算，将使用此备用值'
+    : props.snapshot.runtime === 'claudeCode'
+      ? '未识别订阅档位；填写月费会切换为手动金额。自动估算或手动金额均不代表实际账单。'
+      : '当前套餐无法可靠推算，将使用此备用值'
 })
 const customRateVersions = computed(() => new Set(
   store.settingsDraft?.customModelRates
@@ -328,8 +330,7 @@ function removeCustomRate(index: number) {
           <p>设置订阅价格和 API 等价金额；模型级费率在高级设置中按需维护。</p>
           <div class="settings-grid">
             <label>每 1,000 点对应金额（美元）<input v-model.number="store.settingsDraft.amountPerThousandCredits" type="number" min="0.01" max="1000000" step="0.01" /><small class="setting-hint">所有等效金额和订阅收益统一使用 US$</small></label>
-            <!-- Two fields, not one: the same plan name prices differently per vendor, and
-                 Claude's plan is only auto-priceable when the statusline snapshot exists. -->
+            <!-- Monthly settings belong to each runtime; quota percentages alone do not identify a subscription tier. -->
             <label>Codex 订阅月费（美元，手动备用）<input v-model.number="store.settingsDraft.codexMonthlySubscriptionAmount" type="number" min="0" max="1000000" step="0.01" @input="store.settingsDraft.codexAutoDetectSubscriptionAmount = false" /><small v-if="activeManualHint" class="setting-hint">{{ snapshot.runtime === 'codex' ? activeManualHint : '当前显示的是 Claude Code，此项影响 Codex 视图' }}</small></label>
             <label>Claude Code 订阅月费（美元，手动备用）<input v-model.number="store.settingsDraft.claudeMonthlySubscriptionAmount" type="number" min="0" max="1000000" step="0.01" @input="store.settingsDraft.claudeAutoDetectSubscriptionAmount = false" /><small v-if="activeManualHint" class="setting-hint">{{ snapshot.runtime === 'claudeCode' ? activeManualHint : '当前显示的是 Codex，此项影响 Claude Code 视图' }}</small></label>
           </div>

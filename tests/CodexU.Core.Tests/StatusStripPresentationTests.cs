@@ -196,6 +196,47 @@ public sealed class StatusStripPresentationTests
         Assert.Equal("4", presentation.TodoText);
     }
 
+    [Theory]
+    [InlineData("used", "≈25%")]
+    [InlineData("remaining", "≈75%")]
+    public void DesktopHistory_ShowsSamplingTimeAndUnknownResetInBothQuotaModes(string mode, string expected)
+    {
+        var measuredAt = new DateTimeOffset(2026, 11, 1, 11, 45, 0, TimeSpan.Zero);
+        var presenter = new StatusStripPresenter(new AppSettings(StatusStripQuotaMode: mode));
+        var snapshot = HealthySnapshot() with
+        {
+            Runtime = AgentRuntime.ClaudeCode,
+            PrimaryQuota = new RateLimitWindow(25, 300, null, measuredAt, "claude-desktop-history")
+        };
+
+        var result = presenter.UpdateSnapshot(snapshot, 0);
+
+        Assert.Equal(expected, result.PrimaryQuota.Text);
+        Assert.Contains("历史采样", result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Contains("非实时", result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Contains(measuredAt.ToLocalTime().ToString("M/d HH:mm"), result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Contains("重置时间不可用", result.PrimaryQuota.ResetText, StringComparison.Ordinal);
+        Assert.Contains("非实时", result.PrimaryQuota.ResetText, StringComparison.Ordinal);
+        Assert.Contains("历史采样", result.StatusToolTip, StringComparison.Ordinal);
+        Assert.Null(result.PrimaryQuota.ResetsAt);
+        Assert.DoesNotContain("≈", result.SecondaryQuota.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopHistory_DoesNotSubstituteRefreshTimeOrClaimResetMetadata()
+    {
+        var presenter = new StatusStripPresenter(new AppSettings());
+        var snapshot = HealthySnapshot() with
+        {
+            PrimaryQuota = new RateLimitWindow(25, 300, DateTimeOffset.UtcNow.AddHours(5),
+                Source: "claude-desktop-history")
+        };
+        var result = presenter.UpdateSnapshot(snapshot, 0);
+        Assert.Contains("采样时间未知", result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Null(result.PrimaryQuota.ResetsAt);
+        Assert.Contains("重置时间不可用", result.PrimaryQuota.ResetText, StringComparison.Ordinal);
+    }
+
     private static DashboardSnapshot HealthySnapshot()
     {
         var snapshot = DashboardSnapshot.Empty(AgentRuntime.Codex);

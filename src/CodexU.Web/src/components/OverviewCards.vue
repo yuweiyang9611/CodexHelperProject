@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import QuotaRing from './QuotaRing.vue'
+import ClaudeDataNotice from './ClaudeDataNotice.vue'
 import UiIcon from './UiIcon.vue'
 import { compactNumber, exhaustionTime, qualityLabel } from '../format'
 import { useEquivalentValue } from '../composables/useEquivalentValue'
+import { isDesktopQuota } from '../quotaPresentation'
 import type { DashboardSnapshot } from '../types'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
@@ -34,9 +36,9 @@ const tokenMetrics = computed(() => [
 
 const split = computed(() => props.snapshot.tokens.today.breakdown)
 const quotaRisks = computed(() => [
-  { label: '5 小时额度', forecast: props.snapshot.primaryForecast },
-  { label: '7 天额度', forecast: props.snapshot.secondaryForecast },
-].filter((item) => item.forecast?.exhaustsBeforeReset)
+  { label: '5 小时额度', quota: props.snapshot.primaryQuota, forecast: props.snapshot.primaryForecast },
+  { label: '7 天额度', quota: props.snapshot.secondaryQuota, forecast: props.snapshot.secondaryForecast },
+].filter((item) => !isDesktopQuota(item.quota) && item.forecast?.exhaustsBeforeReset)
   .map((item) => `${item.label}：${exhaustionTime(item.forecast?.exhaustsAt)}`))
 const splitTotal = computed(() => {
   if (!split.value) return 1
@@ -82,6 +84,7 @@ function splitPercentage(value?: number | null): string {
           :forecast="snapshot.secondaryForecast"
         />
       </div>
+      <ClaudeDataNotice :snapshot="snapshot" />
     </article>
 
     <article class="glass-card token-card">

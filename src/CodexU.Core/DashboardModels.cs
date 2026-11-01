@@ -33,7 +33,8 @@ public sealed record RateLimitWindow(
     /// would understate the rate whenever a stale file is re-read. Null means the
     /// source cannot say, and the reader falls back to the refresh time.
     /// </summary>
-    DateTimeOffset? MeasuredAt = null)
+    DateTimeOffset? MeasuredAt = null,
+    string? Source = null)
 {
     public double RemainingPercent => double.IsFinite(UsedPercent)
         ? Math.Clamp(100d - UsedPercent, 0d, 100d)

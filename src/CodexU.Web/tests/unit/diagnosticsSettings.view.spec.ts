@@ -22,7 +22,7 @@ afterEach(() => {
   useDashboardStore(pinia).$dispose()
 })
 
-function mountSettings(capabilities: string[]) {
+function mountSettings(capabilities: string[], current = snapshot()) {
   const store = useDashboardStore(pinia)
   const saved = appSettings({
     notificationsEnabled: true,
@@ -39,7 +39,7 @@ function mountSettings(capabilities: string[]) {
 
   const container = document.createElement('div')
   document.body.append(container)
-  const app = createApp(DiagnosticsSettings, { snapshot: snapshot() })
+  const app = createApp(DiagnosticsSettings, { snapshot: current })
   app.use(pinia)
   app.mount(container)
   mountedApps.push(app)
@@ -62,6 +62,20 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
+  it('explains that an unidentified Claude subscription needs an explicit manual monthly amount', async () => {
+    const { container, store } = mountSettings([], snapshot({ runtime: 'claudeCode' }))
+    const monthly = labelledControl(container, 'Claude Code 订阅月费')
+
+    expect(monthly.closest('label')?.textContent).toContain('未识别订阅档位')
+    expect(monthly.closest('label')?.textContent).toContain('填写月费会切换为手动金额')
+    expect(monthly.closest('label')?.textContent).toContain('不代表实际账单')
+    monthly.value = '100'
+    monthly.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(store.settingsDraft?.claudeAutoDetectSubscriptionAmount).toBe(false)
+    expect(store.settingsDraft?.claudeMonthlySubscriptionAmount).toBe(100)
+  })
+
   it('restores desktop and rich status-strip controls while retaining history cleanup', async () => {
     const { container, store } = mountSettings([HOST_CAPABILITY.desktopMode, HOST_CAPABILITY.statusStripControl])
     expect(container.textContent).toContain('显示子代理任务')

@@ -7,6 +7,74 @@ public sealed class QuotaNotificationProjectorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Project_DesktopHistoryDoesNotAnnounceOrChangeLaterStatuslineAlerts()
+    {
+        var identities = new RecordingWindowIdentityProvider("statusline-window");
+        var projector = new QuotaNotificationProjector(() => Now, identities);
+        var settings = Settings();
+        var history = Snapshot(AgentRuntime.ClaudeCode,
+            primary: Window(remainingPercent: 5) with
+            {
+                Source = "claude-desktop-history",
+                MeasuredAt = Now.AddMinutes(-20)
+            },
+            secondary: new RateLimitWindow(95, 10080, null, Now.AddMinutes(-20), "claude-desktop-history"));
+
+        Assert.Empty(projector.Project(history, settings));
+        Assert.Empty(identities.Observations);
+
+        var live = Snapshot(AgentRuntime.ClaudeCode,
+            primary: Window(remainingPercent: 10, resetsIn: TimeSpan.FromHours(1)) with { Source = "statusline" });
+        var threshold = Assert.Single(projector.Project(live, settings));
+        Assert.StartsWith("quota-below-threshold:", threshold.Id);
+        Assert.Single(identities.Observations);
+
+        // A different historical percentage must not re-arm the already-fired
+        // live alert or allocate an identity, even while notifications are off.
+        var olderHighAllowance = history with
+        {
+            PrimaryQuota = history.PrimaryQuota! with { UsedPercent = 2 },
+            SecondaryQuota = history.SecondaryQuota! with { UsedPercent = 2 }
+        };
+        Assert.Empty(projector.Project(olderHighAllowance, settings with { NotificationsEnabled = false }));
+        Assert.Single(identities.Observations);
+        Assert.Empty(projector.Project(live, settings));
+
+        var renewed = live with
+        {
+            PrimaryQuota = live.PrimaryQuota! with { UsedPercent = 2, ResetsAt = Now.AddHours(5) }
+        };
+        var reset = Assert.Single(projector.Project(renewed, settings));
+        Assert.StartsWith("quota-refreshed:", reset.Id);
+        Assert.Empty(projector.Project(renewed, settings));
+
+        var nextLow = renewed with { PrimaryQuota = renewed.PrimaryQuota! with { UsedPercent = 95 } };
+        Assert.StartsWith("quota-below-threshold:", Assert.Single(projector.Project(nextLow, settings)).Id);
+    }
+
+    [Fact]
+    public void Project_DesktopHistoryPreservesMonthlyAmountAndRateCoverageNotifications()
+    {
+        var month = new TokenPeriod(1_000, TokenBreakdown.Zero, 1_000, 500, [], DataQuality.Partial);
+        var snapshot = Snapshot(AgentRuntime.ClaudeCode,
+            primary: new RateLimitWindow(95, 300, null, Now.AddMinutes(-20), "claude-desktop-history"),
+            month: month) with
+        {
+            DailyUsage = [new(DateOnly.FromDateTime(Now.Date), 1_000, 1_000, DataQuality.Partial,
+                Distribution: [new("claude-sonnet-5", "tasks", 500), new("unlisted-model", "tasks", 500)])]
+        };
+        var settings = Settings() with { MonthlyAmountAlert = 20, MinimumRateCoverageAlertPercent = 80 };
+        var projector = Projector();
+
+        var notifications = projector.Project(snapshot, settings);
+
+        Assert.Equal(2, notifications.Count);
+        Assert.Contains(notifications, item => item.Id.StartsWith("monthly-amount:", StringComparison.Ordinal));
+        Assert.Contains(notifications, item => item.Id.StartsWith("rate-coverage:", StringComparison.Ordinal));
+        Assert.Empty(projector.Project(snapshot, settings));
+    }
+
+    [Fact]
     public void Project_AnnouncesAThresholdOnceAndReArmsAfterWindowRollover()
     {
         var projector = Projector();

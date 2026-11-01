@@ -818,8 +818,10 @@ public static class SubscriptionPricing
     {
         "free" => 0d,
         "pro" => 20d,
-        "max" or "max5x" or "max5" or "max100" => 100d,
-        "max20x" or "max20" or "max200" => 200d,
+        "max5x" or "max5" or "max100" => 100d,
+        "ultra" or "max20x" or "max20" or "max200" => 200d,
+        // Older clients used "max" for both 5x and 20x subscriptions. A local
+        // label alone cannot prove whether it predates the Ultra rename.
         // Team and Enterprise are per-seat and negotiated; guessing a seat price
         // would be inventing the user's bill.
         _ => null

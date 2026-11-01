@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.4** 更新模型与费率，并修复新版 Codex、Claude Code 的用量读取；用户变更说明见 [0.6.4 发布说明](docs/release-0.6.4.md)，核对依据和验证记录见 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.5** 补充 Claude Desktop 用量接入并修复手动月费显示；用户变更说明见 [0.6.5 发布说明](docs/release-0.6.5.md)，数据范围和验证记录见 [Claude Desktop 接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
@@ -30,12 +30,12 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 设置管理本机数据源、刷新、通知、价格／历史费率、可选订阅月费对比、托盘与额度悬浮条、更新、备份恢复、索引重建和历史清理。
 - Claude Code 本地适配器：聚合 `%USERPROFILE%\.claude\projects` transcript 的 token、模型、工具和 Skill，读取本地任务。transcript 中的 HTTP 429 记录会作为近 7 天的限流次数单独提示，它只表明当时已用满，不能据此推算余量。
 - 用量历史留存：Codex 与 Claude 的规范化贡献保存到 `%LOCALAPPDATA%\codexU\history\usage-ledger-v2.sqlite`，保留全部已读取日期、会话身份、工作区、每日模型及 Token 分项。源日志删除、读失败或截断时保留上次有效贡献；无法确认的改写保留旧版本并标记冲突。账本不保存对话正文、工具参数或凭据。
-- Claude 额度采集：Claude Code 不在本机记录额度余量，唯一可机读的来源是 statusLine 命令收到的 JSON。`tools/claude-statusline-snapshot.mjs` 既照常输出状态行，又把 `rate_limits` 的 5 小时/7 天窗口写成应用读取的快照，详见下文「Claude 额度接入」。未接入时额度显示为 `--` 并说明接入方式。
+- Claude 额度采集：自动读取 Windows Claude Desktop 的本地用量历史，显示五小时／七天采样百分比及采样时间；历史文件不提供重置时间或套餐，不能据此推算。终端 Claude Code 仍可通过 `tools/claude-statusline-snapshot.mjs` 接入带重置时间的 statusLine 快照。两来源按真实采样时间整份选择，历史采样不参与额度提醒或耗尽预测；没有有效来源时显示 `--`。详见下文「Claude 额度接入」。
 - 金额概览恢复 v0.6.0 的本月 API 等效金额、订阅费用对比和月末预测。保留按用量发生日期和适用费率核算、缺失费率与未知分项的处理修复。金额不是 API 账单或订阅实际扣费；所有金额使用美元，默认 1,000 点 = US$40。
 - 缓存写入按来源可观测字段计价：Claude transcript 的 5 分钟档为基础输入价的 1.25 倍、1 小时档为 2 倍；新版 Codex 日志已有缓存写入总量，但未可靠提供 OpenAI 30 分钟／12 小时拆分，因此这部分仍随普通输入估算，不伪造分档写入明细。
 - 版本化费率目录：设置页可按模型和生效日期维护历史费率版本，记录来源／目录版本，导入、导出或恢复内置目录。当前目录 `2026.11.1` 共 41 行，新增 GPT-6.1 Terra、GPT-6 Rosalind、Claude Haiku 5.5，并按 10 月 7 日生效日期追加 Sonnet 5.5 缓存读取降价。保留历史价格、Daybreak 定义、自定义价格和固定目录。金额继续按 API Standard／短上下文基础价估算；Haiku 5.5 的 100K 单次输入分档、Fast／Ultrafast、区域附加费等不能用每日汇总推断。新价格、来源、核算限制及升级验证见 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 - 订阅月费可识别明确的 ChatGPT Pro 100／200／500 档；本机仅给出 `pro` 时改用设置中的手动备用金额，并说明无法可靠推断档位。
-- Claude 统计范围限于本机可读取的 Code 日志，不包含 Claude Desktop 的全部聊天或云端 Cowork；本轮兼容检查见 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+- Claude Token 统计范围限于本机可读取的 Code 日志，不包含 Desktop 的全部聊天或云端 Cowork；额度百分比则来自单独的本地额度来源。数据范围与限制见 [Claude Desktop 接入说明](docs/claude-desktop-usage.md)。
 - 恢复 v0.6.0 的新配置默认值：开启额度不足、额度刷新和耗尽预测通知，金额阈值为 0，费率覆盖阈值为 80%。已有配置中明确关闭的通知或设为 0 的阈值继续保留；未知模型或未归属历史差额不会误报为需要补充费率。
 - 深色/浅色玻璃/跟随系统主题，以及紧凑/展开双模式。
 - Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、可校验回滚的开机启动、单实例、自动刷新、紧凑布局、原生主题、Windows 原生额度通知，以及按显示器工作区/DPI 恢复的窗口位置。
@@ -163,7 +163,11 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 
 ## Claude 额度接入
 
-Claude Code 不在本机保存额度余量：transcript 只有 token 计数没有配额，HTTP 429 也只在撞上限之后才出现。唯一可机读的实时来源是 statusLine 命令收到的 JSON，其中 `rate_limits.five_hour` 与 `rate_limits.seven_day` 提供已用百分比和重置时间。
+Claude Code transcript 只有 Token 计数，没有订阅配额；HTTP 429 只能说明当时被限流。
+
+**Claude Desktop 的 Code 页：**应用会只读发现 `%LOCALAPPDATA%/Claude-Data/claude_*/plan-usage-history.json`。已验证的 version 2 格式提供五小时／七天已用百分比和采样时间，不提供重置时间、当前登录证明或订阅月费。界面标注“采样”及时间，超过 30 分钟、多组织、未知格式或异常数据时停止使用。这里使用的是已观察到的本地缓存格式，不是 Anthropic 承诺稳定的公共接口。没有重置时间时不会用采样时间加五小时／七天推算，也不会从旧记录补齐缺失窗口。详细边界见 [接入说明](docs/claude-desktop-usage.md)。
+
+**终端 Claude Code：**statusLine 命令收到的 JSON 中，`rate_limits.five_hour` 与 `rate_limits.seven_day` 可提供已用百分比和重置时间。Desktop 不保证执行终端 statusLine 命令，单纯复制脚本不能替代 Desktop 接入。
 
 `tools/claude-statusline-snapshot.mjs` 承担这个角色：照常输出状态行，同时把两个窗口写成 `%LOCALAPPDATA%\codexU\claude-code\statusline-snapshot.json`。把脚本放到 `~/.claude/`，然后在 `%USERPROFILE%\.claude\settings.json` 中配置：
 
@@ -179,9 +183,9 @@ Claude Code 不在本机保存额度余量：transcript 只有 token 计数没�
 
 **路径必须用正斜杠。** Claude Code 在装有 Git Bash 的 Windows 上通过 Git Bash 执行该命令，而 Git Bash 会静默吞掉未加引号的反斜杠。
 
-几个限制来自 Claude Code 本身，不是本应用：`rate_limits` 只对 Claude.ai 订阅账号（Pro/Max）出现，API key、Bedrock、Vertex 与 Foundry 认证下没有；且要等会话内第一次 API 响应之后才出现，两个窗口也可能各自缺失。脚本在没有任何可用窗口时**不写文件**，以免用一份看似权威的空快照覆盖掉尚且新鲜的数据；应用侧另有过期窗口丢弃逻辑。
+`rate_limits` 仅在符合条件的 Claude.ai 订阅会话中返回，API key、Bedrock、Vertex 与 Foundry 认证下没有；且要等会话内第一次 API 响应之后才出现，各窗口可独立缺失。已验证的 Ultra 账户没有五小时限制，因此缺失窗口不能补成零或推测套餐。脚本在没有任何可用窗口时**不写文件**，应用侧另有过期窗口丢弃逻辑。
 
-statusLine 的 JSON 里**没有套餐名字段**，所以订阅月费无法自动识别，需在设置页手动填写。
+statusLine 和 Desktop 用量历史都**没有订阅账单金额**。在「设置与诊断 → 价格与费率」填写实际 Claude 月费，并关闭「自动推算 Claude 月费」，主概览和双运行时会一致使用该值并标为手动。只有来源明确给出可识别套餐时，自动模式才提供参考价格；旧的裸 `max` 标签无法区分旧 5x／20x 档位，不再猜成 100 美元。明确的 Ultra／旧 Max 20x 参考价为 200 美元/月，不能代替实际账单。
 
 ## 隐私
 

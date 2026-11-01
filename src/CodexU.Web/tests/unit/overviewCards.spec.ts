@@ -2,7 +2,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createApp, type App } from 'vue'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import OverviewCards from '../../src/components/OverviewCards.vue'
-import { snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
+import { quotaForecast, rateLimitWindow, snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
 
 let pinia: Pinia
 let app: App | null
@@ -28,6 +28,58 @@ function mountOverview(overviewSnapshot: ReturnType<typeof snapshot>) {
 }
 
 describe('OverviewCards local token activity', () => {
+  it('explains Desktop sample limits and missing subscription identification beside the quota', () => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null, measuredAt: '2026-11-01T09:35:00Z' }),
+    }))
+
+    const quotaCard = container.querySelector('.quota-card')
+    expect(quotaCard?.textContent).toContain('本地 Claude Desktop 历史仅提供额度百分比')
+    expect(quotaCard?.textContent).toContain('超过 30 分钟')
+    expect(quotaCard?.textContent).toContain('订阅档位未识别')
+    expect(quotaCard?.textContent).toContain('设置与诊断')
+    expect(quotaCard?.textContent).toContain('不代表实际账单')
+  })
+
+  it('summarizes an expired source without copying private diagnostic paths into the overview', () => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      account: { isAuthenticated: true, suggestedMonthlySubscriptionAmount: 20 },
+      diagnostics: ['Claude Desktop 额度：历史采样已过期（超过 30 分钟）：C:\\Users\\private-person\\usage.json'],
+    }))
+
+    const quotaCard = container.querySelector('.quota-card')
+    expect(quotaCard?.textContent).toContain('Desktop 历史采样已过期')
+    expect(quotaCard?.textContent).toContain('刷新用量')
+    expect(quotaCard?.textContent).not.toContain('private-person')
+    expect(quotaCard?.textContent).not.toContain('C:\\')
+    expect(quotaCard?.querySelector('.ring-progress')).toBeNull()
+  })
+
+  it('uses a short safe message when no Claude quota source is available', () => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      diagnostics: ['读取失败 C:\\Users\\private-person\\settings.json'],
+    }))
+
+    const quotaCard = container.querySelector('.quota-card')
+    expect(quotaCard?.textContent).toContain('当前没有可用的 Claude 额度采样')
+    expect(quotaCard?.textContent).toContain('终端 Claude Code')
+    expect(quotaCard?.textContent).not.toContain('private-person')
+  })
+
+  it('does not turn a Desktop percentage sample into a quota exhaustion alert', () => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
+      primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
+    }))
+
+    expect(container.querySelector('.quota-risk-notice')).toBeNull()
+    expect(container.querySelector('.burn-down')).toBeNull()
+  })
+
   it('uses the local JSONL periods for every token metric', () => {
     const container = mountOverview(snapshot({
       tokens: {

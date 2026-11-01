@@ -82,10 +82,11 @@ export type TaskColumnKind = 'active' | 'pending' | 'scheduled' | 'done'
 export interface RateLimitWindow {
   usedPercent: number
   windowDurationMinutes?: number
-  resetsAt?: string
+  resetsAt?: string | null
   remainingPercent: number
   /** When the figure was measured, where the source can say. */
-  measuredAt?: string
+  measuredAt?: string | null
+  source?: string | null
 }
 
 /** Where a quota window is heading at the pace it has actually been consumed. */

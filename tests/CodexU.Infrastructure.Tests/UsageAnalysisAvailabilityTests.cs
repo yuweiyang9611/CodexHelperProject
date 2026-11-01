@@ -87,7 +87,7 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
             message = new { model = "model-a", usage }
         });
         await File.WriteAllTextAsync(Path.Combine(project, "a.jsonl"), line + "\n");
-        var paths = CodexPaths.Discover(_root) with { ClaudeDirectory = Path.Combine(_root, "claude") };
+        var paths = CodexPaths.Discover(_root) with { ClaudeDirectory = Path.Combine(_root, "claude"), ClaudeDesktopDataDirectory = null };
         var snapshot = await new ClaudeCodeUsageReader(paths, customRates: [Rate], applicationDataDirectory: Data).ReadAsync();
         var entry = Assert.Single(snapshot.AnalysisData!.Entries);
         Assert.Equal(10, entry.Tokens);
