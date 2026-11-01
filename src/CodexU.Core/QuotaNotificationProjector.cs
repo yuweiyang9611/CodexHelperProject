@@ -43,8 +43,8 @@ public sealed class QuotaNotificationProjector
 
         lock (_gate)
         {
-            // Desktop history is a dated observation without an authenticated
-            // account or window identity. Keep it out of alerts and their state,
+            // Desktop history and bound get_usage snapshots do not establish a
+            // stable authenticated account scope. Keep them out of alerts and their state,
             // while allowing the snapshot's independent amount/rate alerts below.
             var primaryQuota = QuotaForAlerts(snapshot.PrimaryQuota);
             var secondaryQuota = QuotaForAlerts(snapshot.SecondaryQuota);
@@ -113,7 +113,7 @@ public sealed class QuotaNotificationProjector
     }
 
     private static RateLimitWindow? QuotaForAlerts(RateLimitWindow? quota) =>
-        quota?.Source == "claude-desktop-history" ? null : quota;
+        quota?.Source is "claude-desktop-history" or "claude-desktop-get-usage" ? null : quota;
 
     private void AddQuotaRefresh(
         ICollection<QuotaNotification> notifications,

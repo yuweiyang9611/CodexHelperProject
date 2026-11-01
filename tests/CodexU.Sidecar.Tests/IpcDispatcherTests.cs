@@ -9,6 +9,26 @@ namespace CodexU.Sidecar.Tests;
 public sealed class IpcDispatcherTests
 {
     [Fact]
+    public async Task SettingsPatch_BindsDesktopUsageWithoutChangingManualMonthlyAmount()
+    {
+        using var context = TestContext.Create(new ImmediateDashboardService());
+        await context.Dispatcher.DispatchAsync(Request("settings.update", new
+        {
+            patch = new { claudeMonthlySubscriptionAmount = 100, claudeAutoDetectSubscriptionAmount = false }
+        }));
+        var path = Path.Combine(context.OutputDirectory, "00000000-0000-0000-0000-000000000001.jsonl");
+        var result = Assert.IsType<AppSettings>(await context.Dispatcher.DispatchAsync(Request("settings.update", new
+        {
+            patch = new { claudeDesktopUsageTranscript = path }
+        })));
+
+        Assert.Equal(path, result.ClaudeDesktopUsageTranscript);
+        Assert.Equal(100, result.ClaudeMonthlySubscriptionAmount);
+        Assert.False(result.ClaudeAutoDetectSubscriptionAmount);
+        Assert.Equal(result, await new AppSettingsStore(context.DataDirectory).LoadAsync());
+    }
+
+    [Fact]
     public async Task StartupReconciliationRequiresTheElectronHostRoute()
     {
         using var context = TestContext.Create(new ImmediateDashboardService());

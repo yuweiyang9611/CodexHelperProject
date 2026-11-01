@@ -216,9 +216,9 @@ public sealed class StatusStripPresenter
             statusToolTip = $"{statusText} 当前继续显示上次成功快照。";
         }
 
-        if (_snapshot.PrimaryQuota?.Source == "claude-desktop-history")
+        if (_snapshot.PrimaryQuota?.Source is "claude-desktop-history" or "claude-desktop-get-usage")
             statusToolTip += " " + primary.AccessibleText;
-        if (_snapshot.SecondaryQuota?.Source == "claude-desktop-history")
+        if (_snapshot.SecondaryQuota?.Source is "claude-desktop-history" or "claude-desktop-get-usage")
             statusToolTip += " " + secondary.AccessibleText;
 
         return new StatusStripPresentation(
@@ -348,6 +348,17 @@ public sealed class StatusStripPresenter
                 : "采样时间未知";
             var detail = $"Claude Desktop 历史采样，{sampledAt}，非实时；重置时间不可用";
             return new StatusStripQuotaPresentation($"≈{text}", value, $"{label} {text}，{detail}", detail);
+        }
+        if (quota.Source == "claude-desktop-get-usage")
+        {
+            var readAt = quota.MeasuredAt is { } measuredAt
+                ? $"读取于 {measuredAt.ToLocalTime():M/d HH:mm}"
+                : "读取时间未知";
+            var reportedReset = quota.ResetsAt is { } queryReset
+                ? $"{queryReset.ToLocalTime():M/d HH:mm} 重置"
+                : "来源未提供重置时间";
+            var detail = $"Desktop 查询快照，{readAt}；{reportedReset}；需在绑定会话再次 get_usage 更新";
+            return new StatusStripQuotaPresentation($"≈{text}", value, $"{label} {text}，{detail}", reportedReset, quota.ResetsAt);
         }
         var resetText = quota.ResetsAt is { } resetsAt
             ? $"{resetsAt.ToLocalTime():M/d HH:mm} 刷新"

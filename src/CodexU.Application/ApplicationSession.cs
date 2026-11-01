@@ -76,7 +76,8 @@ public sealed class ApplicationSession : IDisposable
             current.CodexExecutable,
             current.CustomModelRates,
             current.IsRateCatalogPinned,
-            applicationDataDirectory: dataDirectory));
+            applicationDataDirectory: dataDirectory,
+            claudeDesktopUsageTranscript: current.ClaudeDesktopUsageTranscript));
     }
 
     public event Action<DashboardSnapshot>? SnapshotChanged;
@@ -776,6 +777,7 @@ public sealed class ApplicationSession : IDisposable
         || !string.Equals(previous.DefaultWorkspace, current.DefaultWorkspace, StringComparison.OrdinalIgnoreCase)
         || previous.ShowSubagents != current.ShowSubagents
         || !string.Equals(previous.CodexExecutable, current.CodexExecutable, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(previous.ClaudeDesktopUsageTranscript, current.ClaudeDesktopUsageTranscript, StringComparison.OrdinalIgnoreCase)
         || !(previous.CustomModelRates ?? []).SequenceEqual(current.CustomModelRates ?? [])
         || previous.IsRateCatalogPinned != current.IsRateCatalogPinned;
 }

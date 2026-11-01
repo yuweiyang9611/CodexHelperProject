@@ -237,6 +237,30 @@ public sealed class StatusStripPresentationTests
         Assert.Contains("重置时间不可用", result.PrimaryQuota.ResetText, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("used", true, "≈25%")]
+    [InlineData("remaining", true, "≈75%")]
+    [InlineData("remaining", false, "≈75%")]
+    public void DesktopGetUsage_LabelsQuerySnapshotAndPreservesOnlyReportedReset(string mode, bool hasReset, string expected)
+    {
+        var measuredAt = new DateTimeOffset(2026, 11, 1, 11, 45, 0, TimeSpan.Zero);
+        DateTimeOffset? reset = hasReset ? measuredAt.AddHours(2) : null;
+        var presenter = new StatusStripPresenter(new AppSettings(StatusStripQuotaMode: mode));
+        var result = presenter.UpdateSnapshot(HealthySnapshot() with
+        {
+            Runtime = AgentRuntime.ClaudeCode,
+            PrimaryQuota = new RateLimitWindow(25, 300, reset, measuredAt, "claude-desktop-get-usage")
+        }, 0);
+
+        Assert.Equal(expected, result.PrimaryQuota.Text);
+        Assert.Equal(reset, result.PrimaryQuota.ResetsAt);
+        Assert.Contains("Desktop 查询快照", result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Contains("读取于 " + measuredAt.ToLocalTime().ToString("M/d HH:mm"), result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+        Assert.Contains("Desktop 查询快照", result.StatusToolTip, StringComparison.Ordinal);
+        Assert.Contains(hasReset ? "重置" : "来源未提供重置时间", result.PrimaryQuota.ResetText, StringComparison.Ordinal);
+        Assert.DoesNotContain("历史采样", result.PrimaryQuota.AccessibleText, StringComparison.Ordinal);
+    }
+
     private static DashboardSnapshot HealthySnapshot()
     {
         var snapshot = DashboardSnapshot.Empty(AgentRuntime.Codex);

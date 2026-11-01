@@ -13,6 +13,7 @@ public sealed class QuotaForecastCollector(QuotaSampleStore store, QuotaForecast
     public const string LocalSource = "local";
     public const string StatuslineSource = "statusline";
     public const string ClaudeDesktopHistorySource = "claude-desktop-history";
+    public const string ClaudeDesktopGetUsageSource = "claude-desktop-get-usage";
 
     private const string PrimaryWindow = "five-hour";
     private const string SecondaryWindow = "seven-day";
@@ -54,10 +55,11 @@ public sealed class QuotaForecastCollector(QuotaSampleStore store, QuotaForecast
             return null;
         }
 
-        // Desktop history does not identify the active organization or a reset.
-        // A percent drop cannot establish a new window, so these snapshots must
-        // neither create forecasts nor contribute to a statusLine sampling trail.
-        if (reading.Source == ClaudeDesktopHistorySource || reading.Window.Source == ClaudeDesktopHistorySource)
+        // Neither Desktop source establishes a stable active-account scope. Even
+        // get_usage's real reset timestamp cannot prove that later readings belong
+        // to the same account, so do not create or mutate forecast trails.
+        if (reading.Source is ClaudeDesktopHistorySource or ClaudeDesktopGetUsageSource
+            || reading.Window.Source is ClaudeDesktopHistorySource or ClaudeDesktopGetUsageSource)
             return null;
 
         var key = QuotaSampleStore.WindowKey(runtime, window, reading.Source);

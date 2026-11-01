@@ -767,12 +767,15 @@ public sealed class LocalDataManagementServiceTests
         {
             var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             const string configuredWorkspace = @"D:\Sensitive Workspace";
+            const string bindingId = "00000000-0000-0000-0000-000000000002";
+            var configuredBinding = Path.Combine(profile, "private-quota", bindingId + ".jsonl");
             Directory.CreateDirectory(DataRoot(root));
             await File.WriteAllTextAsync(
                 Path.Combine(DataRoot(root), "startup.log"),
                 $"failed at {profile}\\private\\file.json and {configuredWorkspace}\\private-project "
                 + "C:/Sensitive/forward-slash.json file:///C:/Sensitive/uri.json "
-                + "/home/alice/private.json file:///home/alice/uri.json");
+                + "/home/alice/private.json file:///home/alice/uri.json\nbound query "
+                + configuredBinding);
             var electronLogs = Path.Combine(root, "electron-logs");
             Directory.CreateDirectory(electronLogs);
             await File.WriteAllTextAsync(
@@ -790,7 +793,7 @@ public sealed class LocalDataManagementServiceTests
 
             await service.ExportDiagnosticsAsync(
                 DashboardSnapshot.Empty(AgentRuntime.Codex, $"reader path {profile}\\.codex"),
-                new AppSettings(DefaultWorkspace: configuredWorkspace),
+                new AppSettings(DefaultWorkspace: configuredWorkspace, ClaudeDesktopUsageTranscript: configuredBinding),
                 destination,
                 "test");
             using (var archive = ZipFile.OpenRead(destination))
@@ -806,6 +809,7 @@ public sealed class LocalDataManagementServiceTests
                         Assert.DoesNotContain(profile, content, StringComparison.OrdinalIgnoreCase);
                     }
                     Assert.DoesNotContain(configuredWorkspace, content, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain(bindingId, content, StringComparison.Ordinal);
                     Assert.DoesNotContain("secret-value", content, StringComparison.Ordinal);
                     Assert.DoesNotContain("C:/Sensitive/forward-slash.json", content, StringComparison.OrdinalIgnoreCase);
                     Assert.DoesNotContain("file:///C:/Sensitive/uri.json", content, StringComparison.OrdinalIgnoreCase);

@@ -27,7 +27,8 @@ const demoParameters = new URLSearchParams(window.location.search)
 const visualTestMode = demoParameters.get('visualTest') === '1'
 // Explicit opt-in for synthetic browser QA; native requests never use the mock.
 const desktopQuotaFixture = visualTestMode && demoParameters.get('claudeDesktopQuota') === '1'
-const fixedDemoNow = new Date(desktopQuotaFixture ? '2026-11-01T18:40:00+09:00' : '2026-07-14T12:00:00+09:00')
+const desktopQueryFixture = visualTestMode && demoParameters.get('claudeDesktopQuery') === '1'
+const fixedDemoNow = new Date(desktopQuotaFixture || desktopQueryFixture ? '2026-11-01T18:40:00+09:00' : '2026-07-14T12:00:00+09:00')
 const interactiveHostMethods = new Set([
   'rates.export',
   'rates.import',
@@ -104,6 +105,11 @@ class HostBridge {
       if (desktopQuotaFixture && demoParameters.get('claudeManualMonthly') === '100') {
         this.mockSettings.claudeAutoDetectSubscriptionAmount = false
         this.mockSettings.claudeMonthlySubscriptionAmount = 100
+      }
+      if (desktopQueryFixture) {
+        this.mockSettings.claudeAutoDetectSubscriptionAmount = false
+        this.mockSettings.claudeMonthlySubscriptionAmount = 100
+        this.mockSettings.claudeDesktopUsageTranscript = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
       }
       if (demoParameters.get('pinnedRates') === '1') {
         this.mockSettings.customModelRates = [
@@ -624,6 +630,20 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
       ? { enabled: false, reusedFiles: 0, incrementalFiles: 0, parsedFiles: 118, totalFiles: 118, updatedAt: today.toISOString(), lastFullValidationAt: today.toISOString(), fullValidationDue: false }
       : { enabled: true, reusedFiles: 42, incrementalFiles: 1, parsedFiles: 0, totalFiles: 43, updatedAt: today.toISOString(), lastFullValidationAt: today.toISOString(), fullValidationDue: false },
     diagnostics: [],
+  }
+  if (isClaude && desktopQueryFixture) {
+    const measuredAt = new Date(now - 5 * 60_000).toISOString()
+    return {
+      ...result,
+      account: undefined,
+      primaryQuota: { usedPercent: 27, remainingPercent: 73, windowDurationMinutes: 300,
+        source: 'claude-desktop-get-usage', measuredAt, resetsAt: new Date(now + 2 * 3_600_000).toISOString() },
+      secondaryQuota: { usedPercent: 82, remainingPercent: 18, windowDurationMinutes: 10080,
+        source: 'claude-desktop-get-usage', measuredAt, resetsAt: new Date(now + 3 * 86_400_000).toISOString() },
+      primaryForecast: undefined,
+      secondaryForecast: undefined,
+      diagnostics: ['Claude Desktop 原生额度：构造的视觉测试工具结果'],
+    }
   }
   if (isClaude && desktopQuotaFixture) {
     const measuredAt = new Date(now - 5 * 60_000).toISOString()

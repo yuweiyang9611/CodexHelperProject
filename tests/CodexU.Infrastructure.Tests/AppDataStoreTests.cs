@@ -6,6 +6,27 @@ namespace CodexU.Infrastructure.Tests;
 public sealed class AppDataStoreTests
 {
     [Fact]
+    public async Task SettingsStore_RoundTripsExplicitDesktopUsageBinding()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"codexu-desktop-binding-{Guid.NewGuid():N}");
+        try
+        {
+            var transcript = Path.Combine(root, "00000000-0000-0000-0000-000000000001.jsonl");
+            var store = new AppSettingsStore(root);
+            await store.SaveAsync(new AppSettings(ClaudeDesktopUsageTranscript: transcript,
+                ClaudeMonthlySubscriptionAmount: 100, ClaudeAutoDetectSubscriptionAmount: false));
+            var restored = await store.LoadAsync();
+            Assert.Equal(transcript, restored.ClaudeDesktopUsageTranscript);
+            Assert.Equal(100, restored.ClaudeMonthlySubscriptionAmount);
+            Assert.False(restored.ClaudeAutoDetectSubscriptionAmount);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SettingsStore_NewInstallReturnsNormalizedCollections()
     {
         var root = Path.Combine(Path.GetTempPath(), $"codexu-new-settings-{Guid.NewGuid():N}");

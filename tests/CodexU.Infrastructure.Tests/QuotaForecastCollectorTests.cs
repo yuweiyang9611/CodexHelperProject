@@ -212,8 +212,11 @@ public sealed class QuotaForecastCollectorTests : IDisposable
         Assert.Null(primary);
     }
 
-    [Fact]
-    public async Task RecordAsync_DesktopHistoryNeverForecastsOrChangesStatuslineTrail()
+    [Theory]
+    [InlineData("claude-desktop-history", "claude-desktop-history")]
+    [InlineData("claude-desktop-get-usage", "claude-desktop-get-usage")]
+    [InlineData("claude-desktop-get-usage", "statusline")]
+    public async Task RecordAsync_UnscopedDesktopNeverForecastsOrChangesStatuslineTrail(string source, string readingSource)
     {
         var store = new QuotaSampleStore(_root);
         var collector = new QuotaForecastCollector(store);
@@ -221,9 +224,10 @@ public sealed class QuotaForecastCollectorTests : IDisposable
             Statusline(10, Now.AddMinutes(-20)), QuotaReading.None, Now.AddMinutes(-20));
         foreach (var (time, used) in new[] { (Now.AddMinutes(-10), 40d), (Now, 80d) })
         {
-            var window = new RateLimitWindow(used, 300, null, time, "claude-desktop-history");
+            var window = new RateLimitWindow(used, 300,
+                source == "claude-desktop-get-usage" ? Now.AddHours(2) : null, time, source);
             var result = await collector.RecordAsync(AgentRuntime.ClaudeCode,
-                new(window, "claude-desktop-history"), QuotaReading.None, time);
+                new(window, readingSource), QuotaReading.None, time);
             Assert.Null(result.Primary);
             Assert.Null(result.Secondary);
         }

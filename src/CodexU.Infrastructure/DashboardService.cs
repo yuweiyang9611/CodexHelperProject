@@ -32,7 +32,8 @@ public sealed class DashboardService(
         string? codexExecutable = null,
         IReadOnlyList<ModelCreditRate>? customRates = null,
         bool completeRateCatalog = false,
-        string? applicationDataDirectory = null)
+        string? applicationDataDirectory = null,
+        string? claudeDesktopUsageTranscript = null)
     {
         var paths = CodexPaths.Discover(configuredCodexHome);
         return new DashboardService(
@@ -52,12 +53,13 @@ public sealed class DashboardService(
                 customRates,
                 completeRateCatalog,
                 applicationDataDirectory,
-                incrementalIndexEnabled),
+                incrementalIndexEnabled,
+                claudeDesktopUsageTranscript),
             new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)),
             new CodexLocalUsageReader(paths, incrementalIndexEnabled, null, showSubagents,
                 customRates, completeRateCatalog, applicationDataDirectory),
             new ClaudeCodeUsageReader(paths, null, showSubagents, customRates,
-                completeRateCatalog, applicationDataDirectory, incrementalIndexEnabled));
+                completeRateCatalog, applicationDataDirectory, incrementalIndexEnabled, claudeDesktopUsageTranscript));
     }
 
     public async Task<DashboardSnapshot> LoadAsync(
