@@ -18,7 +18,8 @@ internal sealed class UsageHistoryLedger(string directory)
     internal static string SourceId(string path) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant())));
 
     public async Task<LedgerRead<T>> MergeAsync<T>(string runtime, IReadOnlyDictionary<string, T> observations,
-        Func<T, T, bool> canReplace, CancellationToken cancellationToken, IReadOnlySet<string>? disputed = null)
+        Func<T, T, bool> canReplace, CancellationToken cancellationToken, IReadOnlySet<string>? disputed = null,
+        Func<string, T, T, CancellationToken, Task<bool>>? canMigrate = null)
     {
         var gate = GateFor(directory);
         await gate.WaitAsync(cancellationToken);
@@ -74,7 +75,8 @@ internal sealed class UsageHistoryLedger(string directory)
                 if (cached is not null && cached.Observed.TryGetValue(id, out var observed)
                     && ReferenceEquals(observed, value) && cached.Disputed.Contains(id) == (disputed?.Contains(id) == true)) continue;
                 var existing = values.TryGetValue(id, out var previous);
-                var rejected = disputed?.Contains(id) == true || (existing && !canReplace(previous!, value));
+                var rejected = disputed?.Contains(id) == true || (existing && !canReplace(previous!, value)
+                    && (canMigrate is null || !await canMigrate(id, previous!, value, cancellationToken)));
                 var wasConflict = conflicts.Contains(id);
                 if (rejected) { conflicts.Add(id); if (!existing) values[id] = value; }
                 else { values[id] = value; conflicts.Remove(id); }

@@ -38,6 +38,32 @@ public sealed partial class CodexSessionReader
         && previous.Skills.All(pair => next.Skills.GetValueOrDefault(pair.Key) >= pair.Value)
         && (previous.Workspace is null || string.Equals(previous.Workspace, next.Workspace, StringComparison.OrdinalIgnoreCase));
 
+    private static async Task<bool> CanMigrateHistoryAsync(
+        ParsedSessionFile previous, ParsedSessionFile next, string path, CancellationToken cancellationToken)
+    {
+        if (previous.ParserVersion != 0 || next.ParserVersion != 1 || next.Offset < previous.Offset) return false;
+        try
+        {
+            // Re-read the exact committed prefix with the old parser semantics.
+            // An inserted usage record may change dates or counter deltas, but an
+            // unrelated rewrite must not replace previously retained observations.
+            var legacy = await ParseFileAsync(path, null, 0, cancellationToken,
+                includeUsageRecords: false, maximumOffset: previous.Offset);
+            if (legacy.TokenEvents.Count != previous.TokenEvents.Count
+                || !CanReplaceHistory(previous with { Workspace = null }, legacy)) return false;
+
+            // Ensure the same live file still reproduces the proposed replacement.
+            var current = await ParseFileAsync(path, null, 0, cancellationToken, maximumOffset: next.Offset);
+            return current.TokenEvents.Count == next.TokenEvents.Count
+                && CanReplaceHistory(next with { Workspace = null }, current)
+                && CanReplaceHistory(current, next);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     private static async Task<Dictionary<string, SessionMetadata>> ReadWorkspaceMapAsync(string database, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, SessionMetadata>(StringComparer.OrdinalIgnoreCase);

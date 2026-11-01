@@ -380,7 +380,7 @@ function removeCustomRate(index: number) {
           <option v-for="name in builtInModelNames" :key="name" :value="name" />
         </datalist>
         <p class="setting-hint">新增一行会带出该模型当前生效的内置费率作为起点；改写模型名可重新带出对应默认值。自定义费率会覆盖内置值，留空或填 0 表示该模型不计费。</p>
-        <p class="setting-hint">标注官方来源的 OpenAI 行按 API Standard 短上下文价目折算等值。当前本地日志不能可靠区分单次输入超过 272K、Batch/Flex/Fast 或区域处理，因此这些档位不会被猜价；显示金额不是 API 账单或订阅实际扣费。</p>
+        <p class="setting-hint">官方费率按 API Standard／短上下文基础价折算等值。Haiku 5.5 的基础价适用于单次输入不超过 100K；日志汇总不足以判断逐请求长上下文、Batch/Flex/Fast/Ultrafast、区域处理或 OpenAI 缓存写入时长，因此不自动套用这些档位。显示金额不是 API 账单或订阅实际扣费。</p>
         <p class="setting-hint">计算会按用量发生日期选择当日已生效的最新版本；自定义费率优先。生效日期留空表示适用于全部历史。“精确模型”最安全；仅当同一费率明确覆盖整个模型家族时才选择“前缀家族”。未知模型仍保留在“未核算 Token”中。</p>
         <p v-if="store.settingsDirty" class="setting-hint">导入、导出或恢复目录前，请先保存或放弃当前页面的更改，避免草稿被覆盖或导出旧数据。</p>
         <p v-if="rateValidationMessage" class="setting-error" role="alert">{{ rateValidationMessage }}</p>

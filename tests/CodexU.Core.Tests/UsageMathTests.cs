@@ -505,8 +505,8 @@ public sealed class UsageMathTests
     [Fact]
     public void BuiltInCatalog_IdentifiesCurrentOfficialOpenAiCatalog()
     {
-        Assert.Equal("2026.10.1", UsageCredits.BuiltInCatalog.CatalogVersion);
-        Assert.Equal(new DateOnly(2026, 10, 5), UsageCredits.BuiltInCatalog.PublishedOn);
+        Assert.Equal("2026.11.1", UsageCredits.BuiltInCatalog.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 11, 1), UsageCredits.BuiltInCatalog.PublishedOn);
         Assert.Contains("OpenAI API Standard", UsageCredits.BuiltInCatalog.Source, StringComparison.Ordinal);
 
         var astra = Assert.Single(UsageCredits.BuiltInRates, rate => rate.Model == "gpt-6-astra");
@@ -630,13 +630,11 @@ public sealed class UsageMathTests
     }
 
     [Fact]
-    public void InferMonthlyAmount_ReadsProAsADifferentPricePerRuntime()
+    public void InferMonthlyAmount_DoesNotAssumeAnAmbiguousChatGptProTier()
     {
-        // The collision that made this runtime-aware: Claude Pro is US$20 a month,
-        // ChatGPT Pro is US$200. Resolving one table for both overstated a Claude
-        // Pro subscription tenfold and silently wrecked the payback multiple.
+        // Claude Pro has a base monthly price; ChatGPT Pro now has three tiers.
         Assert.Equal(20d, SubscriptionPricing.InferMonthlyAmount("pro", AgentRuntime.ClaudeCode));
-        Assert.Equal(200d, SubscriptionPricing.InferMonthlyAmount("pro", AgentRuntime.Codex));
+        Assert.Null(SubscriptionPricing.InferMonthlyAmount("pro", AgentRuntime.Codex));
     }
 
     [Theory]
@@ -667,7 +665,7 @@ public sealed class UsageMathTests
         var codex = new AccountSnapshot("chatgpt", "pro", null, true);
 
         Assert.Equal(20d, claude.SuggestedMonthlySubscriptionAmount);
-        Assert.Equal(200d, codex.SuggestedMonthlySubscriptionAmount);
+        Assert.Null(codex.SuggestedMonthlySubscriptionAmount);
     }
 
     [Fact]
@@ -981,7 +979,12 @@ public sealed class UsageMathTests
     [InlineData("plus", 20d)]
     [InlineData("prolite", 100d)]
     [InlineData("pro-lite", 100d)]
-    [InlineData("pro", 200d)]
+    [InlineData("pro100", 100d)]
+    [InlineData("pro200", 200d)]
+    [InlineData("pro500", 500d)]
+    [InlineData("Pro 500", 500d)]
+    [InlineData("pro_500", 500d)]
+    [InlineData("pro-500", 500d)]
     public void InferMonthlyAmount_MapsKnownLocalPlanLabels(string planType, double expected)
     {
         Assert.Equal(expected, SubscriptionPricing.InferMonthlyAmount(planType));
@@ -989,6 +992,7 @@ public sealed class UsageMathTests
 
     [Theory]
     [InlineData("business")]
+    [InlineData("pro")]
     [InlineData("enterprise")]
     [InlineData("unknown")]
     [InlineData(null)]

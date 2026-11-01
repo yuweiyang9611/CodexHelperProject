@@ -11,26 +11,56 @@ public sealed partial class ClaudeCodeUsageReader
     private sealed record ClaudeEvent(string? Workspace, DateTimeOffset Timestamp, string? Branch,
         string? Model, TokenBreakdown? Tokens, bool Throttled,
         IReadOnlyDictionary<string, int> Tools, IReadOnlyDictionary<string, int> Skills,
-        UsageBreakdownFields? AvailableFields = null);
-    private sealed record ClaudeSource(IReadOnlyList<ClaudeEvent> Events, int SkippedLines, long Offset, string? Identity = null);
+        UsageBreakdownFields? AvailableFields = null, string? MessageId = null);
+    private sealed record ClaudeSource(IReadOnlyList<ClaudeEvent> Events, int SkippedLines, long Offset,
+        string? Identity = null, int ParserVersion = 0);
     private sealed record ClaudeCacheEntry(long Length, long Modified, string Boundary, ClaudeSource Source, string FileIdentity);
     private sealed record ClaudeIndex(int Version, string Zone, Dictionary<string, ClaudeCacheEntry> Entries);
-    private sealed record Summary(ClaudeEvent Event, int Count);
+    private sealed record Summary(ClaudeEvent Event, int Count, int UsageCount);
     private sealed class Summaries
     {
         internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<ClaudeSource, Summary[]> Values = new();
     }
     private Summary[] Summarize(ClaudeSource source) => UsageReadContext.For(applicationDataDirectory)
-        .Get("claude-summaries", () => new Summaries()).Values.GetValue(source, value => value.Events
+        .Get("claude-summaries", () => new Summaries()).Values.GetValue(source, value => DeduplicateUsage(value.Events)
             .GroupBy(e => (e.Workspace, Date: DateOnly.FromDateTime(e.Timestamp.LocalDateTime), e.Branch, e.Model, e.Throttled))
             .Select(g => new Summary(g.First() with
             {
-                Tokens = g.First().Tokens is null ? null : g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens!)),
+                Tokens = g.All(e => e.Tokens is null) ? null : g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens ?? TokenBreakdown.Zero)),
                 Tools = g.SelectMany(e => e.Tools).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
                 Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
-                AvailableFields = g.Aggregate(UsageBreakdownFields.All, (fields, e) => fields & e.AvailableFields.GetValueOrDefault())
-            }, g.Count())).ToArray());
+                AvailableFields = g.Where(e => e.Tokens is { VisibleTotalTokens: > 0 })
+                    .Aggregate(UsageBreakdownFields.All, (fields, e) => fields & e.AvailableFields.GetValueOrDefault())
+            }, g.Count(), g.Count(e => e.Tokens is { VisibleTotalTokens: > 0 }))).ToArray());
     private static readonly JsonSerializerOptions IndexJson = new(JsonSerializerDefaults.Web);
+
+    private static IEnumerable<ClaudeEvent> DeduplicateUsage(IReadOnlyList<ClaudeEvent> events)
+    {
+        // Claude writes one assistant row per content block, repeating the whole
+        // response usage on each row. Keep all tool blocks, but bill message.id once.
+        // Store the raw observations so appending another block or upgrading an old
+        // ledger can be reconciled without discarding source history.
+        var normalized = events.ToArray();
+        var responses = new Dictionary<(string Message, string? Model), int>();
+        for (var index = 0; index < normalized.Length; index++)
+        {
+            var current = normalized[index];
+            if (current.MessageId is not { Length: > 0 } id || current.Tokens is not { } tokens) continue;
+            if (responses.TryAdd((id, current.Model), index)) continue;
+            var firstIndex = responses[(id, current.Model)];
+            var first = normalized[firstIndex];
+            // A later streaming block can contain a more complete usage snapshot.
+            // Attribute the final response to its first observed timestamp.
+            var firstFields = first.AvailableFields.GetValueOrDefault();
+            var currentFields = current.AvailableFields.GetValueOrDefault();
+            if (tokens.VisibleTotalTokens > first.Tokens!.VisibleTotalTokens
+                || tokens.VisibleTotalTokens == first.Tokens.VisibleTotalTokens
+                && (currentFields & firstFields) == firstFields)
+                normalized[firstIndex] = first with { Tokens = tokens, AvailableFields = current.AvailableFields };
+            normalized[index] = current with { Tokens = TokenBreakdown.Zero };
+        }
+        return normalized;
+    }
 
     private static async Task<ClaudeSource> ParseTranscriptAsync(string file, ClaudeSource? seed, Action<long, int> measured, CancellationToken ct)
     {
@@ -71,12 +101,13 @@ public sealed partial class ClaudeCodeUsageReader
                 events.Add(new(WorkspaceScope.Normalize(ReadString(root, "cwd") ?? ReadString(root, "projectPath")),
                     ReadTimestamp(root) ?? new DateTimeOffset(File.GetLastWriteTimeUtc(file)), ReadString(root, "gitBranch"),
                     hasUsage ? model : null, hasUsage ? tokens : null, ReadLong(root, "apiErrorStatus") == 429, tools, skills,
-                    ReadAvailableFields(root, message)));
+                    ReadAvailableFields(root, message),
+                    ReadString(message, "id") is { Length: > 0 and <= 256 } messageId ? messageId : null));
             }
             catch (JsonException) { skipped++; }
         }
         measured(stream.Position - offset, lines);
-        return new(events, skipped, complete, identity);
+        return new(events, skipped, complete, identity, ParserVersion: 1);
     }
 
     private sealed record Compatibility(bool Value);
@@ -99,8 +130,15 @@ public sealed partial class ClaudeCodeUsageReader
         next.Offset >= previous.Offset
         && (previous.Identity is null || previous.Identity == next.Identity)
         && next.Events.Count >= previous.Events.Count
-        && previous.Events.Select(e => JsonSerializer.Serialize(e with { AvailableFields = null }, IndexJson))
-            .SequenceEqual(next.Events.Take(previous.Events.Count).Select(e => JsonSerializer.Serialize(e with { AvailableFields = null }, IndexJson)));
+        && previous.Events.Zip(next.Events).All(pair =>
+            JsonSerializer.Serialize(pair.First with { AvailableFields = null }, IndexJson)
+            == JsonSerializer.Serialize(pair.Second with
+            {
+                AvailableFields = null,
+                // Old ledgers did not persist message IDs. The original measured
+                // fields must still match before a reparse may enrich those rows.
+                MessageId = pair.First.MessageId is null ? null : pair.Second.MessageId
+            }, IndexJson));
 
     private async Task<(IReadOnlyDictionary<string, ClaudeSource> Sources, IndexStatus Index, int Conflicts, int Failures, int Retained, LedgerRead<ClaudeSource>? History)> ReadSourcesAsync(
         List<string> diagnostics, CancellationToken ct)
@@ -131,7 +169,7 @@ public sealed partial class ClaudeCodeUsageReader
             try
             {
                 var index = JsonSerializer.Deserialize<ClaudeIndex>(await File.ReadAllTextAsync(indexPath, ct), IndexJson);
-                if (index is { Version: 4 } && index.Zone == TimeZoneInfo.Local.Id && index.Entries is not null)
+                if (index is { Version: 5 } && index.Zone == TimeZoneInfo.Local.Id && index.Entries is not null)
                     cached = new(index.Entries.Where(p => p.Value?.Source?.Events is not null
                         && p.Value.Source.Offset >= 0 && p.Value.Source.Offset <= p.Value.Length
                         && p.Value.Source.Events.All(e => e is not null && e.Tools is not null && e.Skills is not null)), StringComparer.OrdinalIgnoreCase);
@@ -186,7 +224,7 @@ public sealed partial class ClaudeCodeUsageReader
                 var temp = indexPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try
                 {
-                    await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new ClaudeIndex(4, TimeZoneInfo.Local.Id, next), IndexJson), ct);
+                    await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new ClaudeIndex(5, TimeZoneInfo.Local.Id, next), IndexJson), ct);
                     File.Move(temp, indexPath, true);
                 }
                 finally { if (File.Exists(temp)) File.Delete(temp); }
@@ -202,6 +240,8 @@ public sealed partial class ClaudeCodeUsageReader
         try
         {
             var history = await new UsageHistoryLedger(root).MergeAsync("claude", sources, CanReplaceClaude, ct, disputed);
+            if (history.Sources.Values.Any(source => source.ParserVersion == 0 && source.Events.Count > 0))
+                diagnostics.Add("部分 Claude 留存历史缺少消息标识，原日志不可用时无法校正重复用量；恢复原始 transcript 后刷新可重新核对");
             diagnostics.Add($"用量历史：留存 {history.RetainedSources} 个来源，冲突 {history.Conflicts} 个来源");
             return (history.Sources, indexStatus, history.Conflicts, failures, history.RetainedSources, history);
         }

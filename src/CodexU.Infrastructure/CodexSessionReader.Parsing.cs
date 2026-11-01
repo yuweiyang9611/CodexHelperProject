@@ -14,7 +14,9 @@ public sealed partial class CodexSessionReader
         string path,
         ParsedSessionFile? seed,
         long offset,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeUsageRecords = true,
+        long? maximumOffset = null)
     {
         var usageBuckets = seed?.UsageBuckets.ToDictionary(
             bucket => (bucket.Date, bucket.Model),
@@ -51,7 +53,8 @@ public sealed partial class CodexSessionReader
             FileShare.ReadWrite | FileShare.Delete,
             bufferSize: 64 * 1024,
             useAsync: true);
-        var completeOffset = await FindLastCompleteLineOffsetAsync(stream, offset, cancellationToken);
+        var completeOffset = maximumOffset ?? await FindLastCompleteLineOffsetAsync(stream, offset, cancellationToken);
+        if (completeOffset < offset || completeOffset > stream.Length) throw new IOException("Session prefix is no longer available.");
         stream.Seek(offset, SeekOrigin.Begin);
 
         using var boundedStream = new BoundedReadStream(stream, Math.Max(0, completeOffset - offset));
@@ -137,10 +140,21 @@ public sealed partial class CodexSessionReader
 
                 var isForkReplay = forkReplayPhase == ForkReplayPhase.Replaying;
 
-                if (string.Equals(type, "token_count", StringComparison.OrdinalIgnoreCase))
+                var isUsageRecord = includeUsageRecords
+                    && string.Equals(rootType, "token_usage_record", StringComparison.OrdinalIgnoreCase);
+                if (isUsageRecord || string.Equals(type, "token_count", StringComparison.OrdinalIgnoreCase))
                 {
-                    var hasCumulative = TryReadCumulativeUsage(payload, out var cumulativeSample);
-                    var hasLast = TryReadLastUsage(payload, out var last);
+                    // New rollouts can emit both this response record and the old
+                    // token_count notification. Their shared thread cumulative
+                    // counter prevents charging the same response twice. The turn
+                    // counter resets per turn and must not replace the thread total.
+                    var hasCumulative = isUsageRecord
+                        ? TryReadNamedUsage(payload, "thread_token_usage", out var cumulativeSample)
+                        : TryReadCumulativeUsage(payload, out cumulativeSample);
+                    TokenCounterSample? last;
+                    var hasLast = isUsageRecord
+                        ? TryReadNamedUsage(payload, "usage", out last)
+                        : TryReadLastUsage(payload, out last);
                     var cumulative = hasCumulative ? cumulativeSample : null;
                     if (hasCumulative || hasLast)
                     {
@@ -251,7 +265,8 @@ public sealed partial class CodexSessionReader
             tokenEvents,
             workspace,
             feature,
-            title);
+            title,
+            ParserVersion: includeUsageRecords ? 1 : 0);
     }
 
     // Only header metadata is evidence of a session's feature. Never inspect prompt
@@ -463,7 +478,16 @@ public sealed partial class CodexSessionReader
         return false;
     }
 
-    private static bool TryReadCumulativeUsage(JsonElement payload, out TokenCounterSample usage)
+    private static bool TryReadNamedUsage(JsonElement payload, string name, out TokenCounterSample? usage)
+    {
+        usage = payload.TryGetProperty(name, out var candidate) && candidate.ValueKind == JsonValueKind.Object
+            ? ReadCounterSample(candidate) : null;
+        if (usage is not null && usage.Fields != TokenUsageFields.None) return true;
+        usage = null;
+        return false;
+    }
+
+    private static bool TryReadCumulativeUsage(JsonElement payload, out TokenCounterSample? usage)
     {
         usage = new TokenCounterSample(TokenBreakdown.Zero, TokenUsageFields.None);
         JsonElement candidate;
@@ -521,6 +545,8 @@ public sealed partial class CodexSessionReader
 
     private static TokenCounterSample ReadCounterSample(JsonElement element)
     {
+        // cache_write_input_tokens does not identify a retention duration. Keep it
+        // within total input; it cannot be mapped to Claude's 5m/1h write buckets.
         var fields = TokenUsageFields.None;
         var input = ReadTokenField(element, "input_tokens", TokenUsageFields.Input, ref fields);
         var cachedInput = ReadTokenField(element, "cached_input_tokens", TokenUsageFields.CachedInput, ref fields);

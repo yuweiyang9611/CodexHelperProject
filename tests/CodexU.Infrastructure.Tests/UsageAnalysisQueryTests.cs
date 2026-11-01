@@ -213,12 +213,15 @@ public sealed class UsageAnalysisQueryTests
 
     [Theory]
     [InlineData("gpt-6.1-sol", AgentRuntime.Codex, 9, 29, 2d, 0.1d, "2026.10.1")]
+    [InlineData("gpt-6.1-terra", AgentRuntime.Codex, 10, 26, 1d, 0.05d, "2026.11.1")]
+    [InlineData("gpt-6-rosalind", AgentRuntime.Codex, 10, 30, 15d, 1.5d, "2026.11.1")]
+    [InlineData("claude-haiku-5-5", AgentRuntime.ClaudeCode, 10, 7, 0.1d, 0.01d, "anthropic-2026.11.1")]
     [InlineData("gpt-rosalind-research", AgentRuntime.Codex, 10, 5, 5d, 0.5d, "2026.10.1")]
     [InlineData("claude-fable-5-1", AgentRuntime.ClaudeCode, 9, 1, 10d, 0.25d, "anthropic-2026.10.1")]
     [InlineData("claude-mythos-5-1", AgentRuntime.ClaudeCode, 9, 1, 10d, 0.25d, "anthropic-2026.10.1")]
     [InlineData("claude-opus-5-5", AgentRuntime.ClaudeCode, 9, 22, 4d, 0.2d, "anthropic-2026.10.1")]
     [InlineData("claude-sonnet-5-5", AgentRuntime.ClaudeCode, 9, 28, 2d, 0.2d, "anthropic-2026.10.1")]
-    public void OctoberCatalog_RepricesRetainedCacheUsageOnlyFromTheOfficialEffectiveDate(
+    public void CurrentCatalog_RepricesRetainedCacheUsageOnlyFromTheOfficialEffectiveDate(
         string model, AgentRuntime runtime, int month, int day, double inputDollars, double cachedDollars, string version)
     {
         var effective = new DateOnly(2026, month, day);
@@ -236,6 +239,27 @@ public sealed class UsageAnalysisQueryTests
         var applied = Assert.Single(after.AppliedRates!);
         Assert.Equal(version, applied.CatalogVersion);
         Assert.Equal(effective, applied.EffectiveFrom);
+    }
+
+    [Fact]
+    public void Sonnet55CacheReduction_RepricesRetainedUsageAtTheDateBoundary()
+    {
+        var boundary = new DateOnly(2026, 10, 7);
+        var tokens = new TokenBreakdown(1_000_000, 1_000_000, 0, 0, 1_000_000);
+        var data = UsageHistoryProjection.BuildAnalysis([
+            Row("before", boundary.AddDays(-1), tokens.TotalTokens, "claude-sonnet-5-5") with { Tokens = tokens, SourceKind = "retained" },
+            Row("after", boundary, tokens.TotalTokens, "claude-sonnet-5-5") with { Tokens = tokens, SourceKind = "retained" }], [], null, false);
+
+        var result = UsageAnalysisQuery.Execute(data, new(AgentRuntime.ClaudeCode));
+
+        Assert.Equal(0.3d, UsageCredits.ToAmount(result.Totals.CreditsUsed!.Value), 8);
+        Assert.Equal(2_000_000, result.Totals.RatedTokens);
+        Assert.Empty(result.MissingRates!);
+        Assert.Equal(2, result.AppliedRates!.Count);
+        Assert.Equal(0.2d, UsageCredits.ToAmount(UsageAnalysisQuery.Execute(data,
+            new(AgentRuntime.ClaudeCode, To: boundary.AddDays(-1))).Totals.CreditsUsed!.Value), 8);
+        Assert.Equal(0.1d, UsageCredits.ToAmount(UsageAnalysisQuery.Execute(data,
+            new(AgentRuntime.ClaudeCode, From: boundary)).Totals.CreditsUsed!.Value), 8);
     }
 
     private static AttributedUsage Row(string source, DateOnly date, long tokens, string model = "model-a", string? project = "D:/Project") =>
