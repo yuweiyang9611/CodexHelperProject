@@ -172,7 +172,10 @@ public sealed partial class CodexSessionReader(
             {
                 var ledger = new UsageHistoryLedger(indexDirectory ?? Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"));
-                var history = await ledger.MergeAsync("codex", observations, CanReplaceHistory, cancellationToken, disputed);
+                var livePaths = canonicalLive.ToDictionary(file => file.Parsed.SessionId
+                    ?? UsageHistoryLedger.SourceId(file.Path), file => file.Path, StringComparer.Ordinal);
+                var history = await ledger.MergeAsync("codex", observations, CanReplaceHistory, cancellationToken, disputed,
+                    (id, previous, next, ct) => CanMigrateHistoryAsync(previous, next, livePaths[id], ct));
                 historyRead = history;
                 historyConflicts = history.Conflicts;
                 retainedSources = history.RetainedSources;
@@ -287,7 +290,7 @@ public sealed partial class CodexSessionReader(
 
         if (tokenEvents == 0)
         {
-            diagnostics.Add("本机 session 中没有可识别的 token_count 事件");
+            diagnostics.Add("本机 session 中没有可识别的 token_count 或 token_usage_record 事件");
         }
 
         if (skippedFiles > 0)
@@ -562,7 +565,8 @@ public sealed record ParsedSessionFile(
     IReadOnlyList<SessionTokenEvent> TokenEvents,
     string? Workspace = null,
     string Feature = "unknown",
-    string? Title = null);
+    string? Title = null,
+    int ParserVersion = 0);
 
 public sealed record SessionTokenEvent(
     DateOnly Date,

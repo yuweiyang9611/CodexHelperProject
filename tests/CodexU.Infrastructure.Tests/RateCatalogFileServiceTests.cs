@@ -91,6 +91,9 @@ public sealed class RateCatalogFileServiceTests
 
     [Theory]
     [InlineData("gpt-6.1-sol", 9, 29, 50d, 2.5d, 250d, "2026.10.1")]
+    [InlineData("gpt-6.1-terra", 10, 26, 25d, 1.25d, 125d, "2026.11.1")]
+    [InlineData("gpt-6-rosalind", 10, 30, 375d, 37.5d, 1875d, "2026.11.1")]
+    [InlineData("claude-haiku-5-5", 10, 7, 2.5d, 0.25d, 12.5d, "anthropic-2026.11.1")]
     [InlineData("gpt-rosalind-research", 10, 5, 125d, 12.5d, 625d, "2026.10.1")]
     [InlineData("claude-fable-5-1", 9, 1, 250d, 6.25d, 1_250d, "anthropic-2026.10.1")]
     [InlineData("claude-mythos-5-1", 9, 1, 250d, 6.25d, 1_250d, "anthropic-2026.10.1")]
@@ -111,9 +114,9 @@ public sealed class RateCatalogFileServiceTests
             var imported = await service.ImportAsync(path);
 
             Assert.True(export.Success);
-            Assert.Equal("2026.10.1", imported.CatalogVersion);
-            Assert.Equal("2026.10.1", imported.BaseCatalogVersion);
-            var row = Assert.Single(imported.Rates, rate => rate.Model == model);
+            Assert.Equal("2026.11.1", imported.CatalogVersion);
+            Assert.Equal("2026.11.1", imported.BaseCatalogVersion);
+            var row = Assert.Single(imported.Rates, rate => rate.Model == model && rate.EffectiveFrom == effective);
             Assert.Equal(original, row);
             Assert.Equal(version, row.CatalogVersion);
             Assert.Equal(effective, row.EffectiveFrom);

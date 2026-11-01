@@ -45,7 +45,8 @@ public sealed class ModelCatalogUpdateTests
         Assert.Equal(input * 25, rate.InputCreditsPerMillion, 8);
         Assert.Equal(cached * 25, rate.CachedInputCreditsPerMillion, 8);
         Assert.Equal(output * 25, rate.OutputCreditsPerMillion, 8);
-        Assert.Equal(rate, Assert.Single(UsageCredits.BuiltInRates, item => item.Model == model));
+        Assert.Equal(rate, Assert.Single(UsageCredits.BuiltInRates,
+            item => item.Model == model && item.EffectiveFrom == effective));
 
         var priced = UsageCredits.Calculate([new DatedModelTokenUsage(effective, model, tokens)]);
         Assert.Equal((input + cached + output) * 25, priced.CreditsUsed, 8);

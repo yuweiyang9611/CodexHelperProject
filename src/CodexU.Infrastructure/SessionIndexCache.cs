@@ -4,10 +4,10 @@ namespace CodexU.Infrastructure;
 
 internal sealed class SessionIndexCache
 {
-    // Version 14 reads a provided session title and observed token-field availability.
-    // under the field-validating, last-only-aware normalizer semantics. Global
+    // Version 15 also reads token_usage_record through the same counter normalizer.
+    // Old caches must be reparsed to recover record-only responses. Global
     // canonicalization and parent-prefix removal are recomputed on every read.
-    private const int CurrentVersion = 14;
+    private const int CurrentVersion = 15;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _path;
 

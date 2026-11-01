@@ -89,11 +89,14 @@ public static class UsageCredits
     private const string Catalog2026091Version = "2026.09.1";
     private const string Catalog2026092Version = "2026.09.2";
     private const string Catalog2026101Version = "2026.10.1";
+    private const string Catalog2026111Version = "2026.11.1";
     private const string OpenAiStandardSource = "OpenAI API 官方 Standard 短上下文价目与 Changelog";
     private const string OpenAiSolPromotionSource =
         "OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）";
     private const string OpenAiRosalindSource =
         "OpenAI API 官方专业模型价目与 Changelog（GPT-Rosalind 自 2026-10-05 起计费）";
+    private const string OpenAi6RosalindSource =
+        "OpenAI API 官方专业模型价目与 Changelog（GPT-6 Rosalind 自 2026-10-30 发布）";
     // Shown in the settings page for the built-in catalog as a whole. The per-row
     // Source still names each vendor's own table; this only has to stop claiming the
     // combined catalog is OpenAI-only now that it spans more than one lineage.
@@ -103,7 +106,9 @@ public static class UsageCredits
     private const string CatalogAnthropic2026071Source = "Anthropic 公布的 Claude API 价目";
     private const string CatalogAnthropic2026101Version = "anthropic-2026.10.1";
     private const string CatalogAnthropic2026101Source = "Anthropic 官方 Claude API 模型页与发布记录";
-    public const string CurrentCatalogVersion = Catalog2026101Version;
+    private const string CatalogAnthropic2026111Version = "anthropic-2026.11.1";
+    private const string CatalogAnthropic2026111Source = "Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）";
+    public const string CurrentCatalogVersion = Catalog2026111Version;
     public const string CurrentCatalogSource = BuiltInCatalogSource;
 
     // Cache writes are priced as a fixed multiple of the model's base input rate
@@ -168,6 +173,8 @@ public static class UsageCredits
         OpenAiApi(Catalog2026101Version, OpenAiStandardSource, new DateOnly(2026, 9, 29), "gpt-6.1-sol", 2d, 0.1d, 10d),
         // Billing begins Oct 5; do not guess a price for the earlier release period.
         OpenAiApi(Catalog2026101Version, OpenAiRosalindSource, new DateOnly(2026, 10, 5), "gpt-rosalind-research", 5d, 0.5d, 25d),
+        OpenAiApi(Catalog2026111Version, OpenAiStandardSource, new DateOnly(2026, 10, 26), "gpt-6.1-terra", 1d, 0.05d, 5d),
+        OpenAiApi(Catalog2026111Version, OpenAi6RosalindSource, new DateOnly(2026, 10, 30), "gpt-6-rosalind", 15d, 1.5d, 75d),
 
         // Anthropic prices converted at CreditsPerDollar. Store each model's explicit
         // cache-read price: newer versions can differ from the older 0.1x ratio.
@@ -187,7 +194,13 @@ public static class UsageCredits
         BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 1), "claude-fable-5-1", 250d, 6.25d, 1_250d),
         BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 1), "claude-mythos-5-1", 250d, 6.25d, 1_250d),
         BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 22), "claude-opus-5-5", 100d, 5d, 500d),
-        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 28), "claude-sonnet-5-5", 50d, 5d, 250d)
+        BuiltIn(CatalogAnthropic2026101Version, CatalogAnthropic2026101Source, new DateOnly(2026, 9, 28), "claude-sonnet-5-5", 50d, 5d, 250d),
+        // The October 7 cache-read reduction is a real price change: retain the launch row.
+        BuiltIn(CatalogAnthropic2026111Version, CatalogAnthropic2026111Source, new DateOnly(2026, 10, 7), "claude-sonnet-5-5", 50d, 2.5d, 250d),
+        // Haiku 5.5's base price applies to requests with <=100K input tokens.
+        // Daily aggregates do not preserve request lengths; keep the documented
+        // short-context equivalent basis rather than infer a tier from daily totals.
+        BuiltIn(CatalogAnthropic2026111Version, CatalogAnthropic2026111Source, new DateOnly(2026, 10, 7), "claude-haiku-5-5", 2.5d, 0.25d, 12.5d)
     ];
 
     public static IReadOnlyList<ModelCreditRate> BuiltInRates => Rates;
@@ -222,7 +235,7 @@ public static class UsageCredits
         RateCatalogSchemaVersion,
         CurrentCatalogVersion,
         BuiltInCatalogSource,
-        new DateOnly(2026, 10, 5),
+        new DateOnly(2026, 11, 1),
         Rates.Count);
 
     public static RateCatalogSnapshot CatalogSnapshot => new(BuiltInCatalog, Rates);
@@ -794,7 +807,10 @@ public static class SubscriptionPricing
         "free" => 0d,
         "plus" => 20d,
         "prolite" or "pro100" => 100d,
-        "pro" or "pro200" => 200d,
+        "pro200" => 200d,
+        "pro500" => 500d,
+        // Pro now has three monthly tiers. A plain "pro" label does not tell
+        // us which one the account pays for; leave it to the manual amount.
         _ => null
     };
 

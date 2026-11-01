@@ -291,10 +291,10 @@ class HostBridge {
       return {
         builtIn: {
           schemaVersion: 1,
-          catalogVersion: '2026.10.1',
+          catalogVersion: '2026.11.1',
           source: '内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）',
-          publishedOn: '2026-10-05',
-          rateCount: 37,
+          publishedOn: '2026-11-01',
+          rateCount: 41,
         },
         // A representative slice of the real catalog rather than an empty list:
         // the rate editor seeds a new row from these, so an empty array would
@@ -323,6 +323,10 @@ class HostBridge {
           { model: 'claude-mythos-5-1', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 6.25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-01', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
           { model: 'claude-opus-5-5', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 500, effectiveFrom: '2026-09-22', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
           { model: 'claude-sonnet-5-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-28', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
+          { model: 'gpt-6.1-terra', inputCreditsPerMillion: 25, cachedInputCreditsPerMillion: 1.25, outputCreditsPerMillion: 125, effectiveFrom: '2026-10-26', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.11.1', matchMode: 'exact' },
+          { model: 'gpt-6-rosalind', inputCreditsPerMillion: 375, cachedInputCreditsPerMillion: 37.5, outputCreditsPerMillion: 1875, effectiveFrom: '2026-10-30', source: 'OpenAI API 官方专业模型价目与 Changelog（GPT-6 Rosalind 自 2026-10-30 发布）', catalogVersion: '2026.11.1', matchMode: 'exact' },
+          { model: 'claude-sonnet-5-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 250, effectiveFrom: '2026-10-07', source: 'Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）', catalogVersion: 'anthropic-2026.11.1', matchMode: 'exact' },
+          { model: 'claude-haiku-5-5', inputCreditsPerMillion: 2.5, cachedInputCreditsPerMillion: 0.25, outputCreditsPerMillion: 12.5, effectiveFrom: '2026-10-07', source: 'Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）', catalogVersion: 'anthropic-2026.11.1', matchMode: 'exact' },
         ],
       } as T
     }
@@ -488,16 +492,15 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
     runtime,
     refreshedAt: today.toISOString(),
     history: { retainedSources: 0, conflicts: 0, legacyDays: 0 },
-    // "pro" is a different price per vendor — US$20 on Claude, US$200 on ChatGPT —
-    // so the demo account has to follow the runtime it is describing rather than
-    // showing a ChatGPT subscription behind the Claude Code toggle.
+    // Claude Pro is US$20; ChatGPT's demo explicitly selects the US$200 Pro tier.
+    // A plain ChatGPT "pro" label is ambiguous and cannot supply an automatic price.
     account: runtime === 'claudeCode'
       ? {
         accountType: 'claude-code', planType: 'pro', email: 'local@claude', isAuthenticated: true,
         suggestedMonthlySubscriptionAmount: 20,
       }
       : {
-        accountType: 'chatgpt', planType: 'pro', email: 'local@codex', isAuthenticated: true,
+        accountType: 'chatgpt', planType: 'pro200', email: 'local@codex', isAuthenticated: true,
         suggestedMonthlySubscriptionAmount: 200,
       },
     primaryQuota: isClaude

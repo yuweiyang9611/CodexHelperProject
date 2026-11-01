@@ -49,9 +49,9 @@ public sealed partial class ClaudeCodeUsageReader(
                 foreach (var pair in item.Tools) tools[pair.Key] = tools.GetValueOrDefault(pair.Key) + pair.Value;
                 foreach (var pair in item.Skills) skills[pair.Key] = skills.GetValueOrDefault(pair.Key) + pair.Value;
                 if (item.Tokens is not { } tokens || item.Model is not { } model) continue;
-                usageEvents += summary.Count;
+                usageEvents += summary.UsageCount;
                 var bucket = new UsageBucket(date, model, tokens);
-                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.Count, item.Branch, history?.Kind(sourceId) ?? "live",
+                attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.UsageCount, item.Branch, history?.Kind(sourceId) ?? "live",
                     source.Identity is null ? "unknown" : source.Identity.Contains("/agent:", StringComparison.Ordinal) ? "subagents" : "tasks",
                     ParentSessionId: source.Identity is { } identity && identity.IndexOf("/agent:", StringComparison.Ordinal) is var agentStart && agentStart > 0
                         ? identity[..agentStart] : null, AvailableFields: item.AvailableFields));

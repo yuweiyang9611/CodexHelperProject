@@ -126,7 +126,7 @@ describe('HostBridge transport selection', () => {
     const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
     await vi.advanceTimersByTimeAsync(180)
     const catalog = await request
-    expect(catalog.builtIn).toMatchObject({ catalogVersion: '2026.10.1', publishedOn: '2026-10-05', rateCount: 37 })
+    expect(catalog.builtIn).toMatchObject({ catalogVersion: '2026.11.1', publishedOn: '2026-11-01', rateCount: 41 })
     for (const [model, input, cached, output] of [
       ['gpt-6-sol', 50, 5, 250], ['gpt-6-luna', 2.5, 0.25, 12.5],
     ] as const) {
@@ -141,6 +141,9 @@ describe('HostBridge transport selection', () => {
   })
 
   it.each([
+    ['gpt-6.1-terra', '2026-10-25', '2026-10-26', 25, 1.25, 125, '2026.11.1'],
+    ['gpt-6-rosalind', '2026-10-29', '2026-10-30', 375, 37.5, 1875, '2026.11.1'],
+    ['claude-haiku-5-5', '2026-10-06', '2026-10-07', 2.5, 0.25, 12.5, 'anthropic-2026.11.1'],
     ['gpt-6.1-sol', '2026-09-28', '2026-09-29', 50, 2.5, 250, '2026.10.1'],
     ['gpt-rosalind-research', '2026-10-04', '2026-10-05', 125, 12.5, 625, '2026.10.1'],
     ['claude-fable-5-1', '2026-08-31', '2026-09-01', 250, 6.25, 1250, 'anthropic-2026.10.1'],
@@ -159,6 +162,22 @@ describe('HostBridge transport selection', () => {
     expect(newestBuiltInRateFor(builtInRates, model, effectiveFrom)).toMatchObject({
       inputCreditsPerMillion: input, cachedInputCreditsPerMillion: cached, outputCreditsPerMillion: output,
       effectiveFrom, catalogVersion, matchMode: 'exact',
+    })
+  })
+
+  it('replays the Sonnet 5.5 cache price reduction without changing September usage', async () => {
+    vi.useFakeTimers()
+    const { host } = await import('../../src/host')
+    const request = host.request<RateCatalogSnapshot>('rates.getCatalog')
+    await vi.advanceTimersByTimeAsync(180)
+    const { builtInRates } = await request
+
+    expect(newestBuiltInRateFor(builtInRates, 'claude-sonnet-5-5', '2026-10-06')).toMatchObject({
+      cachedInputCreditsPerMillion: 5, effectiveFrom: '2026-09-28', catalogVersion: 'anthropic-2026.10.1',
+    })
+    expect(newestBuiltInRateFor(builtInRates, 'claude-sonnet-5-5', '2026-10-07')).toMatchObject({
+      inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 250,
+      effectiveFrom: '2026-10-07', catalogVersion: 'anthropic-2026.11.1',
     })
   })
 
