@@ -62,6 +62,26 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
+  it('binds a Desktop usage transcript without changing a manual subscription or sending an update', async () => {
+    const { container, store } = mountSettings([], snapshot({ runtime: 'claudeCode' }))
+    store.settingsDraft!.claudeMonthlySubscriptionAmount = 100
+    store.settingsDraft!.claudeAutoDetectSubscriptionAmount = false
+    await nextTick()
+    const bound = labelledControl(container, 'Claude Desktop 额度会话文件')
+    bound.value = 'D:\\Fixture\\desktop-usage.jsonl'
+    bound.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    expect(store.settingsDraft?.claudeDesktopUsageTranscript).toBe('D:\\Fixture\\desktop-usage.jsonl')
+    expect(store.settingsDraft?.claudeMonthlySubscriptionAmount).toBe(100)
+    expect(store.settingsDraft?.claudeAutoDetectSubscriptionAmount).toBe(false)
+    const instruction = container.querySelector<HTMLInputElement>('[aria-label="Desktop 额度更新指令"]')
+    expect(instruction?.readOnly).toBe(true)
+    expect(instruction?.value).toContain('mcp__ccd_session_mgmt__get_usage')
+    expect(container.textContent).toContain('不会自动发送消息')
+    expect(container.textContent).toContain('15 分钟')
+  })
+
   it('explains that an unidentified Claude subscription needs an explicit manual monthly amount', async () => {
     const { container, store } = mountSettings([], snapshot({ runtime: 'claudeCode' }))
     const monthly = labelledControl(container, 'Claude Code 订阅月费')

@@ -234,5 +234,6 @@ public sealed class SidecarBackend : IDisposable
             settings.CodexExecutable,
             settings.CustomModelRates,
             settings.IsRateCatalogPinned,
-            applicationDataDirectory: applicationDataDirectory);
+            applicationDataDirectory: applicationDataDirectory,
+            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript);
 }

@@ -5,6 +5,27 @@ namespace CodexU.Core.Tests;
 public sealed class PersonalUsageSettingsTests
 {
     [Fact]
+    public void DesktopUsageBinding_NormalizesWithoutChangingManualSubscription()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "00000000-0000-0000-0000-000000000001.jsonl");
+        var settings = new AppSettings(
+            ClaudeDesktopUsageTranscript: " " + path + " ",
+            ClaudeMonthlySubscriptionAmount: 100,
+            ClaudeAutoDetectSubscriptionAmount: false).Validate().Normalize();
+
+        Assert.Equal(path, settings.ClaudeDesktopUsageTranscript);
+        Assert.Equal(100, settings.ClaudeMonthlySubscriptionAmount);
+        Assert.False(settings.ClaudeAutoDetectSubscriptionAmount);
+        Assert.Null(new AppSettings(ClaudeDesktopUsageTranscript: " ").Validate().Normalize().ClaudeDesktopUsageTranscript);
+    }
+
+    [Theory]
+    [InlineData("relative-session.jsonl")]
+    [InlineData("C:/data/settings.json")]
+    public void DesktopUsageBinding_RejectsNonSessionPaths(string path) =>
+        Assert.Throws<ArgumentException>(() => new AppSettings(ClaudeDesktopUsageTranscript: path).Validate());
+
+    [Fact]
     public void Defaults_RestoreVersion060NotificationAndStatusStripOptions()
     {
         var settings = new AppSettings().Normalize();

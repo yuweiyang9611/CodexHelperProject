@@ -262,6 +262,14 @@ function removeCustomRate(index: number) {
             <label class="settings-field-wide">Codex 可执行文件<input v-model="store.settingsDraft.codexExecutable" placeholder="自动发现 ChatGPT/Codex CLI，也可手动指定 codex.exe" /></label>
             <label class="settings-field-wide">默认工作范围<input v-model="store.settingsDraft.defaultWorkspace" placeholder="例如 D:\Workspace" /></label>
           </div>
+          <details class="desktop-usage-binding">
+            <summary>高级：绑定 Desktop 额度会话</summary>
+            <div class="settings-grid settings-grid-wide">
+              <label class="settings-field-wide">Claude Desktop 额度会话文件<input v-model="store.settingsDraft.claudeDesktopUsageTranscript" placeholder="已验证的 Desktop 会话 JSONL 绝对路径；留空不绑定" /></label>
+              <label class="settings-field-wide">复制到该 Desktop 会话的更新指令<input readonly aria-label="Desktop 额度更新指令" value="请调用 mcp__ccd_session_mgmt__get_usage 查询当前 Claude 额度和重置时间。" /></label>
+            </div>
+            <p class="setting-hint">仅读取绑定会话已有的 get_usage 工具结果，不会自动发送消息。更新需要你在该 Desktop 会话再次调用工具；源缓存最多 60 秒，读取时超过 15 分钟的结果会被忽略。</p>
+          </details>
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.incrementalIndexEnabled" type="checkbox" />启用增量索引</label>
           </div>
@@ -403,3 +411,8 @@ function removeCustomRate(index: number) {
     </article>
   </div>
 </template>
+
+<style scoped>
+.desktop-usage-binding { margin-top: 10px; }
+.desktop-usage-binding summary { color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+</style>

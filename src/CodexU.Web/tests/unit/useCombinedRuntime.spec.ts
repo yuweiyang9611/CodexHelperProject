@@ -370,15 +370,17 @@ describe('mergeProjects', () => {
 })
 
 describe('earliestExhaustion', () => {
-  it('excludes Desktop history without a reset even when a forecast is present', () => {
-    expect(earliestExhaustion([entry('claudeCode', {
-      snapshot: snapshot({
-        runtime: 'claudeCode',
-        primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
-        primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
-      }),
-    })])).toBeNull()
-  })
+  it.each(['claude-desktop-history', 'claude-desktop-get-usage'])(
+    'excludes an unscoped Desktop snapshot even when a forecast is present (%s)', (source) => {
+      expect(earliestExhaustion([entry('claudeCode', {
+        snapshot: snapshot({
+          runtime: 'claudeCode',
+          primaryQuota: rateLimitWindow({ source, resetsAt: source === 'claude-desktop-get-usage' ? '2026-11-01T22:00:00Z' : null }),
+          primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
+        }),
+      })])).toBeNull()
+    },
+  )
 
   function withQuota(
     runtime: AgentRuntime,

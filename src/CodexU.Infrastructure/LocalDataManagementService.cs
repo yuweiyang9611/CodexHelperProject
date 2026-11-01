@@ -456,6 +456,7 @@ public sealed class LocalDataManagementService(
                             customRateCount = settings.CustomModelRates?.Count ?? 0,
                             codexHomeConfigured = !string.IsNullOrWhiteSpace(settings.CodexHome),
                             codexExecutableConfigured = !string.IsNullOrWhiteSpace(settings.CodexExecutable),
+                            claudeDesktopUsageTranscriptConfigured = !string.IsNullOrWhiteSpace(settings.ClaudeDesktopUsageTranscript),
                             workspaceConfigured = !string.IsNullOrWhiteSpace(settings.DefaultWorkspace)
                         },
                         privacy = "不包含对话正文、工具参数、待办内容、账户邮箱或认证数据；已对常见本地绝对路径进行脱敏"
@@ -1011,7 +1012,9 @@ public sealed class LocalDataManagementService(
 
     private static string Sanitize(string value, AppSettings settings)
     {
-        var result = value;
+        // Replace the bound file before the generic profile prefix, otherwise its
+        // session identifier would survive behind the %USERPROFILE% placeholder.
+        var result = ReplaceConfiguredPath(value, settings.ClaudeDesktopUsageTranscript, "%CLAUDE_USAGE_TRANSCRIPT%");
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrWhiteSpace(profile)) result = result.Replace(profile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);

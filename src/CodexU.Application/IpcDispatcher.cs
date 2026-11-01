@@ -17,6 +17,7 @@ public sealed class IpcDispatcher : IDisposable
         StringComparer.Ordinal,
         "codexHome",
         "codexExecutable",
+        "claudeDesktopUsageTranscript",
         "defaultWorkspace",
         "theme",
         "showSubagents",

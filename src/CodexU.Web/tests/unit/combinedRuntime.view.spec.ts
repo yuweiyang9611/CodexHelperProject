@@ -21,14 +21,17 @@ afterEach(() => {
 })
 
 describe('combined subscription amounts', () => {
-  it('shows the same Desktop source limits and subscription guidance in the Claude column', () => {
+  it.each([
+    ['claude-desktop-history', '本地 Claude Desktop 历史仅提供额度百分比', '30 分钟'],
+    ['claude-desktop-get-usage', 'Desktop 查询快照', '15 分钟'],
+  ])('shows Desktop source limits and subscription guidance in the Claude column (%s)', (source, notice, expiry) => {
     const store = useDashboardStore(pinia)
     store.settings = appSettings()
     store.combined = {
       codex: runtimeRead({ snapshot: snapshot({ runtime: 'codex', primaryQuota: rateLimitWindow() }) }),
       claudeCode: runtimeRead({ snapshot: snapshot({
         runtime: 'claudeCode',
-        primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null, measuredAt: '2026-11-01T09:35:00Z' }),
+        primaryQuota: rateLimitWindow({ source, resetsAt: source === 'claude-desktop-get-usage' ? '2026-11-01T22:00:00Z' : null, measuredAt: '2026-11-01T09:35:00Z' }),
         tokens: { ...snapshot().tokens, month: tokenPeriod({ tokens: 100 }) },
       }) }),
     }
@@ -39,8 +42,8 @@ describe('combined subscription amounts', () => {
     app.mount(container)
 
     const columns = container.querySelectorAll('.combined-runtime-column')
-    expect(columns[1]?.textContent).toContain('本地 Claude Desktop 历史仅提供额度百分比')
-    expect(columns[1]?.textContent).toContain('超过 30 分钟')
+    expect(columns[1]?.textContent).toContain(notice)
+    expect(columns[1]?.textContent).toContain(expiry)
     expect(columns[1]?.textContent).toContain('订阅档位未识别')
     expect(columns[1]?.textContent).toContain('设置与诊断')
     expect(columns[0]?.querySelector('.runtime-data-notice')).toBeNull()
@@ -58,6 +61,7 @@ describe('combined subscription amounts', () => {
       }) }),
       claudeCode: runtimeRead({ snapshot: snapshot({
         runtime: 'claudeCode', tokens: { ...snapshot().tokens, month: tokenPeriod({ tokens: 100 }) },
+        primaryQuota: rateLimitWindow({ source: 'claude-desktop-get-usage', resetsAt: '2026-11-01T22:00:00Z' }),
       }) }),
     }
     const container = document.createElement('div')

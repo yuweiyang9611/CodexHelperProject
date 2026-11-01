@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { QuotaForecast, RateLimitWindow } from '../types'
 import { exhaustionTime, resetTime } from '../format'
-import { isDesktopQuota, quotaSampleTime } from '../quotaPresentation'
+import { isDesktopQuota, isDesktopQueryQuota, quotaQueryTime, quotaSampleTime } from '../quotaPresentation'
 
 const props = defineProps<{
   label: string
@@ -17,7 +17,8 @@ const percent = computed(() => Math.round(props.quota?.remainingPercent ?? 0))
 const dashOffset = computed(() => circumference * (1 - percent.value / 100))
 const gradientId = computed(() => `quota-${props.color}-${props.label.replace(/\W/g, '')}`)
 const isSample = computed(() => isDesktopQuota(props.quota))
-const caption = computed(() => isSample.value ? '采样剩余' : '剩余')
+const isQuery = computed(() => isDesktopQueryQuota(props.quota))
+const caption = computed(() => isQuery.value ? '查询时剩余' : isSample.value ? '采样剩余' : '剩余')
 
 // A window that resets before it would run out is not news, however fast it is being
 // consumed — showing a countdown for it would cry wolf at every busy stretch.
@@ -65,8 +66,8 @@ const burnRate = computed(() =>
       <span class="quota-caption">{{ caption }}</span>
     </div>
     <span v-if="isSample" class="sample-time">
-      <time :datetime="quota?.measuredAt ?? undefined">{{ quotaSampleTime(quota?.measuredAt) }}</time>
-      <span>本地时间 · 非实时</span>
+      <time :datetime="quota?.measuredAt ?? undefined">{{ isQuery ? quotaQueryTime(quota?.measuredAt) : quotaSampleTime(quota?.measuredAt) }}</time>
+      <span>{{ isQuery ? '本地时间 · 查询快照' : '本地时间 · 非实时' }}</span>
     </span>
     <span class="reset-time">{{ isSample && !quota?.resetsAt ? '来源未提供重置时间' : resetTime(quota?.resetsAt) }}</span>
     <span v-if="burnDown" class="burn-down" :title="burnRate">{{ burnDown }}</span>

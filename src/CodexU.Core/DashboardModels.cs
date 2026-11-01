@@ -27,8 +27,10 @@ public sealed record RateLimitWindow(
     int? WindowDurationMinutes,
     DateTimeOffset? ResetsAt,
     /// <summary>
-    /// When the figure was actually measured, where that is knowable — the
-    /// statusline snapshot's write time, say. A burn rate divides consumption by
+    /// The source observation time, where that is knowable — the statusline
+    /// capture time or a native get_usage result event. A cached tool's event time
+    /// is not an exact server measurement time; Source identifies that distinction.
+    /// A burn rate divides consumption by
     /// elapsed time, so dating a reading by the refresh that happened to pick it up
     /// would understate the rate whenever a stale file is re-read. Null means the
     /// source cannot say, and the reader falls back to the refresh time.

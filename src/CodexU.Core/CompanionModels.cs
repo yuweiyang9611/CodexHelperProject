@@ -46,7 +46,8 @@ public sealed record AppSettings(
     bool IsRateCatalogPinned = false,
     string? PinnedRateCatalogVersion = null,
     string? PinnedRateCatalogSource = null,
-    string? PinnedRateCatalogBaseVersion = null)
+    string? PinnedRateCatalogBaseVersion = null,
+    string? ClaudeDesktopUsageTranscript = null)
 {
     private static readonly char[] InvalidWindowsPathCharacters = ['\0', '"', '<', '>', '|', '?', '*'];
 
@@ -55,6 +56,11 @@ public sealed record AppSettings(
         ValidatePath(CodexHome, nameof(CodexHome));
         ValidatePath(CodexExecutable, nameof(CodexExecutable));
         ValidatePath(DefaultWorkspace, nameof(DefaultWorkspace));
+        ValidatePath(ClaudeDesktopUsageTranscript, nameof(ClaudeDesktopUsageTranscript));
+        if (!string.IsNullOrWhiteSpace(ClaudeDesktopUsageTranscript)
+            && (!Path.IsPathFullyQualified(ClaudeDesktopUsageTranscript.Trim())
+                || !string.Equals(Path.GetExtension(ClaudeDesktopUsageTranscript.Trim()), ".jsonl", StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("Claude Desktop 查询来源必须是完整的本地 JSONL 文件路径。", nameof(ClaudeDesktopUsageTranscript));
         ValidateCustomRates(CustomModelRates, IsRateCatalogPinned);
         ValidatePinnedRateCatalog();
         return this;
@@ -64,6 +70,7 @@ public sealed record AppSettings(
     {
         CodexHome = NormalizePath(CodexHome),
         CodexExecutable = NormalizePath(CodexExecutable),
+        ClaudeDesktopUsageTranscript = NormalizePath(ClaudeDesktopUsageTranscript),
         DefaultWorkspace = NormalizePath(DefaultWorkspace),
         Theme = Theme?.ToLowerInvariant() is "light" or "system" ? Theme.ToLowerInvariant() : "dark",
         FiveHourAlertPercent = Math.Clamp(FiveHourAlertPercent, 1, 99),

@@ -28,6 +28,40 @@ function mountOverview(overviewSnapshot: ReturnType<typeof snapshot>) {
 }
 
 describe('OverviewCards local token activity', () => {
+  it.each([
+    ['最新原生结果已过期（超过 15 分钟），请在 Desktop 重新获取用量', 'get_usage 结果已过期'],
+    ['指定会话无法安全读取，未使用其中的旧结果', 'get_usage 结果不可用'],
+  ])('explains a fallback from a bound query without exposing raw diagnostics (%s)', (reason, expected) => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null, measuredAt: '2026-11-01T09:35:00Z' }),
+      diagnostics: [`Claude Desktop 原生额度：${reason}；C:\\Users\\private-person\\session.jsonl id=private-session`],
+    }))
+
+    const quotaCard = container.querySelector('.quota-card')
+    expect(quotaCard?.textContent).toContain(expected)
+    expect(quotaCard?.textContent).toContain('当前为历史采样')
+    expect(quotaCard?.textContent).toContain('请在绑定的 Desktop 会话重新调用 get_usage')
+    expect(quotaCard?.textContent).not.toContain('private-person')
+    expect(quotaCard?.textContent).not.toContain('private-session')
+    expect(quotaCard?.textContent).not.toContain('C:\\')
+  })
+
+  it('explains how a bound Desktop query snapshot is refreshed without claiming the reset is missing', () => {
+    const container = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      primaryQuota: rateLimitWindow({ source: 'claude-desktop-get-usage', measuredAt: '2026-11-01T09:35:00Z', resetsAt: '2026-11-01T10:40:00Z' }),
+    }))
+
+    const quotaCard = container.querySelector('.quota-card')
+    expect(quotaCard?.textContent).toContain('Desktop 查询快照')
+    expect(quotaCard?.textContent).toContain('60 秒')
+    expect(quotaCard?.textContent).toContain('15 分钟')
+    expect(quotaCard?.textContent).toContain('get_usage')
+    expect(quotaCard?.textContent).toContain('账号范围未确认')
+    expect(quotaCard?.textContent).not.toContain('历史仅提供额度百分比')
+  })
+
   it('explains Desktop sample limits and missing subscription identification beside the quota', () => {
     const container = mountOverview(snapshot({
       runtime: 'claudeCode',
@@ -69,16 +103,18 @@ describe('OverviewCards local token activity', () => {
     expect(quotaCard?.textContent).not.toContain('private-person')
   })
 
-  it('does not turn a Desktop percentage sample into a quota exhaustion alert', () => {
-    const container = mountOverview(snapshot({
-      runtime: 'claudeCode',
-      primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
-      primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
-    }))
+  it.each(['claude-desktop-history', 'claude-desktop-get-usage'])(
+    'does not turn an unscoped Desktop snapshot into a quota exhaustion alert (%s)', (source) => {
+      const container = mountOverview(snapshot({
+        runtime: 'claudeCode',
+        primaryQuota: rateLimitWindow({ source, resetsAt: source === 'claude-desktop-get-usage' ? '2026-11-01T22:00:00Z' : null }),
+        primaryForecast: quotaForecast({ exhaustsBeforeReset: true }),
+      }))
 
-    expect(container.querySelector('.quota-risk-notice')).toBeNull()
-    expect(container.querySelector('.burn-down')).toBeNull()
-  })
+      expect(container.querySelector('.quota-risk-notice')).toBeNull()
+      expect(container.querySelector('.burn-down')).toBeNull()
+    },
+  )
 
   it('uses the local JSONL periods for every token metric', () => {
     const container = mountOverview(snapshot({

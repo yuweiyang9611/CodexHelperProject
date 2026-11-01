@@ -359,6 +359,7 @@ public partial class MainWindow : Window
         || !string.Equals(previous.DefaultWorkspace, current.DefaultWorkspace, StringComparison.OrdinalIgnoreCase)
         || previous.ShowSubagents != current.ShowSubagents
         || !string.Equals(previous.CodexExecutable, current.CodexExecutable, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(previous.ClaudeDesktopUsageTranscript, current.ClaudeDesktopUsageTranscript, StringComparison.OrdinalIgnoreCase)
         || !(previous.CustomModelRates ?? []).SequenceEqual(current.CustomModelRates ?? [])
         || previous.IsRateCatalogPinned != current.IsRateCatalogPinned;
 
@@ -371,7 +372,8 @@ public partial class MainWindow : Window
             settings.CodexExecutable,
             settings.CustomModelRates,
             settings.IsRateCatalogPinned,
-            applicationDataDirectory: _applicationDataDirectory);
+            applicationDataDirectory: _applicationDataDirectory,
+            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript);
 
     public async Task RefreshAsync()
     {

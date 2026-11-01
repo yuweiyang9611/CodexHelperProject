@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.5** 补充 Claude Desktop 用量接入并修复手动月费显示；用户变更说明见 [0.6.5 发布说明](docs/release-0.6.5.md)，数据范围和验证记录见 [Claude Desktop 接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.6** 接入 Claude Desktop 原生查询结果与真实重置时间；用户变更说明见 [0.6.6 发布说明](docs/release-0.6.6.md)，数据范围和验证记录见 [Claude Desktop 接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
@@ -162,6 +162,8 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 发布新版本时，先修改 `Directory.Build.props` 的 `Version`、`AssemblyVersion` 和 `FileVersion`，并同步 Web/Electron package 与 lockfile，通过 PR 合并到 `main`；自动化会跳过已完整发布的同版本，防止覆盖历史 Release。v0.5.0 保持原 WPF 资产不变；v0.6.0-beta.1 是首个 Electron 预发布版，验证功能对等后再提升为稳定版。
 
 ## Claude 额度接入
+
+从 0.6.6 起支持绑定 Desktop Code 会话中的原生 `get_usage` 工具结果，显示真实百分比、重置时间及读取时间。该方式只读取已有查询结果，新查询由绑定的 Desktop 会话触发；不在后台发送模型消息。配置与边界见 [原生查询结果接入](docs/claude-desktop-usage.md)。
 
 Claude Code transcript 只有 Token 计数，没有订阅配额；HTTP 429 只能说明当时被限流。
 

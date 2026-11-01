@@ -10,7 +10,8 @@ public sealed partial class ClaudeCodeUsageReader(
     IReadOnlyList<ModelCreditRate>? customRates = null,
     bool completeRateCatalog = false,
     string? applicationDataDirectory = null,
-    bool incrementalIndexEnabled = true) : ILocalUsageReader
+    bool incrementalIndexEnabled = true,
+    string? claudeDesktopUsageTranscript = null) : ILocalUsageReader
 {
     private const long MaximumTaskFileLength = 2 * 1024 * 1024;
 
@@ -260,6 +261,13 @@ public sealed partial class ClaudeCodeUsageReader(
         ReadQuotaSnapshotAsync(CancellationToken cancellationToken)
     {
         var now = Clock.GetUtcNow();
+        var queried = await new ClaudeDesktopToolUsageReader(claudeDesktopUsageTranscript).ReadAsync(now, cancellationToken);
+        if (queried.Success)
+        {
+            // An explicitly bound, fresh native result owns the entire measurement.
+            // A successful empty result must not acquire old windows from another source.
+            return (null, queried.Primary, queried.Secondary, queried.Diagnostic);
+        }
         var statusline = await ReadStatuslineQuotaAsync(now, cancellationToken);
         var desktop = await new ClaudeDesktopQuotaReader(paths.ClaudeDesktopDataDirectory).ReadAsync(now, cancellationToken);
         if (desktop.HasQuota && (!statusline.HasQuota || desktop.MeasuredAt > statusline.MeasuredAt))
@@ -267,12 +275,16 @@ public sealed partial class ClaudeCodeUsageReader(
             // These sources do not share an authenticated account identity. Choose
             // one whole measurement, never fill a missing window or plan from the
             // other source (a missing 5h window can be intentional on some plans).
-            return (null, desktop.Primary, desktop.Secondary, desktop.Diagnostic);
+            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried));
         }
         var diagnostic = string.IsNullOrEmpty(desktop.Diagnostic)
             ? statusline.Diagnostic : statusline.Diagnostic + "；" + desktop.Diagnostic;
-        return (statusline.Account, statusline.Primary, statusline.Secondary, diagnostic);
+        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried));
     }
+
+    private string WithQueryDiagnostic(string diagnostic, ClaudeDesktopToolUsageReadResult queried) =>
+        string.IsNullOrWhiteSpace(claudeDesktopUsageTranscript) || string.IsNullOrWhiteSpace(queried.Diagnostic)
+            ? diagnostic : queried.Diagnostic + "；" + diagnostic;
 
     private sealed record StatuslineQuota(AccountSnapshot? Account, RateLimitWindow? Primary,
         RateLimitWindow? Secondary, DateTimeOffset? MeasuredAt, string Diagnostic)

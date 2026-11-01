@@ -20,6 +20,7 @@ public partial class MainWindow
     [
         "codexHome",
         "codexExecutable",
+        "claudeDesktopUsageTranscript",
         "defaultWorkspace",
         "theme",
         "showSubagents",

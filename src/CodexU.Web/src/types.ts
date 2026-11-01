@@ -84,7 +84,7 @@ export interface RateLimitWindow {
   windowDurationMinutes?: number
   resetsAt?: string | null
   remainingPercent: number
-  /** When the figure was measured, where the source can say. */
+  /** Source observation time; for get_usage this is the native result event, not an exact server measurement. */
   measuredAt?: string | null
   source?: string | null
 }
@@ -265,6 +265,7 @@ export interface IndexStatus {
 export interface AppSettings {
   codexHome?: string
   codexExecutable?: string
+  claudeDesktopUsageTranscript?: string | null
   defaultWorkspace?: string
   theme: 'dark' | 'light' | 'system'
   showSubagents: boolean

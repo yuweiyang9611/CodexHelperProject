@@ -6,8 +6,10 @@ public sealed class QuotaNotificationProjectorTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
-    [Fact]
-    public void Project_DesktopHistoryDoesNotAnnounceOrChangeLaterStatuslineAlerts()
+    [Theory]
+    [InlineData("claude-desktop-history")]
+    [InlineData("claude-desktop-get-usage")]
+    public void Project_UnscopedDesktopDoesNotAnnounceOrChangeLaterStatuslineAlerts(string source)
     {
         var identities = new RecordingWindowIdentityProvider("statusline-window");
         var projector = new QuotaNotificationProjector(() => Now, identities);
@@ -15,10 +17,12 @@ public sealed class QuotaNotificationProjectorTests
         var history = Snapshot(AgentRuntime.ClaudeCode,
             primary: Window(remainingPercent: 5) with
             {
-                Source = "claude-desktop-history",
-                MeasuredAt = Now.AddMinutes(-20)
+                Source = source,
+                MeasuredAt = Now.AddMinutes(-5),
+                ResetsAt = source == "claude-desktop-get-usage" ? Now.AddHours(2) : null
             },
-            secondary: new RateLimitWindow(95, 10080, null, Now.AddMinutes(-20), "claude-desktop-history"));
+            secondary: new RateLimitWindow(95, 10080,
+                source == "claude-desktop-get-usage" ? Now.AddDays(2) : null, Now.AddMinutes(-5), source));
 
         Assert.Empty(projector.Project(history, settings));
         Assert.Empty(identities.Observations);
@@ -52,12 +56,15 @@ public sealed class QuotaNotificationProjectorTests
         Assert.StartsWith("quota-below-threshold:", Assert.Single(projector.Project(nextLow, settings)).Id);
     }
 
-    [Fact]
-    public void Project_DesktopHistoryPreservesMonthlyAmountAndRateCoverageNotifications()
+    [Theory]
+    [InlineData("claude-desktop-history")]
+    [InlineData("claude-desktop-get-usage")]
+    public void Project_UnscopedDesktopPreservesMonthlyAmountAndRateCoverageNotifications(string source)
     {
         var month = new TokenPeriod(1_000, TokenBreakdown.Zero, 1_000, 500, [], DataQuality.Partial);
         var snapshot = Snapshot(AgentRuntime.ClaudeCode,
-            primary: new RateLimitWindow(95, 300, null, Now.AddMinutes(-20), "claude-desktop-history"),
+            primary: new RateLimitWindow(95, 300,
+                source == "claude-desktop-get-usage" ? Now.AddHours(2) : null, Now.AddMinutes(-5), source),
             month: month) with
         {
             DailyUsage = [new(DateOnly.FromDateTime(Now.Date), 1_000, 1_000, DataQuality.Partial,
