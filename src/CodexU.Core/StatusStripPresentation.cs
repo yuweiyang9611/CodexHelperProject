@@ -216,6 +216,11 @@ public sealed class StatusStripPresenter
             statusToolTip = $"{statusText} 当前继续显示上次成功快照。";
         }
 
+        if (_snapshot.PrimaryQuota?.Source == "claude-desktop-history")
+            statusToolTip += " " + primary.AccessibleText;
+        if (_snapshot.SecondaryQuota?.Source == "claude-desktop-history")
+            statusToolTip += " " + secondary.AccessibleText;
+
         return new StatusStripPresentation(
             true,
             _settings.StatusStripShowTodayTokens,
@@ -336,6 +341,14 @@ public sealed class StatusStripPresenter
 
         var value = Math.Clamp(rawValue, 0d, 100d);
         var text = $"{Math.Round(value)}%";
+        if (quota.Source == "claude-desktop-history")
+        {
+            var sampledAt = quota.MeasuredAt is { } measuredAt
+                ? $"采样于 {measuredAt.ToLocalTime():M/d HH:mm}"
+                : "采样时间未知";
+            var detail = $"Claude Desktop 历史采样，{sampledAt}，非实时；重置时间不可用";
+            return new StatusStripQuotaPresentation($"≈{text}", value, $"{label} {text}，{detail}", detail);
+        }
         var resetText = quota.ResetsAt is { } resetsAt
             ? $"{resetsAt.ToLocalTime():M/d HH:mm} 刷新"
             : "刷新时间未知";

@@ -259,6 +259,29 @@ public sealed partial class ClaudeCodeUsageReader(
     private async Task<(AccountSnapshot? Account, RateLimitWindow? Primary, RateLimitWindow? Secondary, string Diagnostic)>
         ReadQuotaSnapshotAsync(CancellationToken cancellationToken)
     {
+        var now = Clock.GetUtcNow();
+        var statusline = await ReadStatuslineQuotaAsync(now, cancellationToken);
+        var desktop = await new ClaudeDesktopQuotaReader(paths.ClaudeDesktopDataDirectory).ReadAsync(now, cancellationToken);
+        if (desktop.HasQuota && (!statusline.HasQuota || desktop.MeasuredAt > statusline.MeasuredAt))
+        {
+            // These sources do not share an authenticated account identity. Choose
+            // one whole measurement, never fill a missing window or plan from the
+            // other source (a missing 5h window can be intentional on some plans).
+            return (null, desktop.Primary, desktop.Secondary, desktop.Diagnostic);
+        }
+        var diagnostic = string.IsNullOrEmpty(desktop.Diagnostic)
+            ? statusline.Diagnostic : statusline.Diagnostic + "；" + desktop.Diagnostic;
+        return (statusline.Account, statusline.Primary, statusline.Secondary, diagnostic);
+    }
+
+    private sealed record StatuslineQuota(AccountSnapshot? Account, RateLimitWindow? Primary,
+        RateLimitWindow? Secondary, DateTimeOffset? MeasuredAt, string Diagnostic)
+    {
+        internal bool HasQuota => Primary is not null || Secondary is not null;
+    }
+
+    private async Task<StatuslineQuota> ReadStatuslineQuotaAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
         var dataDirectory = applicationDataDirectory
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU");
         var candidates = new[]
@@ -266,55 +289,56 @@ public sealed partial class ClaudeCodeUsageReader(
             Path.Combine(dataDirectory, "claude-code", "statusline-snapshot.json"),
             Path.Combine(paths.ClaudeDirectory, "statusline-snapshot.json")
         };
-        var path = candidates.FirstOrDefault(File.Exists);
-        if (path is null)
+        StatuslineQuota? best = null;
+        var diagnostics = new List<string>();
+        foreach (var path in candidates.Where(File.Exists))
         {
-            // Claude Code keeps no local record of remaining quota — transcripts carry
-            // token counts but no allowance, and a 429 only shows up after the limit is
-            // already hit. The one documented machine-readable source is the JSON piped
-            // to a configured statusLine command, which tools/claude-statusline-snapshot.mjs
-            // turns into this file. Point at that rather than calling the file optional.
-            return (
-                null,
-                null,
-                null,
-                "Claude 额度：尚未接入额度数据。Claude Code 不在本机记录额度余量，需把 "
-                + "tools/claude-statusline-snapshot.mjs 配置为 statusLine 命令，由它写入 "
-                + $"{candidates[0]}。注意额度只对 Claude.ai 订阅账号可见，且要等会话内第一次 API 响应之后才出现。"
-                + "未接入时额度显示为 --。");
+            try
+            {
+                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) throw new JsonException();
+                var first = ReadQuota(root, "primary") ?? ReadQuota(root, "fiveHour") ?? ReadQuota(root, "five_hour");
+                var second = ReadQuota(root, "secondary") ?? ReadQuota(root, "sevenDay") ?? ReadQuota(root, "seven_day");
+                var classified = RateLimitWindowClassifier.Classify(first, second);
+                var plan = ReadString(root, "planType") ?? ReadString(root, "plan");
+                var account = new AccountSnapshot("claude-code", plan, null, true, AgentRuntime.ClaudeCode);
+                var sampledAt = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+                // Prefer the collector's timestamp: copying an old snapshot must
+                // not make it newer than a genuinely recent Desktop measurement.
+                if (root.TryGetProperty("capturedAt", out var capturedAt))
+                {
+                    if (capturedAt.ValueKind != JsonValueKind.String
+                        || !DateTimeOffset.TryParse(capturedAt.GetString(), out sampledAt)) throw new JsonException();
+                }
+                if (sampledAt > now.AddMinutes(5))
+                {
+                    diagnostics.Add("Claude statusLine 额度：采样时间在未来，已忽略");
+                    continue;
+                }
+                var primary = QuotaFreshness.KeepCurrent(classified.FiveHour, sampledAt, now) is { } five
+                    ? five with { MeasuredAt = sampledAt } : null;
+                var secondary = QuotaFreshness.KeepCurrent(classified.SevenDay, sampledAt, now) is { } seven
+                    ? seven with { MeasuredAt = sampledAt } : null;
+                var staleCount = (classified.FiveHour is not null && primary is null ? 1 : 0)
+                    + (classified.SevenDay is not null && secondary is null ? 1 : 0);
+                var diagnostic = "Claude statusLine 额度：已读取快照"
+                    + (staleCount > 0 ? $"；已忽略 {staleCount} 个过期额度窗口" : string.Empty);
+                var candidate = new StatuslineQuota(account, primary, secondary, sampledAt, diagnostic);
+                if (best is null || candidate.HasQuota && !best.HasQuota
+                    || candidate.HasQuota == best.HasQuota && candidate.MeasuredAt > best.MeasuredAt) best = candidate;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            {
+                diagnostics.Add("Claude statusLine 额度：快照无法读取，继续检查其他可用来源");
+            }
         }
-
-        try
-        {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var root = document.RootElement;
-            var first = ReadQuota(root, "primary") ?? ReadQuota(root, "fiveHour") ?? ReadQuota(root, "five_hour");
-            var second = ReadQuota(root, "secondary") ?? ReadQuota(root, "sevenDay") ?? ReadQuota(root, "seven_day");
-            var classified = RateLimitWindowClassifier.Classify(first, second);
-            var plan = ReadString(root, "planType") ?? ReadString(root, "plan");
-            var account = new AccountSnapshot("claude-code", plan, null, true, AgentRuntime.ClaudeCode);
-            var sampledAt = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
-            var now = DateTimeOffset.UtcNow;
-            // The snapshot is written by Claude Code's statusLine command, so its write
-            // time is when the figures were true — not when this refresh read them.
-            var primary = QuotaFreshness.KeepCurrent(classified.FiveHour, sampledAt, now) is { } five
-                ? five with { MeasuredAt = sampledAt }
-                : null;
-            var secondary = QuotaFreshness.KeepCurrent(classified.SevenDay, sampledAt, now) is { } seven
-                ? seven with { MeasuredAt = sampledAt }
-                : null;
-            var staleCount = (classified.FiveHour is not null && primary is null ? 1 : 0)
-                + (classified.SevenDay is not null && secondary is null ? 1 : 0);
-            var freshnessDiagnostic = staleCount > 0
-                ? $"；已忽略 {staleCount} 个过期额度窗口"
-                : string.Empty;
-            return (account, primary, secondary, $"Claude 额度：已读取 {path}{freshnessDiagnostic}");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
-        {
-            return (null, null, null, $"Claude 额度 snapshot 读取失败：{exception.Message}");
-        }
+        if (best is not null)
+            return best with { Diagnostic = string.Join("；", diagnostics.Prepend(best.Diagnostic)) };
+        return new(null, null, null, null, diagnostics.Count > 0 ? string.Join("；", diagnostics)
+            : "Claude statusLine：尚未接入额度数据。终端 Claude Code 可配置 tools/claude-statusline-snapshot.mjs；"
+            + "Desktop Code 的可用历史采样会自动读取。没有可用来源时显示 --。");
     }
 
     private static RateLimitWindow? ReadQuota(JsonElement root, string name)
@@ -330,7 +354,7 @@ public sealed partial class ClaudeCodeUsageReader(
             var remaining = ReadDouble(value, "remainingPercent");
             used = remaining is null ? null : 100d - remaining;
         }
-        if (used is null) return null;
+        if (used is null || !double.IsFinite(used.Value)) return null;
         var rawDuration = ReadLong(value, "windowDurationMinutes");
         int? duration = rawDuration > 0 && rawDuration <= int.MaxValue ? (int)rawDuration : null;
         DateTimeOffset? reset = DateTimeOffset.TryParse(ReadString(value, "resetsAt"), out var parsed) ? parsed : null;

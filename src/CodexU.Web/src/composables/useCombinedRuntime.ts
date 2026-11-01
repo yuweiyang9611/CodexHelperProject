@@ -1,6 +1,8 @@
 import { computed, type ComputedRef, type Ref } from 'vue'
+import { isDesktopQuota } from '../quotaPresentation'
 import type {
   AgentRuntime,
+  AppSettings,
   CombinedSnapshots,
   DashboardSnapshot,
   DataQuality,
@@ -128,28 +130,33 @@ export interface CombinedSubscription {
   isComplete: boolean
   /** Runtimes that have usage but no resolvable monthly price. */
   unknownRuntimes: AgentRuntime[]
-  perRuntime: { runtime: AgentRuntime; amount: number | null }[]
+  perRuntime: { runtime: AgentRuntime; amount: number | null; source: 'auto' | 'manual' | 'unknown' }[]
 }
 
+type SubscriptionSettings = Partial<Pick<AppSettings,
+  'codexAutoDetectSubscriptionAmount' | 'claudeAutoDetectSubscriptionAmount'
+  | 'codexMonthlySubscriptionAmount' | 'claudeMonthlySubscriptionAmount'>>
+
 /**
- * Adds up what the user actually pays across the runtimes in play.
- *
- * Only reads each runtime's own `suggestedMonthlySubscriptionAmount`, derived from that
- * vendor's price table. It does not fall back to the manual per-runtime settings: those
- * are figures the user typed, and folding a typed guess into a headline total that also
- * drives a payback multiple would present an assumption with the same authority as a
- * detected price. One unresolvable runtime makes the whole total unknown rather than
- * low — an understated total would flatter the payback ratio, which is the direction a
- * reader is least likely to question.
+ * Combines monthly estimates while preserving whether each amount was inferred or
+ * explicitly selected by the user. Automatic mode never falls back to a manual
+ * default, and a failed runtime remains unknown regardless of settings.
  */
-export function combineSubscription(entries: RuntimeEntry[]): CombinedSubscription {
+export function combineSubscription(entries: RuntimeEntry[], settings?: SubscriptionSettings | null): CombinedSubscription {
   const inPlay = entries.filter(entry => entry.contribution !== 'absent')
-  const perRuntime = inPlay.map(entry => ({
-    runtime: entry.runtime,
-    amount: entry.contribution === 'failed'
-      ? null
-      : entry.snapshot.account?.suggestedMonthlySubscriptionAmount ?? null,
-  }))
+  const perRuntime = inPlay.map((entry): CombinedSubscription['perRuntime'][number] => {
+    if (entry.contribution === 'failed') return { runtime: entry.runtime, amount: null, source: 'unknown' }
+    const manual = (entry.runtime === 'claudeCode'
+      ? settings?.claudeAutoDetectSubscriptionAmount
+      : settings?.codexAutoDetectSubscriptionAmount) === false
+    const amount = manual
+      ? entry.runtime === 'claudeCode' ? settings?.claudeMonthlySubscriptionAmount : settings?.codexMonthlySubscriptionAmount
+      : entry.snapshot.account?.suggestedMonthlySubscriptionAmount
+    if (amount == null || !Number.isFinite(amount) || amount < 0) {
+      return { runtime: entry.runtime, amount: null, source: 'unknown' }
+    }
+    return { runtime: entry.runtime, amount, source: manual ? 'manual' : 'auto' }
+  })
   const unknownRuntimes = perRuntime.filter(row => row.amount == null).map(row => row.runtime)
   const isComplete = inPlay.length > 0 && unknownRuntimes.length === 0
 
@@ -276,7 +283,7 @@ export function earliestExhaustion(entries: RuntimeEntry[]): EarliestExhaustion 
       { runtime: entry.runtime, windowLabel: '5 小时', quota: entry.snapshot.primaryQuota, forecast: entry.snapshot.primaryForecast },
       { runtime: entry.runtime, windowLabel: '7 天', quota: entry.snapshot.secondaryQuota, forecast: entry.snapshot.secondaryForecast },
     ])
-    .filter(row => row.quota != null)
+    .filter(row => row.quota != null && !isDesktopQuota(row.quota))
 
   const candidates = windows.filter(row => row.forecast?.exhaustsBeforeReset)
   if (candidates.length === 0) return null
@@ -332,7 +339,7 @@ const PERIOD_KEYS = ['today', 'sevenDays', 'month'] as const
  * the other produces a headline number whose two halves reach past and fall short of
  * the same machine. Lifetime is shown per runtime instead.
  */
-export function summarize(combined: CombinedSnapshots): CombinedRuntimeSummary {
+export function summarize(combined: CombinedSnapshots, settings?: SubscriptionSettings | null): CombinedRuntimeSummary {
   const entries = toEntries(combined)
   const periods = Object.fromEntries(
     PERIOD_KEYS.map(key => [
@@ -348,7 +355,7 @@ export function summarize(combined: CombinedSnapshots): CombinedRuntimeSummary {
   return {
     entries,
     periods,
-    subscription: combineSubscription(entries),
+    subscription: combineSubscription(entries, settings),
     projects: mergeProjects(entries),
     earliest: earliestExhaustion(entries),
     diagnostics: combinedDiagnostics(entries),
@@ -359,6 +366,7 @@ export function summarize(combined: CombinedSnapshots): CombinedRuntimeSummary {
 
 export function useCombinedRuntime(
   combined: Ref<CombinedSnapshots | null> | ComputedRef<CombinedSnapshots | null>,
+  settings?: Ref<SubscriptionSettings | null> | ComputedRef<SubscriptionSettings | null>,
 ): ComputedRef<CombinedRuntimeSummary | null> {
-  return computed(() => (combined.value ? summarize(combined.value) : null))
+  return computed(() => (combined.value ? summarize(combined.value, settings?.value) : null))
 }

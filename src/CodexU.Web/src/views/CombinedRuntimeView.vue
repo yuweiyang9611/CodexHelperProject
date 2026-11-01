@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import QuotaRing from '../components/QuotaRing.vue'
+import ClaudeDataNotice from '../components/ClaudeDataNotice.vue'
 import { compactNumber, currencyAmount, exhaustionTime, qualityLabel, relativeTime } from '../format'
 import { RUNTIME_LABELS, useCombinedRuntime } from '../composables/useCombinedRuntime'
 import { useDashboardStore } from '../stores/dashboard'
@@ -8,7 +9,8 @@ import type { AgentRuntime } from '../types'
 
 const store = useDashboardStore()
 const combined = computed(() => store.combined)
-const summary = useCombinedRuntime(combined)
+const summary = useCombinedRuntime(combined, computed(() => store.settings))
+const hasManualSubscription = computed(() => summary.value?.subscription.perRuntime.some(row => row.source === 'manual') ?? false)
 
 // Lazy: the two reads are expensive and most sessions never open this tab. The data
 // lives in the store, so switching away and back does not pay for them again.
@@ -64,6 +66,12 @@ const paybackSuppressedReason = computed(() => {
 function runtimeLabel(runtime: AgentRuntime) {
   return RUNTIME_LABELS[runtime]
 }
+
+function subscriptionText(runtime: AgentRuntime) {
+  const subscription = summary.value?.subscription.perRuntime.find(row => row.runtime === runtime)
+  if (subscription?.amount == null) return '无法推算'
+  return `${currencyAmount(subscription.amount)} · ${subscription.source === 'manual' ? '手动' : '自动估算'}`
+}
 </script>
 
 <template>
@@ -109,15 +117,15 @@ function runtimeLabel(runtime: AgentRuntime) {
             />
           </div>
 
+          <ClaudeDataNotice :snapshot="entry.snapshot" />
+
           <dl class="combined-runtime-facts">
             <div><dt>本月本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.month.tokens) }}</dd></div>
             <div><dt>本机原始 token API 估算</dt><dd>{{ money(entry.snapshot.tokens.month.creditsUsed) }}</dd></div>
             <div><dt>累计本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.lifetime.tokens) }}</dd></div>
             <div>
-              <dt>订阅月费</dt>
-              <dd>{{ entry.snapshot.account?.suggestedMonthlySubscriptionAmount != null
-                ? currencyAmount(entry.snapshot.account.suggestedMonthlySubscriptionAmount)
-                : '无法推算' }}</dd>
+              <dt>订阅月费估算</dt>
+              <dd>{{ subscriptionText(entry.runtime) }}</dd>
             </div>
             <div><dt>统计精度</dt><dd>{{ qualityLabel(entry.snapshot.tokens.month.quality) }}</dd></div>
           </dl>
@@ -151,12 +159,12 @@ function runtimeLabel(runtime: AgentRuntime) {
             <span class="combined-metric-sub">基于本机原始 Token，按 API 列表价折算，不是账单金额</span>
           </div>
           <div class="combined-metric">
-            <span class="combined-metric-label">订阅月费合计</span>
+            <span class="combined-metric-label">订阅月费合计{{ hasManualSubscription ? ' · 含手动值' : '' }}</span>
             <strong>{{ summary.subscription.isComplete ? currencyAmount(summary.subscription.amount) : '无法推算' }}</strong>
             <span class="combined-metric-sub">
               {{ summary.subscription.perRuntime
-                .map(row => `${runtimeLabel(row.runtime)} ${row.amount != null ? currencyAmount(row.amount) : '未知'}`)
-                .join(' · ') }}
+                .map(row => `${runtimeLabel(row.runtime)} ${subscriptionText(row.runtime)}`)
+                .join('；') }}
             </span>
           </div>
           <div v-if="payback" class="combined-metric">
@@ -165,6 +173,7 @@ function runtimeLabel(runtime: AgentRuntime) {
             <span class="combined-metric-sub">净等价 {{ currencyAmount(payback.net, 'US$', false, true) }}</span>
           </div>
         </div>
+        <p class="combined-note">月费按标注来源估算，不代表实际账单。</p>
         <p v-if="paybackSuppressedReason" class="combined-note">{{ paybackSuppressedReason }}</p>
       </article>
 

@@ -74,8 +74,8 @@ public sealed class DashboardService(
                 cancellationToken);
             return await WithForecastsAsync(
                 ToDashboard(runtime, claude),
-                new QuotaReading(claude.PrimaryQuota, QuotaForecastCollector.StatuslineSource),
-                new QuotaReading(claude.SecondaryQuota, QuotaForecastCollector.StatuslineSource),
+                new QuotaReading(claude.PrimaryQuota, claude.PrimaryQuota?.Source ?? QuotaForecastCollector.StatuslineSource),
+                new QuotaReading(claude.SecondaryQuota, claude.SecondaryQuota?.Source ?? QuotaForecastCollector.StatuslineSource),
                 cancellationToken);
         }
 

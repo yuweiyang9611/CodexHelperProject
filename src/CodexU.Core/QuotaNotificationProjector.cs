@@ -43,20 +43,25 @@ public sealed class QuotaNotificationProjector
 
         lock (_gate)
         {
+            // Desktop history is a dated observation without an authenticated
+            // account or window identity. Keep it out of alerts and their state,
+            // while allowing the snapshot's independent amount/rate alerts below.
+            var primaryQuota = QuotaForAlerts(snapshot.PrimaryQuota);
+            var secondaryQuota = QuotaForAlerts(snapshot.SecondaryQuota);
             // A rollover re-arms that window's alerts, so both windows must be
             // observed even while presentation is disabled. Otherwise a whole
             // rollover can pass unnoticed and an old fired key can silence the
             // first alert after notifications are turned back on.
-            _quotaAlerts.ObserveWindow(snapshot.Runtime, "5 小时", snapshot.PrimaryQuota);
-            _quotaAlerts.ObserveWindow(snapshot.Runtime, "7 天", snapshot.SecondaryQuota);
+            _quotaAlerts.ObserveWindow(snapshot.Runtime, "5 小时", primaryQuota);
+            _quotaAlerts.ObserveWindow(snapshot.Runtime, "7 天", secondaryQuota);
             var primaryWindowKey = ObserveWindowIdentity(
                 snapshot.Runtime,
                 "5 小时",
-                snapshot.PrimaryQuota);
+                primaryQuota);
             var secondaryWindowKey = ObserveWindowIdentity(
                 snapshot.Runtime,
                 "7 天",
-                snapshot.SecondaryQuota);
+                secondaryQuota);
 
             if (!settings.NotificationsEnabled)
             {
@@ -65,26 +70,26 @@ public sealed class QuotaNotificationProjector
 
             var notifications = new List<QuotaNotification>(7);
 
-            AddQuotaRefresh(notifications, snapshot.Runtime, snapshot.PrimaryQuota);
+            AddQuotaRefresh(notifications, snapshot.Runtime, primaryQuota);
             AddBelowThreshold(
                 notifications,
                 snapshot.Runtime,
                 "5 小时",
-                snapshot.PrimaryQuota,
+                primaryQuota,
                 primaryWindowKey,
                 settings.FiveHourAlertPercent);
             AddBelowThreshold(
                 notifications,
                 snapshot.Runtime,
                 "7 天",
-                snapshot.SecondaryQuota,
+                secondaryQuota,
                 secondaryWindowKey,
                 settings.SevenDayAlertPercent);
             AddForecast(
                 notifications,
                 snapshot.Runtime,
                 "5 小时",
-                snapshot.PrimaryQuota,
+                primaryQuota,
                 primaryWindowKey,
                 snapshot.PrimaryForecast,
                 settings.FiveHourAlertPercent,
@@ -94,7 +99,7 @@ public sealed class QuotaNotificationProjector
                 notifications,
                 snapshot.Runtime,
                 "7 天",
-                snapshot.SecondaryQuota,
+                secondaryQuota,
                 secondaryWindowKey,
                 snapshot.SecondaryForecast,
                 settings.SevenDayAlertPercent,
@@ -106,6 +111,9 @@ public sealed class QuotaNotificationProjector
             return notifications;
         }
     }
+
+    private static RateLimitWindow? QuotaForAlerts(RateLimitWindow? quota) =>
+        quota?.Source == "claude-desktop-history" ? null : quota;
 
     private void AddQuotaRefresh(
         ICollection<QuotaNotification> notifications,

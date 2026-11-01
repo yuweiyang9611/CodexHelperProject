@@ -106,6 +106,30 @@ public sealed class DashboardServiceTests
         Assert.Equal(123, result.Tokens.Lifetime.Tokens);
     }
 
+    [Fact]
+    public async Task LoadAsync_PreservesDesktopSourceWithoutForecastingUnknownReset()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "codexu-desktop-source-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var empty = DashboardSnapshot.Empty(AgentRuntime.ClaudeCode);
+            var local = CreateLocalSnapshot(empty.Tokens.Lifetime) with
+            {
+                PrimaryQuota = new(29, 300, null, DateTimeOffset.UtcNow, "claude-desktop-history")
+            };
+            var store = new QuotaSampleStore(root);
+            var service = new DashboardService(new ThrowingAppServerClient(), new StaticLocalReader(local),
+                new StaticLocalReader(local), new QuotaForecastCollector(store));
+            var result = await service.LoadAsync(AgentRuntime.ClaudeCode);
+            Assert.Equal("claude-desktop-history", result.PrimaryQuota!.Source);
+            Assert.Null(result.PrimaryQuota.ResetsAt);
+            Assert.Null(result.PrimaryForecast);
+            Assert.Null(result.Account);
+            Assert.Empty(await store.LoadAsync());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
     private static LocalUsageSnapshot CreateLocalSnapshot(
         TokenPeriod period,
         AccountSnapshot? account = null) => new(
