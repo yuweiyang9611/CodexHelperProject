@@ -16,7 +16,9 @@ export function demoCombined(codex: DashboardSnapshot, claude: DashboardSnapshot
   const subscription = unknown.length ? null : prices.reduce((sum, p) => sum + (p.subscriptionAmount ?? 0), 0)
   const makeProject = (runtime: AgentRuntime, first: ProjectUsage, second?: ProjectUsage) => ({
     id: first.id, name: first.name, branch: first.branch, lastActiveAt: first.lastActiveAt,
-    tokens: first.tokens + (second?.tokens ?? 0), amount: dollars(first.creditsUsed! + (second?.creditsUsed ?? 0)),
+    tokens: first.tokens + (second?.tokens ?? 0),
+    amount: first.creditsUsed == null ? null : dollars(first.creditsUsed + (second?.creditsUsed ?? 0)),
+    costStatus: first.costStatus ?? 'unknown',
     threadCounts: second ? { codex: first.threadCount, claudeCode: second.threadCount } : { [runtime]: first.threadCount }, quality: first.quality,
     costIsEstimated: Boolean(first.costIsEstimated), runtimes: second ? ['codex', 'claudeCode'] as AgentRuntime[] : [runtime],
   })

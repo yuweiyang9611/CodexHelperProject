@@ -314,8 +314,9 @@ public sealed class ApplicationSession : IDisposable
             while (true)
             {
                 var service = _dashboardService;
-                var result = await service.QueryUsageAsync(request, timeout.Token);
-                if (ReferenceEquals(service, _dashboardService)) return result;
+                var conversion = _settings.AmountPerThousandCredits;
+                var result = await service.QueryUsageAsync(request with { AmountPerThousandCredits = conversion }, timeout.Token);
+                if (ReferenceEquals(service, _dashboardService) && conversion == _settings.AmountPerThousandCredits) return result;
             }
         }
         finally { _refreshGate.Release(); }
@@ -689,7 +690,7 @@ public sealed class ApplicationSession : IDisposable
             };
         }
 
-        return snapshot with { MonthlyValue = MonthlyValue.Calculate(snapshot, _settings) };
+        return snapshot.WithValuation(_settings);
     }
 
     private void PublishSnapshotIfCurrent(AgentRuntime runtime, SnapshotLoadResult loaded)

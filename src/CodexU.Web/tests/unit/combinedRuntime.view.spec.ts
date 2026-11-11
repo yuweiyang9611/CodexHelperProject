@@ -31,6 +31,24 @@ afterEach(() => {
 })
 
 describe('combined subscription amounts', () => {
+  it('shows zero, lower-bound and unknown costs in merged project rows', () => {
+    const store = useDashboardStore(pinia)
+    const result = summary()
+    const base = { name: 'project', tokens: 10, runtimes: ['codex' as const], costIsEstimated: false,
+      threadCounts: { codex: 1 }, quality: 'detailed' as const }
+    result.projects = [
+      { ...base, id: 'priced', amount: 0, costStatus: 'known' },
+      { ...base, id: 'partial', amount: 1.5, costStatus: 'partial' },
+      { ...base, id: 'unknown', costStatus: 'unknown' },
+    ]
+    store.combined = { summary: result, codex: runtimeRead(), claudeCode: runtimeRead({ snapshot: snapshot({ runtime: 'claudeCode' }) }) }
+    const container = document.createElement('div')
+    app = createApp(CombinedRuntimeView)
+    app.use(pinia)
+    app.mount(container)
+    expect([...container.querySelectorAll('.combined-table tbody tr')].map(r => r.children[3]?.textContent?.trim()))
+      .toEqual(['US$0.00', '≥ US$1.50', '成本不可得'])
+  })
   it.each([
     ['claude-desktop-history', '本地 Claude Desktop 历史仅提供额度百分比', '30 分钟'],
     ['claude-desktop-get-usage', 'Desktop 查询快照', '15 分钟'],

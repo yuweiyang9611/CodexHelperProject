@@ -173,7 +173,7 @@ if (process.argv.includes('--desktop-widget')) {
 
 function updateSurfaces(data: SurfaceData): void {
   for (const key of ['presentation', 'theme', 'statusStripEnabled', 'statusStripPositionLocked',
-    'statusStripShowTodayTokens', 'statusStripQuotaMode', 'desktopMode', 'todayAmount', 'layout', 'refreshing', 'refreshError']) {
+    'statusStripShowTodayTokens', 'statusStripQuotaMode', 'desktopMode', 'todayValuation', 'layout', 'refreshing', 'refreshError']) {
     if (key in data) surfaceSettings[key] = data[key];
   }
   statusStrip?.update(surfaceSettings);

@@ -572,7 +572,7 @@ public partial class MainWindow : Window
             };
         }
 
-        return snapshot with { MonthlyValue = MonthlyValue.Calculate(snapshot, _settings) };
+        return snapshot.WithValuation(_settings);
     }
 
     private void PublishSnapshotIfCurrent(AgentRuntime runtime, DashboardSnapshot snapshot)

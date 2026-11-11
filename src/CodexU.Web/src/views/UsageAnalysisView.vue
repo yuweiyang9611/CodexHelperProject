@@ -11,15 +11,14 @@ import type { DashboardSnapshot, UsageAnalysisGroup, UsageAnalysisTotals } from 
 const props = defineProps<{ state: UsageAnalysisState, snapshot: DashboardSnapshot }>()
 const store = useDashboardStore()
 const data = computed(() => props.state.result.value)
-const conversion = computed(() => store.settings?.amountPerThousandCredits ?? 40)
 const metric = computed(() => props.state.metric.value)
-const value = (totals: UsageAnalysisTotals) => analysisValue(totals, metric.value, conversion.value)
-const amount = (credits: number | null) => credits == null ? '金额未知' : currencyAmount(credits / 1000 * conversion.value)
-const magnitude = (totals: UsageAnalysisTotals) => metric.value === 'tokens' ? totals.tokens : totals.creditsUsed ?? 0
+const value = (totals: UsageAnalysisTotals) => analysisValue(totals, metric.value)
+const amount = (usd?: number | null) => usd == null ? '金额未知' : currencyAmount(usd)
+const magnitude = (totals: UsageAnalysisTotals) => metric.value === 'tokens' ? totals.tokens : totals.valuation?.knownAmount ?? 0
 const maximum = computed(() => Math.max(1, ...(data.value?.days.map(day => magnitude(day.totals)) ?? [])))
 const sorted = (rows: UsageAnalysisGroup[]) => [...rows].sort((a, b) => magnitude(b.totals) - magnitude(a.totals))
 const share = (totals: UsageAnalysisTotals) => {
-  if (metric.value === 'amount' && totals.creditsUsed == null) return '未知'
+  if (metric.value === 'amount' && totals.valuation?.knownAmount == null) return '未知'
   const total = data.value ? magnitude(data.value.totals) : 0
   return total > 0 ? `${(magnitude(totals) / total * 100).toFixed(1)}%` : '—'
 }
@@ -57,7 +56,7 @@ async function exportSelection(format: 'json' | 'csv') {
         <div class="daily-scroll">
           <div class="daily-bars" :style="{ minWidth: `${Math.max(0, data.days.length * 14)}px` }">
             <button v-for="day in data.days" :key="day.date" type="button" :aria-label="`${day.date}，${value(day.totals)}${metric === 'tokens' ? ' Token' : ''}，筛选这一天`" :title="`${day.date} · ${value(day.totals)}`" @click="state.selectDate(day.date)">
-              <span :style="{ height: `${magnitude(day.totals) / maximum * 100}%` }" /><i v-if="metric === 'amount' && day.totals.creditsUsed == null && day.totals.tokens" aria-hidden="true">?</i>
+              <span :style="{ height: `${magnitude(day.totals) / maximum * 100}%` }" /><i v-if="metric === 'amount' && day.totals.valuation?.knownAmount == null && day.totals.tokens" aria-hidden="true">?</i>
             </button>
           </div>
         </div>
@@ -85,14 +84,14 @@ async function exportSelection(format: 'json' | 'csv') {
             <p><strong>{{ value(member.totals) }}</strong></p>
             <TokenDetails :totals="member.totals" :runtime="snapshot.runtime" />
             <div class="contribution-table"><table><caption class="sr-only">每日模型贡献及适用费率</caption><thead><tr><th scope="col">日期 / 模型</th><th scope="col">Token</th><th scope="col">API 等效金额</th><th scope="col">适用费率</th></tr></thead>
-              <tbody><tr v-for="(row, index) in member.contributions" :key="index"><th scope="row">{{ row.date }}<br />{{ row.model === 'unknown' ? '模型未知' : row.model }}<small>{{ featureLabel(row.feature) }} · {{ sourceLabel(row.source) }}</small></th><td>{{ compactNumber(row.tokens) }}</td><td>{{ amount(row.creditsUsed) }}<small v-if="row.explanation">{{ row.explanation }}</small></td><td><template v-if="row.rate"><span>{{ row.rate.catalogVersion || '自定义' }} · {{ row.rate.effectiveFrom || '基础费率' }} · {{ row.rate.source || '费率目录' }}</span><small>每百万 Token：输入 {{ amount(row.rate.inputCreditsPerMillion) }} / 缓存读取 {{ amount(row.rate.cachedInputCreditsPerMillion) }} / 输出 {{ amount(row.rate.outputCreditsPerMillion) }}</small></template><template v-else>无可用费率</template></td></tr></tbody></table></div>
+              <tbody><tr v-for="(row, index) in member.contributions" :key="index"><th scope="row">{{ row.date }}<br />{{ row.model === 'unknown' ? '模型未知' : row.model }}<small>{{ featureLabel(row.feature) }} · {{ sourceLabel(row.source) }}</small></th><td>{{ compactNumber(row.tokens) }}</td><td>{{ amount(row.amount) }}<small v-if="row.explanation">{{ row.explanation }}</small></td><td><template v-if="row.rate"><span>{{ row.rate.catalogVersion || '自定义' }} · {{ row.rate.effectiveFrom || '基础费率' }} · {{ row.rate.source || '费率目录' }}</span><small>每百万 Token：输入 {{ amount(row.amountsPerMillion?.input) }} / 缓存读取 {{ amount(row.amountsPerMillion?.cachedInput) }} / 输出 {{ amount(row.amountsPerMillion?.output) }}</small></template><template v-else>无可用费率</template></td></tr></tbody></table></div>
           </article>
         </details>
         <p v-if="!data.sessions.length" class="analysis-note">此范围没有可归属的会话明细。</p>
         <div class="pagination"><button type="button" :disabled="data.page <= 1" @click="state.page.value--">上一页</button><span>第 {{ data.page }} / {{ Math.max(1, Math.ceil(data.sessionCount / data.pageSize)) }} 页 · {{ data.sessionCount }} 组</span><button type="button" :disabled="data.page * data.pageSize >= data.sessionCount" @click="state.page.value++">下一页</button></div>
       </section>
       <details v-if="data.unattributed.length" class="inner-card unknown-history"><summary>未归属历史用量 · {{ compactNumber(data.totals.unattributedTokens) }} Token</summary><p class="analysis-note">下列用量只有日汇总，无法还原真实会话；已确认的明细已保留分类，此处仅显示剩余差额。</p><div v-for="(row, index) in data.unattributed" :key="index" class="legacy-row"><strong>{{ row.date }} · {{ compactNumber(row.tokens) }} Token</strong><span>{{ row.explanation || '缺少可确认会话归属的原始日志。' }}</span></div></details>
-      <details v-if="data.legacyEstimates.length" class="inner-card"><summary>旧版金额估值（单独保留）</summary><p class="analysis-note">这些是旧日汇总采集的完整估值，与上方已重算明细可能重叠，不加入或重复相加到 API 等效金额。</p><div v-for="row in data.legacyEstimates" :key="row.date" class="legacy-row"><strong>{{ row.date }} · {{ amount(row.creditsUsed) }}</strong><span>{{ row.explanation }}</span></div></details>
+      <details v-if="data.legacyEstimates.length" class="inner-card"><summary>旧版金额估值（单独保留）</summary><p class="analysis-note">这些是旧日汇总采集的完整估值，与上方已重算明细可能重叠，不加入或重复相加到 API 等效金额。</p><div v-for="row in data.legacyEstimates" :key="row.date" class="legacy-row"><strong>{{ row.date }} · {{ amount(row.amount) }}</strong><span>{{ row.explanation }}</span></div></details>
       <details v-if="missingRates.length" class="inner-card"><summary>所选范围缺少适用费率</summary><p class="analysis-note">在设置中为这些模型补充相应日期的费率：{{ missingRates.join('；') }}。未知历史差额不触发补费率提示。</p></details>
       <details class="inner-card secondary-analysis"><summary>Skill 与工具调用（累计辅助分析）</summary><p class="analysis-note">这些调用次数缺少可靠日期归属，展示当前工具在{{ store.settings?.defaultWorkspace ? `设置工作区 ${store.settings.defaultWorkspace}` : '本机全部项目' }}内的累计统计，不随上方日期、模型和项目筛选变化，也不计入用量总量。</p><SkillUsageView :snapshot="snapshot" /><h3>工具调用</h3><div class="tool-counts"><span v-for="tool in snapshot.tools" :key="tool.id">{{ tool.name }} <strong>{{ tool.count }}</strong></span><p v-if="!snapshot.tools.length">暂无可确认的工具调用记录</p></div></details>
       <details v-if="data.diagnostics.length" class="inner-card"><summary>本次统计来源说明</summary><p v-for="message in data.diagnostics" :key="message" class="analysis-note">{{ message }}</p></details>

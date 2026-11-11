@@ -212,7 +212,11 @@ public sealed class SidecarBackend : IDisposable
             settings.DesktopMode,
             settings.StatusStripShowTodayTokens,
             settings.StatusStripQuotaMode,
-            todayAmount = (snapshot?.Tokens.Today.CreditsUsed ?? 0) * settings.AmountPerThousandCredits / 1000
+            // Surface updates are merged in Electron. Send an explicit unknown value
+            // when there is no reading for today, and revalue on a settings change.
+            todayValuation = snapshot is not null && snapshot.RefreshedAt.LocalDateTime.Date == DateTime.Today
+                ? UsageAmount.FromPeriod(snapshot.Tokens.Today, settings.AmountPerThousandCredits)
+                : new UsageAmount(null, false)
         });
     }
 

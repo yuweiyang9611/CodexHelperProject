@@ -184,6 +184,7 @@ public sealed class LocalDataManagementService(
                     scope,
                     filters,
                     appliedRates = analysis.AppliedRates ?? [],
+                    analysis.AmountPerThousandCredits,
                     runtime = analysis.Runtime == AgentRuntime.Codex ? "codex" : "claudeCode",
                     analysis.AvailableFrom,
                     analysis.AvailableTo,
@@ -193,7 +194,7 @@ public sealed class LocalDataManagementService(
                     features = analysis.Features.Select(feature => new { feature = feature.Id, feature.Totals }),
                     projects = analysis.Projects.Select(project => new { name = project.Label, project.Totals }),
                     analysis.LegacyEstimates,
-                    amounts = "creditsUsed 仅含当前可核算金额，缺失为 null；legacyEstimates 是包含已恢复明细的旧整日估值，仅供历史参考，不与明细金额相加。",
+                    amounts = "creditsUsed 为已核算点数，valuation.knownAmount 为按设置换算的美元金额，isLowerBound 表示该金额是下限。legacyEstimates 为旧整日估值，仅供历史参考，不与明细金额相加。",
                     privacy = "不包含对话正文、会话标题、会话标识、完整项目路径、账户邮箱或认证数据"
                 };
                 await using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);

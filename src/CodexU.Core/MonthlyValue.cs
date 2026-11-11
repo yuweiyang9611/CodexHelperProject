@@ -4,8 +4,15 @@ public enum SubscriptionSource { Unknown, Auto, Manual }
 
 public enum PaybackStatus { Unknown, Below, Reached }
 
+public sealed record MonthlyCostBreakdown(double InputAndWrites, double CachedInput, double Output, double CachedSavings);
+
+public sealed record ModelCostAmount(string Model, double Input, double CachedInput, double CacheWrite,
+    double Output, double CachedSavings, double Total, IReadOnlyList<RateVersionAmount> RateVersions);
+
+public sealed record RateVersionAmount(string CatalogVersion, string Source, DateOnly? EffectiveFrom, double Total);
+
 public sealed record MonthlyValue(
-    double KnownAmount,
+    double? KnownAmount,
     bool IsLowerBound,
     double? SubscriptionAmount,
     SubscriptionSource SubscriptionSource,
@@ -13,7 +20,9 @@ public sealed record MonthlyValue(
     double? PaybackMultiple,
     PaybackStatus PaybackStatus,
     double? ProjectedAmount,
-    double? CoveragePercent)
+    double? CoveragePercent,
+    MonthlyCostBreakdown? Breakdown,
+    IReadOnlyList<ModelCostAmount> Models)
 {
     public static MonthlyValue Calculate(DashboardSnapshot snapshot, AppSettings settings)
     {
@@ -25,13 +34,25 @@ public sealed record MonthlyValue(
         var source = subscription is null ? SubscriptionSource.Unknown
             : automatic ? SubscriptionSource.Auto : SubscriptionSource.Manual;
 
-        var known = UsageCredits.ToAmount(month.CreditsUsed, settings.AmountPerThousandCredits);
-        var partial = month.UnratedTokens > 0;
+        double Dollars(double credits) => UsageCredits.ToAmount(credits, settings.AmountPerThousandCredits);
+        var amount = UsageAmount.FromPeriod(month, settings.AmountPerThousandCredits);
+        var known = amount.KnownAmount;
+        var partial = amount.IsLowerBound;
         var available = month.Quality != DataQuality.Unavailable;
+        var models = month.CreditsByModel.Select(model => new ModelCostAmount(model.Model,
+            Dollars(model.InputCredits), Dollars(model.CachedInputCredits), Dollars(model.CacheWriteCredits),
+            Dollars(model.OutputCredits), Dollars(model.CachedSavingsCredits), Dollars(model.TotalCredits),
+            model.RateVersions.Select(version => new RateVersionAmount(version.CatalogVersion, version.Source,
+                version.EffectiveFrom, Dollars(version.TotalCredits))).ToArray())).ToArray();
+        // A zero-rate row is evidence for a zero cost. A month with only unpriced tokens has no such evidence.
+        var breakdown = known.HasValue && (models.Length > 0 || month.Tokens == 0 && known == 0)
+            ? new MonthlyCostBreakdown(models.Sum(m => m.Input + m.CacheWrite), models.Sum(m => m.CachedInput),
+                models.Sum(m => m.Output), models.Sum(m => m.CachedSavings))
+            : null;
         var status = PaybackStatus.Unknown;
-        if (available && subscription is { } fee)
+        if (known is { } total && subscription is { } fee)
         {
-            if (known >= fee) status = PaybackStatus.Reached;
+            if (total >= fee) status = PaybackStatus.Reached;
             else if (!partial) status = PaybackStatus.Below;
         }
 
@@ -45,6 +66,7 @@ public sealed record MonthlyValue(
             available && !partial ? known * DateTime.DaysInMonth(local.Year, local.Month) / elapsedDays : null,
             available && month.Tokens > 0
                 ? 100d * (month.Tokens - Math.Clamp(month.UnratedTokens, 0, month.Tokens)) / month.Tokens
-                : null);
+                : null,
+            breakdown, models);
     }
 }

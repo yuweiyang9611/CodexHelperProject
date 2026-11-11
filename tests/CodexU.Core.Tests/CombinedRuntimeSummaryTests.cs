@@ -86,11 +86,33 @@ public sealed class CombinedRuntimeSummaryTests
         Assert.Equal("shared", projects[0].Id);
         Assert.Equal(23, projects[0].Tokens);
         Assert.Equal("new", projects[0].Branch);
-        Assert.Null(projects[0].Amount);
-        Assert.True(projects[0].CostIsEstimated);
+        Assert.Equal(0.4d, projects[0].Amount);
+        Assert.Equal(ProjectCostStatus.Partial, projects[0].CostStatus);
+        Assert.False(projects[0].CostIsEstimated);
         Assert.Equal([AgentRuntime.Codex, AgentRuntime.ClaudeCode], projects[0].Runtimes);
         Assert.Equal(1, projects[0].ThreadCounts[AgentRuntime.Codex]);
         Assert.Equal(1, projects[0].ThreadCounts[AgentRuntime.ClaudeCode]);
+    }
+
+    [Fact]
+    public void MergedProjectsSeparateFreePartialAndUnknownAmounts()
+    {
+        ProjectUsage Row(string name, double? credits, long unpriced = 0) =>
+            new(name, name, @"D:\Repo\" + name, 10, 1, null, null, credits,
+                DataQuality.Detailed, UnratedTokens: unpriced);
+        var left = Read(AgentRuntime.Codex);
+        left = left with { Snapshot = left.Snapshot with { Projects = [Row("free", 0), Row("mixed", 0), Row("unknown", null)] } };
+        var right = Read(AgentRuntime.ClaudeCode);
+        right = right with { Snapshot = right.Snapshot with { Projects = [Row("free", 0), Row("mixed", 100, 5), Row("unknown", null)] } };
+
+        var result = CombinedRuntimeSummary.Project(left, right, Settings).Summary.Projects.ToDictionary(p => p.Id);
+        Assert.Equal((0d, ProjectCostStatus.Known), (result["free"].Amount!.Value, result["free"].CostStatus));
+        Assert.Equal((4d, ProjectCostStatus.Partial), (result["mixed"].Amount!.Value, result["mixed"].CostStatus));
+        Assert.Null(result["unknown"].Amount);
+        Assert.Equal(ProjectCostStatus.Unknown, result["unknown"].CostStatus);
+
+        var failed = CombinedRuntimeSummary.Project(left, right with { ReadFailed = true }, Settings).Summary.Projects;
+        Assert.Equal(ProjectCostStatus.Partial, failed.Single(p => p.Id == "free").CostStatus);
     }
 
     [Fact]

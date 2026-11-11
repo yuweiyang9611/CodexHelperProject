@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DailyUsage } from '../types'
-import { compactNumber, creditAmount } from '../format'
+import { compactNumber, formatUsageAmount } from '../format'
 
 const props = defineProps<{
   days: DailyUsage[]
-  amountPerThousandCredits: number
-  currencySymbol: string
 }>()
 
 const nonZero = computed(() => props.days.map((day) => day.tokens).filter(Boolean).sort((a, b) => a - b))
@@ -28,7 +26,7 @@ function level(tokens: number) {
 }
 
 function tooltip(day: DailyUsage) {
-  return `${day.date} · ${compactNumber(day.tokens)} tokens · ${creditAmount(day.creditsUsed, props.amountPerThousandCredits, props.currencySymbol)}`
+  return `${day.date} · ${compactNumber(day.tokens)} tokens · ${formatUsageAmount(day.valuation)}`
 }
 </script>
 

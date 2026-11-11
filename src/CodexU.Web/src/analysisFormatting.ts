@@ -1,11 +1,10 @@
-import { compactNumber, currencyAmount } from './format'
+import { compactNumber, formatUsageAmount } from './format'
 import type { UsageAnalysisTotals } from './types'
 import type { UsageMetric } from './composables/useUsageAnalysis'
 
-export function analysisValue(totals: UsageAnalysisTotals, metric: UsageMetric, conversion: number): string {
+export function analysisValue(totals: UsageAnalysisTotals, metric: UsageMetric): string {
   if (metric === 'tokens') return compactNumber(totals.tokens)
-  if (totals.creditsUsed == null) return '金额未知'
-  return `${totals.unratedTokens > 0 ? '≥ ' : ''}${currencyAmount(totals.creditsUsed / 1000 * conversion)}`
+  return formatUsageAmount(totals.valuation)
 }
 export function sourceLabel(source: string): string {
   return ({ live: '原始日志', retained: '历史留存', conflict: '来源冲突，保留可信历史', legacy: '旧日汇总' } as Record<string, string>)[source] ?? '来源未知'

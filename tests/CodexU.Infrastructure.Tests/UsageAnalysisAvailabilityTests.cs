@@ -154,7 +154,19 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
             (tokens, projects, analysis) = (snapshot.Tokens, snapshot.Projects, snapshot.AnalysisData!);
         }
 
-        var detail = UsageAnalysisQuery.Execute(analysis, new(runtime));
+        var cachedQuery = new UsageAnalysisQuery(analysis);
+        var original = cachedQuery.Execute(new(runtime));
+        var detail = cachedQuery.Execute(new(runtime) { AmountPerThousandCredits = 80 });
+        Assert.True(detail.Totals.Valuation!.IsLowerBound);
+        Assert.Equal(original.Totals.Valuation!.KnownAmount * 2, detail.Totals.Valuation.KnownAmount);
+        Assert.Equal(detail.Totals.Valuation, Assert.Single(detail.Projects).Totals.Valuation);
+        var entries = detail.Sessions.SelectMany(g => g.Members).SelectMany(m => m.Contributions).ToArray();
+        Assert.Equal(detail.Totals.Valuation.KnownAmount, entries.Sum(e => e.Amount));
+        Assert.All(entries, entry =>
+        {
+            Assert.Equal(entry.CreditsUsed.HasValue, entry.Amount.HasValue);
+            Assert.Equal(8d, entry.AmountsPerMillion!.Input);
+        });
         foreach (var period in new[] { tokens.Today, tokens.SevenDays, tokens.Month, tokens.Lifetime })
         {
             Assert.Equal(140, period.Tokens);
@@ -164,7 +176,10 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
             Assert.Equal(0, period.MissingRateTokens);
             Assert.Equal(100, Assert.Single(period.CreditsByModel).Tokens.VisibleTotalTokens);
         }
-        Assert.Equal(tokens.Lifetime.CreditsUsed, Assert.Single(projects).CreditsUsed);
+        var project = Assert.Single(projects);
+        Assert.Equal(tokens.Lifetime.CreditsUsed, project.CreditsUsed);
+        Assert.Equal(detail.Totals.UnratedTokens, project.UnratedTokens);
+        Assert.Equal(ProjectCostStatus.Partial, project.CostStatus);
         Assert.Equal(tokens.Lifetime.CreditsUsed, detail.Totals.CreditsUsed);
         Assert.Equal(tokens.Lifetime.UnratedTokens, detail.Totals.UnratedTokens);
         Assert.Empty(detail.MissingRates!);
@@ -173,6 +188,8 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         Assert.True((await exporter.ExportUsageAnalysisAsync(detail, destination, "json")).Success);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(destination));
         var exported = json.RootElement.GetProperty("totals");
+        Assert.Equal(80, json.RootElement.GetProperty("amountPerThousandCredits").GetDouble());
+        Assert.Equal(detail.Totals.Valuation.KnownAmount, exported.GetProperty("valuation").GetProperty("knownAmount").GetDouble());
         Assert.Equal(140, exported.GetProperty("tokens").GetInt64());
         Assert.Equal(40, exported.GetProperty("unratedTokens").GetInt64());
         Assert.Equal(tokens.Lifetime.CreditsUsed, exported.GetProperty("creditsUsed").GetDouble());

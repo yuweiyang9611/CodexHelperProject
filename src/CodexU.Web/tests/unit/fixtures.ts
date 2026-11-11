@@ -13,7 +13,7 @@ import type {
 
 export function monthlyValue(overrides: Partial<MonthlyValue> = {}): MonthlyValue {
   return { knownAmount: 80, isLowerBound: false, subscriptionAmount: 100, subscriptionSource: 'manual',
-    netAmount: -20, paybackMultiple: 0.8, paybackStatus: 'below', projectedAmount: 160, coveragePercent: 100,
+    netAmount: -20, paybackMultiple: 0.8, paybackStatus: 'below', projectedAmount: 160, coveragePercent: 100, models: [],
     ...overrides }
 }
 

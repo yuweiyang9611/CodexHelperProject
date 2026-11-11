@@ -9,7 +9,8 @@ function breakdown(tokens = 0): TokenBreakdown {
     cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, billableCacheWrite5mTokens: 0, billableCacheWrite1hTokens: 0, billableCacheWriteTokens: 0 }
 }
 
-export function createDemoAnalysis(request: UsageAnalysisRequest, now: Date): UsageAnalysisResult {
+export function createDemoAnalysis(request: UsageAnalysisRequest, now: Date, conversion = 40): UsageAnalysisResult {
+  const dollars = (credits: number) => credits * conversion / 1000
   const model = request.runtime === 'codex' ? 'gpt-6-astra' : 'claude-sonnet-5'
   const other = request.runtime === 'codex' ? 'gpt-5.6-sol' : 'claude-opus-5'
   const entries: UsageAnalysisEntry[] = []
@@ -27,11 +28,17 @@ export function createDemoAnalysis(request: UsageAnalysisRequest, now: Date): Us
     const sum = breakdown()
     for (const row of rows) if (row.breakdown) for (const key of Object.keys(sum) as (keyof TokenBreakdown)[]) sum[key] += row.breakdown[key]
     const rated = rows.filter(row => row.creditsUsed != null)
+    const creditsUsed = rated.length ? rated.reduce((sum, row) => sum + row.creditsUsed!, 0) : null
     return { tokens: rows.reduce((sum, row) => sum + row.tokens, 0), breakdown: sum, availableBreakdownFields,
       breakdownTokens: rows.filter(row => row.breakdown != null).reduce((sum, row) => sum + row.tokens, 0),
-      creditsUsed: rated.length ? rated.reduce((sum, row) => sum + row.creditsUsed!, 0) : null,
+      creditsUsed, valuation: { knownAmount: creditsUsed == null ? null : dollars(creditsUsed), isLowerBound: rated.length > 0 && rated.length < rows.length },
       ratedTokens: rated.reduce((sum, row) => sum + row.tokens, 0), unratedTokens: rows.filter(row => row.creditsUsed == null).reduce((sum, row) => sum + row.tokens, 0),
       unattributedTokens: rows.filter(row => row.sessionId == null).reduce((sum, row) => sum + row.tokens, 0) }
+  }
+  for (const row of entries) {
+    row.amount = row.creditsUsed == null ? null : dollars(row.creditsUsed)
+    if (row.rate) row.amountsPerMillion = { input: dollars(row.rate.inputCreditsPerMillion),
+      cachedInput: dollars(row.rate.cachedInputCreditsPerMillion), output: dollars(row.rate.outputCreditsPerMillion) }
   }
   const selected = entries.filter(row => (!request.from || row.date >= request.from) && (!request.to || row.date <= request.to)
     && (!request.model || row.model === request.model) && (!request.project || (row.project ?? '__unknown__') === request.project))
@@ -51,6 +58,6 @@ export function createDemoAnalysis(request: UsageAnalysisRequest, now: Date): Us
     models: groups(row => row.model), features: groups(row => row.feature), projects: groups(row => row.project ?? '__unknown__'),
     sessions: sessions.slice((page - 1) * pageSize, page * pageSize), sessionCount: sessions.length, page, pageSize,
     unattributed: selected.filter(row => row.sessionId == null),
-    legacyEstimates: selected.filter(row => row.source === 'legacy').map(row => ({ date: row.date, tokens: row.tokens + 50000, creditsUsed: 123, explanation: '仅有旧版完整日估值，与已重算明细重叠，单独保留。' })),
+    legacyEstimates: selected.filter(row => row.source === 'legacy').map(row => ({ date: row.date, tokens: row.tokens + 50000, creditsUsed: 123, amount: dollars(123), explanation: '仅有旧版完整日估值，与已重算明细重叠，单独保留。' })),
     availableModels: [model, other, 'unknown'], availableProjects: [{ id: 'D:\\Projects\\codexU', label: 'codexU' }, { id: 'D:\\Projects\\research', label: 'research' }, { id: '__unknown__', label: '项目未知' }], diagnostics: ['浏览器演示数据，用于展示本机原始日志、历史留存与未归属差额。'] }
 }

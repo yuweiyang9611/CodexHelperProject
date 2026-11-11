@@ -201,13 +201,7 @@ public partial class MainWindow
             case "usage.query":
                 var query = request.Payload.Deserialize<UsageAnalysisRequest>(JsonOptions)
                     ?? throw new ArgumentException("用量筛选条件无效。");
-                await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
-                try
-                {
-                    ThrowIfStateMutationUnavailable();
-                    return await _dashboardService.QueryUsageAsync(query, _lifetimeCancellation.Token);
-                }
-                finally { _refreshGate.Release(); }
+                return await QueryUsageWithSettingsAsync(query);
 
             case "runtime.select":
                 var runtimeName = request.Payload.TryGetProperty("runtime", out var runtimeValue)
@@ -415,14 +409,7 @@ public partial class MainWindow
                     OverwritePrompt = true
                 };
                 if (exportDialog.ShowDialog(this) != true) return new LocalOperationResult(false, "已取消导出。");
-                UsageAnalysisResult exportAnalysis;
-                await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
-                try
-                {
-                    ThrowIfStateMutationUnavailable();
-                    exportAnalysis = await _dashboardService.QueryUsageAsync(new(CurrentRuntime), _lifetimeCancellation.Token);
-                }
-                finally { _refreshGate.Release(); }
+                var exportAnalysis = await QueryUsageWithSettingsAsync(new(CurrentRuntime));
                 return await _dataManagementService.ExportUsageAnalysisAsync(exportAnalysis, exportDialog.FileName,
                     exportFormat, _lifetimeCancellation.Token);
 
@@ -542,6 +529,23 @@ public partial class MainWindow
             default:
                 throw new NotSupportedException($"不允许的 IPC 方法：{request.Method}");
         }
+    }
+
+    private async Task<UsageAnalysisResult> QueryUsageWithSettingsAsync(UsageAnalysisRequest query)
+    {
+        await _refreshGate.WaitAsync(_lifetimeCancellation.Token);
+        try
+        {
+            ThrowIfStateMutationUnavailable();
+            while (true)
+            {
+                var service = _dashboardService;
+                var conversion = _settings.AmountPerThousandCredits;
+                var result = await service.QueryUsageAsync(query with { AmountPerThousandCredits = conversion }, _lifetimeCancellation.Token);
+                if (ReferenceEquals(service, _dashboardService) && conversion == _settings.AmountPerThousandCredits) return result;
+            }
+        }
+        finally { _refreshGate.Release(); }
     }
 
     private async Task<string?> TryRefreshAfterCommittedChangeAsync()

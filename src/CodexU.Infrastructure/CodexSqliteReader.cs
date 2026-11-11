@@ -369,6 +369,7 @@ public sealed class CodexSqliteReader(
             _lastActiveAt,
             _branch,
             null,
-            DataQuality.Approximate);
+            DataQuality.Approximate,
+            UnratedTokens: _tokens);
     }
 }

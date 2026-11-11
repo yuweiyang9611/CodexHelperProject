@@ -343,7 +343,7 @@ class HostBridge {
       return demoCombined(createDemoSnapshot('codex', this.mockSettings),
         createDemoSnapshot('claudeCode', this.mockSettings), this.mockSettings.amountPerThousandCredits) as T
     }
-    if (method === 'usage.query') return createDemoAnalysis(payload as UsageAnalysisRequest, demoNow()) as T
+    if (method === 'usage.query') return createDemoAnalysis(payload as UsageAnalysisRequest, demoNow(), this.mockSettings.amountPerThousandCredits) as T
     if (method === 'data.clearHistory') return { success: true, message: '演示环境：已确认清理入口，未修改真实历史。' } as T
     if (method.startsWith('usage.')) return createDemoSnapshot(this.mockRuntime, this.mockSettings) as T
     return {} as T
@@ -438,6 +438,16 @@ function period(tokens: number, quality: 'detailed' | 'unavailable' = 'detailed'
 
 function createDemoSnapshot(runtime: AgentRuntime, settings: AppSettings): DashboardSnapshot {
   const result = demoUsage(runtime)
+  // The three fixture projects have fixed rank positions; native snapshots supply their own ranking.
+  const rankEntry = (projectIndex: number) => {
+    const credits = result.projects[projectIndex]!.creditsUsed
+    return { projectIndex, amount: credits == null ? null : credits / 1000 * settings.amountPerThousandCredits }
+  }
+  for (const project of result.projects) project.costStatus = project.creditsUsed == null ? 'unknown' : 'known'
+  result.projectRanking = {
+    byCost: (runtime === 'codex' ? [1, 0, 2] : [0, 1, 2]).map(rankEntry),
+    byTokens: [0, 1, 2].map(rankEntry), hasCost: true, hasEstimatedCost: runtime === 'codex',
+  }
   const claude = runtime === 'claudeCode'
   const auto = claude ? settings.claudeAutoDetectSubscriptionAmount : settings.codexAutoDetectSubscriptionAmount
   const subscription = auto ? result.account?.suggestedMonthlySubscriptionAmount ?? null
@@ -448,7 +458,20 @@ function createDemoSnapshot(runtime: AgentRuntime, settings: AppSettings): Dashb
   const elapsedDays = Math.max(1 / 24, today.getDate() - 1 + (today.getHours() + today.getMinutes() / 60) / 24)
   // The mock only supplies fully priced synthetic records. Native hosts calculate
   // the complete projection, including incomplete readings, in .NET.
+  const row = result.tokens.month.creditsByModel[0]!
+  const dollars = (credits: number) => credits / 1000 * settings.amountPerThousandCredits
+  for (const period of Object.values(result.tokens)) {
+    period.valuation = { knownAmount: dollars(period.creditsUsed), isLowerBound: false }
+  }
+  for (const day of result.dailyUsage) {
+    day.valuation = { knownAmount: dollars(day.creditsUsed), isLowerBound: false }
+  }
+  const input = dollars(row.inputCredits), cachedInput = dollars(row.cachedInputCredits)
+  const output = dollars(row.outputCredits), cachedSavings = dollars(row.cachedSavingsCredits)
   result.monthlyValue = {
+    breakdown: { inputAndWrites: input, cachedInput, output, cachedSavings },
+    models: [{ model: row.model, input, cachedInput, cacheWrite: 0, output, cachedSavings, total: amount,
+      rateVersions: (row.rateVersions ?? []).map(v => ({ catalogVersion: v.catalogVersion, source: v.source, effectiveFrom: v.effectiveFrom, total: dollars(v.totalCredits) })) }],
     knownAmount: amount, isLowerBound: false, coveragePercent: 100,
     subscriptionAmount: subscription, subscriptionSource: subscription == null ? 'unknown' : auto ? 'auto' : 'manual',
     netAmount: subscription == null ? null : amount - subscription,

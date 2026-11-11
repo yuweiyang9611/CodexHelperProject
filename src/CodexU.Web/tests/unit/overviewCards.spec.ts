@@ -105,6 +105,7 @@ describe('OverviewCards local token activity', () => {
     [monthlyValue({ isLowerBound: true, paybackStatus: 'unknown', netAmount: null, paybackMultiple: null, projectedAmount: null }), '≥ US$80.00', '暂无法判断是否回本'],
     [monthlyValue({ knownAmount: 120, isLowerBound: true, paybackStatus: 'reached', netAmount: 20, paybackMultiple: 1.2, projectedAmount: null }), '≥ US$120.00', '已回本 · 超出至少 US$20.00'],
     [monthlyValue({ subscriptionAmount: null, subscriptionSource: 'unknown', paybackStatus: 'unknown', netAmount: null, paybackMultiple: null }), 'US$80.00', '暂无法判断是否回本'],
+    [monthlyValue({ knownAmount: null, netAmount: null, paybackStatus: 'unknown', paybackMultiple: null, projectedAmount: null }), '无法核算', '暂无法判断是否回本'],
   ] as const)('renders the host amount and payback status (%j)', async (reported, amount, status) => {
     const card = mountOverview(snapshot({ monthlyValue: reported })).querySelector('.value-card')!
     expect(card.querySelector('.value-main strong')?.textContent).toBe(amount)
@@ -113,6 +114,16 @@ describe('OverviewCards local token activity', () => {
     expect(card.querySelector('.value-bottom strong')?.textContent).toBe(status)
     if (reported.projectedAmount == null) expect(card.textContent).not.toContain('预计本月')
     if (reported.subscriptionSource === 'unknown') expect(card.textContent).toContain('无法推算')
+  })
+
+  it('displays projected cost components as dollar lower bounds including a known zero', async () => {
+    const card = mountOverview(snapshot({ monthlyValue: monthlyValue({
+      isLowerBound: true, breakdown: { inputAndWrites: 80, cachedInput: 0, output: 0, cachedSavings: 5 },
+    }) })).querySelector('.value-card')!
+    card.querySelector<HTMLElement>('.value-toggle')!.click()
+    await nextTick()
+    expect([...card.querySelectorAll('.value-breakdown strong')].map(el => el.textContent))
+      .toEqual(['≥ US$80.00', '≥ US$0.00', '≥ US$0.00', '≥ US$5.00'])
   })
 
   it('copies only the fixed query instruction and displays the paired query time beside stale fallback data', async () => {

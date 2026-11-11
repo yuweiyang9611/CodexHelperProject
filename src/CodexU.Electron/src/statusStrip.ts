@@ -10,7 +10,7 @@ export interface SurfaceData {
   statusStripShowTodayTokens?: boolean;
   statusStripQuotaMode?: string;
   desktopMode?: boolean;
-  todayAmount?: number;
+  todayValuation?: { knownAmount?: number | null; isLowerBound: boolean };
   layout?: { width: number; collapsedHeight: number; expandedHeight: number; margin: number; rightOffset: number; topOffset: number };
   [key: string]: unknown;
 }

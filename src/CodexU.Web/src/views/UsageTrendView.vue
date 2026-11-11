@@ -3,17 +3,13 @@ import { computed } from 'vue'
 import TrendChart from '../components/TrendChart.vue'
 import UsageHeatmap from '../components/UsageHeatmap.vue'
 import UsageDistribution from '../components/UsageDistribution.vue'
-import { useEquivalentValue } from '../composables/useEquivalentValue'
 import { useRecentUsage } from '../composables/useRecentUsage'
-import { compactNumber, qualityLabel } from '../format'
-import { useDashboardStore } from '../stores/dashboard'
+import { compactNumber, formatUsageAmount, qualityLabel } from '../format'
 import type { DashboardSnapshot } from '../types'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
-const store = useDashboardStore()
 const snapshotRef = computed<DashboardSnapshot | null>(() => props.snapshot)
-const { money } = useEquivalentValue(snapshotRef)
-const { lastSeven, lastSevenTotal, trendChange, peakDay } = useRecentUsage(snapshotRef)
+const { lastSevenTotal, trendChange, peakDay } = useRecentUsage(snapshotRef)
 
 const maxModelTokens = computed(() => Math.max(...props.snapshot.models.map((model) => model.tokens), 1))
 
@@ -52,12 +48,12 @@ const longestActiveStreak = computed(() => {
     <div class="usage-layout">
       <article class="inner-card heatmap-card">
         <div class="inner-heading"><div><span>活跃度</span><h3>最近半年本机原始用量</h3></div><em>{{ qualityLabel(snapshot.dailyUsage[0]?.quality) }}</em></div>
-        <UsageHeatmap :days="snapshot.dailyUsage" :amount-per-thousand-credits="store.settings?.amountPerThousandCredits ?? 40" currency-symbol="US$" />
+        <UsageHeatmap :days="snapshot.dailyUsage" />
       </article>
       <article class="inner-card seven-day-card">
         <div class="inner-heading"><div><span>近 7 天</span><h3>近期趋势</h3></div><em :class="{ positive: (trendChange ?? 0) >= 0 }">{{ trendChange == null ? '新增使用' : `${trendChange >= 0 ? '+' : ''}${trendChange.toFixed(0)}%` }}</em></div>
         <TrendChart :days="snapshot.dailyUsage" />
-        <div class="trend-stats"><span><small>日均</small><strong>{{ compactNumber(lastSevenTotal / 7) }}</strong></span><span><small>峰值</small><strong>{{ compactNumber(peakDay?.tokens) }}</strong></span><span><small>等效金额</small><strong>{{ money(lastSeven.reduce((sum, day) => sum + day.creditsUsed, 0)) }}</strong></span></div>
+        <div class="trend-stats"><span><small>日均</small><strong>{{ compactNumber(lastSevenTotal / 7) }}</strong></span><span><small>峰值</small><strong>{{ compactNumber(peakDay?.tokens) }}</strong></span><span><small>等效金额</small><strong>{{ formatUsageAmount(snapshot.tokens.sevenDays.valuation) }}</strong></span></div>
       </article>
     </div>
     <div class="analytics-insights">

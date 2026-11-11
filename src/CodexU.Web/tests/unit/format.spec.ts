@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   compactNumber,
-  creditAmount,
+  formatUsageAmount,
   currencyAmount,
   exhaustionTime,
   qualityLabel,
@@ -57,40 +57,12 @@ describe('compactNumber', () => {
   })
 })
 
-describe('creditAmount', () => {
-  it('renders a placeholder only for null-ish values', () => {
-    expect(creditAmount(null)).toBe('--')
-    expect(creditAmount(undefined)).toBe('--')
-  })
-
-  it('applies the default 1000-credit rate', () => {
-    // 1,000 credits at US$40 per 1,000 credits.
-    expect(creditAmount(1_000)).toBe('US$40.00')
-    expect(creditAmount(2_500)).toBe('US$100.00')
-  })
-
-  it('honours a custom rate and symbol', () => {
-    expect(creditAmount(1_000, 25, '¥')).toBe('¥25.00')
-  })
-
-  it('clamps negative credits to zero', () => {
-    expect(creditAmount(-5_000)).toBe('US$0.00')
-  })
-
-  it('falls back to the default rate when the rate is unusable', () => {
-    expect(creditAmount(1_000, 0)).toBe('US$40.00')
-    expect(creditAmount(1_000, -10)).toBe('US$40.00')
-    expect(creditAmount(1_000, Number.NaN)).toBe('US$40.00')
-    expect(creditAmount(1_000, Number.POSITIVE_INFINITY)).toBe('US$40.00')
-  })
-
-  it('falls back to US$ when the symbol is blank', () => {
-    expect(creditAmount(1_000, 40, '')).toBe('US$40.00')
-  })
-
-  it('treats a non-finite credit value as zero', () => {
-    expect(creditAmount(Number.NaN)).toBe('US$0.00')
-    expect(creditAmount(Number.POSITIVE_INFINITY)).toBe('US$0.00')
+describe('formatUsageAmount', () => {
+  it('formats amounts and lower bounds while retaining unknown status', () => {
+    expect(formatUsageAmount({ knownAmount: 0, isLowerBound: false })).toBe('US$0.00')
+    expect(formatUsageAmount({ knownAmount: 12.5, isLowerBound: true })).toBe('≥ US$12.50')
+    expect(formatUsageAmount({ knownAmount: null, isLowerBound: false })).toBe('金额未知')
+    expect(formatUsageAmount()).toBe('金额未知')
   })
 })
 

@@ -1,44 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { compactNumber, relativeTime } from '../format'
-import { useEquivalentValue } from '../composables/useEquivalentValue'
-import type { DashboardSnapshot, ProjectUsage } from '../types'
+import { compactNumber, currencyAmount, relativeTime } from '../format'
+import type { DashboardSnapshot } from '../types'
 import UiIcon from '../components/UiIcon.vue'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
-const { money } = useEquivalentValue(computed<DashboardSnapshot | null>(() => props.snapshot))
 
 type SortKey = 'cost' | 'tokens'
 const sortBy = ref<SortKey>('cost')
 
-/** Null cost means unknown, never free — see ProjectUsage.HasKnownCost. */
-const hasCost = (project: ProjectUsage) => (project.creditsUsed ?? 0) > 0
-
-// With nothing priced, a cost ranking would order every project at zero and read
-// as a real result. Fall back to tokens and say why instead.
-const costAvailable = computed(() => props.snapshot.projects.some(hasCost))
+const ranking = computed(() => props.snapshot.projectRanking)
+const costAvailable = computed(() => ranking.value?.hasCost)
 const activeSort = computed<SortKey>(() => (costAvailable.value ? sortBy.value : 'tokens'))
-
-// Codex attributes projects in SQLite but prices usage from session logs with no
-// project key, so its cost is apportioned by token share rather than measured.
-const costIsEstimated = computed(() => props.snapshot.projects.some((project) => project.costIsEstimated))
-
-const ranked = computed(() => [...props.snapshot.projects].sort((a, b) => activeSort.value === 'cost'
-  // Unknown cost sinks below any known one rather than tying with a cheap project.
-  ? (b.creditsUsed ?? -1) - (a.creditsUsed ?? -1)
-  : b.tokens - a.tokens).slice(0, 8))
-
-const maxProjectTokens = computed(() => Math.max(...props.snapshot.projects.map((project) => project.tokens), 1))
-const maxProjectCredits = computed(() => Math.max(...props.snapshot.projects.map((project) => project.creditsUsed ?? 0), Number.MIN_VALUE))
+const ranked = computed(() => {
+  if (!ranking.value) return []
+  const entries = activeSort.value === 'cost' ? ranking.value.byCost : ranking.value.byTokens
+  const rows = entries.map(row => ({ project: props.snapshot.projects[row.projectIndex]!, amount: row.amount }))
+  const magnitude = (row: typeof rows[number]) => activeSort.value === 'cost' ? row.amount ?? 0 : row.project.tokens
+  const max = rows.length ? magnitude(rows[0]!) : 0
+  return rows.map(row => ({ ...row, width: max > 0 ? magnitude(row) / max * 100 : 0 }))
+})
 const maxToolCount = computed(() => Math.max(...props.snapshot.tools.map((tool) => tool.count), 1))
-
-function barWidth(project: ProjectUsage) {
-  return activeSort.value === 'cost'
-    ? (project.creditsUsed ?? 0) / maxProjectCredits.value * 100
-    : project.tokens / maxProjectTokens.value * 100
-}
-
-const costLabel = computed(() => costIsEstimated.value ? '成本（估算）' : '成本')
+const costLabel = computed(() => ranking.value?.hasEstimatedCost ? '成本（估算）' : '成本')
 
 function toolIcon(category?: string): 'terminal' | 'edit' | 'globe' | 'tool' {
   if (category === 'Terminal') return 'terminal'
@@ -59,21 +42,22 @@ function toolIcon(category?: string): 'terminal' | 'edit' | 'globe' | 'tool' {
         </div>
         <em v-else>Token</em>
       </div>
-      <div v-if="snapshot.projects.length" class="rank-list">
-        <div v-for="(project, index) in ranked" :key="project.id" class="rank-row" :title="project.fullPath">
+      <div v-if="ranked.length" class="rank-list">
+        <div v-for="({ project, amount, width }, index) in ranked" :key="project.id" class="rank-row" :title="project.fullPath">
           <span class="rank-index">{{ String(index + 1).padStart(2, '0') }}</span>
-          <div class="rank-info"><div><strong>{{ project.name }}</strong><small>{{ project.branch ?? '默认分支' }} · {{ project.threadCount }} 线程 · {{ relativeTime(project.lastActiveAt) }}</small></div><i><b :style="{ width: `${barWidth(project)}%` }" /></i></div>
+          <div class="rank-info"><div><strong>{{ project.name }}</strong><small>{{ project.branch ?? '默认分支' }} · {{ project.threadCount }} 线程 · {{ relativeTime(project.lastActiveAt) }}</small></div><i><b :style="{ width: `${width}%` }" /></i></div>
           <div class="rank-value">
             <strong>{{ compactNumber(project.tokens) }}</strong>
             <!-- Absent cost is stated, not blanked: a missing figure beside real
                  tokens would otherwise look like a rendering gap. -->
-            <small v-if="hasCost(project)" :class="{ estimated: project.costIsEstimated }">{{ money(project.creditsUsed) }}</small>
+            <small v-if="amount != null" :class="{ estimated: project.costIsEstimated }">{{ project.costStatus === 'partial' ? '≥ ' : '' }}{{ currencyAmount(amount) }}</small>
             <small v-else class="unknown">成本不可得</small>
           </div>
         </div>
       </div>
-      <div v-else class="large-empty">暂无可归类项目</div>
-      <p v-if="costIsEstimated" class="rank-note">成本按线程 token 占比分摊，非逐条计价</p>
+      <div v-else class="large-empty">{{ ranking ? '暂无可归类项目' : '项目排行不可用' }}</div>
+      <p v-if="ranking?.hasEstimatedCost" class="rank-note">成本按线程 token 占比分摊，非逐条计价</p>
+      <p v-if="ranked.some(row => row.project.costStatus === 'partial')" class="rank-note">≥ 表示仅计入已核算金额，成本排行按该金额排序。</p>
     </article>
     <article class="inner-card rank-card tool-rank">
       <div class="inner-heading"><div><span>工具统计</span><h3>工具调用排行</h3></div><em>调用次数</em></div>

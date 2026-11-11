@@ -41,7 +41,7 @@ test('desktop mode launches a helper and carries the rich v0.6.0 presentation', 
   const { host, children, actions, states, warnings } = fixture();
   host.update({ desktopMode: false });
   assert.equal(children.length, 0);
-  host.update({ desktopMode: true, todayAmount: 42, theme: 'dark',
+  host.update({ desktopMode: true, todayValuation: { knownAmount: 42, isLowerBound: true }, theme: 'dark',
     presentation: { title: 'Codex', todayTokensText: '420K', weeklyUsageText: '72%' } });
   assert.equal(children.length, 1);
   const launch = children[0];
@@ -49,9 +49,9 @@ test('desktop mode launches a helper and carries the rich v0.6.0 presentation', 
   assert.equal(launch.options.windowsHide, true);
   assert.equal(launch.options.env.CODEXU_DESKTOP_BACKEND, 'C:\\CodexU\\CodexU.Sidecar.exe');
   assert.equal(launch.child.sent[0].data.presentation.todayTokensText, '420K');
-  host.update({ todayAmount: 55 });
+  host.update({ todayValuation: { isLowerBound: false } });
   launch.child.emit('message', { type: 'ready' });
-  assert.equal(launch.child.sent.at(-1).data.todayAmount, 55);
+  assert.deepEqual(launch.child.sent.at(-1).data.todayValuation, { isLowerBound: false });
   assert.equal(launch.child.sent.at(-1).data.presentation.weeklyUsageText, '72%');
   launch.child.emit('message', { type: 'state', attached: true, message: '已附着 Windows 桌面' });
   assert.deepEqual(states, [{ attached: true, message: '已附着 Windows 桌面' }]);

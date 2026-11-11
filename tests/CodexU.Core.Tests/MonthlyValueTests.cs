@@ -66,6 +66,54 @@ public sealed class MonthlyValueTests
         Assert.Null(missing.ProjectedAmount);
     }
 
+    [Fact]
+    public void DollarBreakdownReconcilesModelsAndHistoricalVersionsAtTheSavedConversion()
+    {
+        var recorded = new DateOnly(2026, 10, 1);
+        var first = new RateCreditUsage("v1", "catalog", null, TokenBreakdown.Zero, 10, 2, 30, 5);
+        var second = new RateCreditUsage("v2", "custom", recorded, TokenBreakdown.Zero, 3, 1, 4, 2, 7);
+        var models = new ModelCreditUsage[]
+        {
+            new("first", TokenBreakdown.Zero, 13, 3, 34, 7, [first, second], 7),
+            new("second", TokenBreakdown.Zero, 1, 3, 4, 6, [])
+        };
+        var snapshot = Snapshot(65, 200);
+        snapshot = snapshot with { Tokens = snapshot.Tokens with { Month = snapshot.Tokens.Month with { CreditsByModel = models } } };
+        var value = MonthlyValue.Calculate(snapshot, new AppSettings(AmountPerThousandCredits: 50));
+        Assert.True(value.IsLowerBound);
+        var details = Assert.IsType<MonthlyCostBreakdown>(value.Breakdown);
+        Assert.Equal(1.05, details.InputAndWrites, 12);
+        Assert.Equal(0.3, details.CachedInput, 12);
+        Assert.Equal(1.9, details.Output, 12);
+        Assert.Equal(0.65, details.CachedSavings, 12);
+        Assert.Equal(value.KnownAmount!.Value, details.InputAndWrites + details.CachedInput + details.Output, 12);
+        Assert.Equal(value.KnownAmount.Value, value.Models.Sum(m => m.Total), 12);
+        var model = value.Models[0];
+        Assert.Equal(model.Total, model.RateVersions.Sum(v => v.Total), 12);
+        Assert.Equal(0.35, model.CacheWrite, 12);
+        Assert.Equal(new RateVersionAmount("v2", "custom", recorded, 0.75), model.RateVersions[1]);
+    }
+
+    [Fact]
+    public void EntirelyUnpricedMonthHasNoDollarAmountsButZeroRatesAreKnown()
+    {
+        var unpriced = MonthlyValue.Calculate(Snapshot(0, 1000), new AppSettings());
+        Assert.Null(unpriced.KnownAmount);
+        Assert.Null(unpriced.Breakdown);
+        Assert.Equal(PaybackStatus.Unknown, unpriced.PaybackStatus);
+        var free = Snapshot(0, 0);
+        free = free with
+        {
+            Tokens = free.Tokens with
+            {
+                Month = free.Tokens.Month with { CreditsByModel = [new("free", TokenBreakdown.Zero, 0, 0, 0, 0, [])] }
+            }
+        };
+        var priced = MonthlyValue.Calculate(free, new AppSettings());
+        Assert.Equal(0d, priced.KnownAmount);
+        Assert.Equal(new MonthlyCostBreakdown(0, 0, 0, 0), priced.Breakdown);
+    }
+
     private static DashboardSnapshot Snapshot(double credits, long unpriced)
     {
         var snapshot = DashboardSnapshot.Empty(AgentRuntime.ClaudeCode);

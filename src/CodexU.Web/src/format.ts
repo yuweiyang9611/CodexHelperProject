@@ -1,4 +1,4 @@
-import type { DataQuality } from './types'
+import type { DataQuality, UsageAmount } from './types'
 
 export function qualityLabel(quality?: DataQuality): string {
   if (quality === 'detailed') return '精细统计'
@@ -15,22 +15,9 @@ export function compactNumber(value?: number | null): string {
   return Math.round(value).toLocaleString()
 }
 
-export function creditAmount(
-  value?: number | null,
-  amountPerThousandCredits = 40,
-  currencySymbol = 'US$',
-): string {
-  if (value == null) return '--'
-  const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0
-  const safeRate = Number.isFinite(amountPerThousandCredits) && amountPerThousandCredits > 0
-    ? amountPerThousandCredits
-    : 40
-  const amount = safeValue / 1_000 * safeRate
-  const formatted = new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)
-  return `${currencySymbol || 'US$'}${formatted}`
+export function formatUsageAmount(value?: UsageAmount | null): string {
+  if (value?.knownAmount == null || !Number.isFinite(value.knownAmount)) return '金额未知'
+  return `${value.isLowerBound ? '≥ ' : ''}${currencyAmount(value.knownAmount)}`
 }
 
 export function currencyAmount(

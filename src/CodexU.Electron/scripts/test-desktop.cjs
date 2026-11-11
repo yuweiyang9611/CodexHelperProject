@@ -78,8 +78,18 @@ const os = require('node:os');
     assert.equal(initial.tokens.month.unratedTokens, 20);
     assert(initial.monthlyValue.knownAmount > 0);
     assert.equal(initial.monthlyValue.isLowerBound, true);
+    assert.deepEqual(initial.tokens.month.valuation, detail.totals.valuation);
+    assert.equal(initial.dailyUsage.at(-1).valuation.knownAmount, detail.totals.valuation.knownAmount);
+    const projectRow = initial.projectRanking.byCost[0];
+    assert.equal(initial.projects[projectRow.projectIndex].costStatus, 'partial');
+    assert.equal(projectRow.amount, detail.totals.valuation.knownAmount);
     assert.equal(initial.monthlyValue.subscriptionSource, 'unknown');
-    await request(page, 'settings.update', { patch: { claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100 } });
+    await request(page, 'settings.update', { patch: {
+      claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100, amountPerThousandCredits: 80,
+    } });
+    const revalued = await query(page);
+    assert.equal(revalued.totals.creditsUsed, detail.totals.creditsUsed);
+    assert.equal(revalued.totals.valuation.knownAmount, detail.totals.valuation.knownAmount * 2);
     const combined = await request(page, 'usage.getCombined');
     const manual = combined.claudeCode.snapshot.monthlyValue;
     assert.equal(manual.subscriptionAmount, 100);
@@ -89,6 +99,8 @@ const os = require('node:os');
     assert.equal(combined.summary.periods.month.tokens, 120);
     assert.equal(combined.summary.cost.knownAmount, manual.knownAmount);
     assert.equal(combined.summary.cost.isLowerBound, true);
+    assert.equal(combined.summary.projects[0].costStatus, 'partial');
+    assert.equal(combined.summary.projects[0].amount, revalued.totals.valuation.knownAmount);
     await page.locator('#tab-combined').click();
     const combinedCosts = page.locator('.combined-card').filter({ has: page.getByRole('heading', { name: '合计成本', exact: true }) });
     await combinedCosts.getByText(/≥/).first().waitFor();
@@ -142,6 +154,8 @@ const os = require('node:os');
     assert.equal(exported.scope, '当前工具全部本机历史');
     assert.equal(exported.runtime, 'claudeCode');
     assert.equal(exported.totals.tokens, 120);
+    assert.equal(exported.amountPerThousandCredits, 80);
+    assert.deepEqual(exported.totals.valuation, revalued.totals.valuation);
     assert.equal(exported.dailyUsage.reduce((sum, day) => sum + day.totals.tokens, 0), 120);
     assert.equal('sessions' in exported, false, 'aggregate export excludes session details');
     const strings = value => typeof value === 'string' ? [value]

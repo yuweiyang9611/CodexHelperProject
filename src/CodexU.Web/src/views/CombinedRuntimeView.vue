@@ -83,7 +83,7 @@ onMounted(() => void store.loadCombined())
 
           <dl class="combined-runtime-facts">
             <div><dt>本月本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.month.tokens) }}</dd></div>
-            <div><dt>本机原始 token API 估算</dt><dd>{{ entry.contribution === 'present' && entry.snapshot.tokens.month.quality !== 'unavailable' && entry.snapshot.monthlyValue ? (entry.snapshot.monthlyValue.isLowerBound ? '≥ ' : '') + currencyAmount(entry.snapshot.monthlyValue.knownAmount) : '无法核算' }}</dd></div>
+            <div><dt>本机原始 token API 估算</dt><dd>{{ entry.contribution === 'present' && entry.snapshot.monthlyValue?.knownAmount != null ? (entry.snapshot.monthlyValue.isLowerBound ? '≥ ' : '') + currencyAmount(entry.snapshot.monthlyValue.knownAmount) : '无法核算' }}</dd></div>
             <div><dt>累计本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.lifetime.tokens) }}</dd></div>
             <div>
               <dt>订阅月费估算</dt>
@@ -168,7 +168,7 @@ onMounted(() => void store.loadCombined())
               <td>{{ project.runtimes.map(runtimeLabel).join(' + ') }}</td>
               <td>{{ compactNumber(project.tokens) }}</td>
               <td>
-                {{ project.amount != null ? currencyAmount(project.amount) : '成本不可得' }}
+                {{ project.amount != null ? (project.costStatus === 'partial' ? '≥ ' : '') + currencyAmount(project.amount) : '成本不可得' }}
                 <small v-if="project.costIsEstimated && project.amount != null">（估算）</small>
               </td>
               <td>{{ relativeTime(project.lastActiveAt) }}</td>
@@ -176,9 +176,8 @@ onMounted(() => void store.loadCombined())
           </tbody>
         </table>
         <p class="combined-note">
-          按项目绝对路径合并，路径大小写与分隔符差异已归一。各运行时的排行榜本身已截断，
-          因此这里是两份榜单的合并结果，不等于全量项目，也不等于累计 token。
-          Codex 的成本按 token 占比分摊，标记为“估算”，其绝对值偏高。
+          按项目绝对路径合并，最多显示 Token 用量最高的 12 个项目。
+          ≥ 表示已核算金额下限；按 Token 占比分摊的成本标记为“估算”。
         </p>
       </article>
 

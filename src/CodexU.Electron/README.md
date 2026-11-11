@@ -25,6 +25,12 @@ results and advances reset countdowns with the local clock. The settings editor
 uses `rates.previewDraft` to validate edits and look up the rate in force on a
 given date. Saving a draft goes through `settings.update` and validates it again.
 
+Single-runtime snapshots include project ranks by known cost and by token count.
+Each rank refers to a project in that snapshot. A priced zero, a partially priced
+project and a project with no price evidence have distinct states. Snapshots and
+`usage.query` also carry USD values computed using the saved conversion setting.
+Monthly cache savings are shown separately from the input, cache and output costs.
+
 Normal UI calls travel from Electron to the sidecar as correlated `request` / `response`
 messages. Native dialogs use the same private stream in the reverse direction:
 

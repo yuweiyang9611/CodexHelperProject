@@ -21,7 +21,14 @@ public sealed record UsageAnalysisRequest(
     string? Model = null,
     string? Project = null,
     int Page = 1,
-    int PageSize = 25);
+    int PageSize = 25)
+{
+    // Set by the host from saved settings; participates in the cached selection key.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double AmountPerThousandCredits { get; init; } = UsageCredits.DefaultAmountPerThousandCredits;
+}
+
+public sealed record RateAmounts(double Input, double CachedInput, double Output);
 
 /// <summary>Disjoint, deduplicated contribution. Null session/breakdown identifies an old aggregate remainder.</summary>
 public sealed record UsageAnalysisEntry(
@@ -38,10 +45,12 @@ public sealed record UsageAnalysisEntry(
     ModelCreditRate? Rate,
     string Source,
     string? Explanation = null,
-    IReadOnlyList<string>? AvailableBreakdownFields = null);
+    IReadOnlyList<string>? AvailableBreakdownFields = null,
+    double? Amount = null,
+    RateAmounts? AmountsPerMillion = null);
 
 /// <summary>Historical whole-day estimate, kept separately from repriced detail; never an additive cost.</summary>
-public sealed record UsageLegacyEstimate(DateOnly Date, long Tokens, double CreditsUsed, string Explanation);
+public sealed record UsageLegacyEstimate(DateOnly Date, long Tokens, double CreditsUsed, string Explanation, double? Amount = null);
 
 public sealed record UsageAnalysisData(
     IReadOnlyList<UsageAnalysisEntry> Entries,
@@ -55,7 +64,8 @@ public sealed record UsageAnalysisTotals(
     long RatedTokens,
     long UnratedTokens,
     long UnattributedTokens,
-    IReadOnlyList<string>? AvailableBreakdownFields = null);
+    IReadOnlyList<string>? AvailableBreakdownFields = null,
+    UsageAmount? Valuation = null);
 
 public sealed record UsageAnalysisGroup(string Id, string Label, UsageAnalysisTotals Totals);
 public sealed record UsageAnalysisDay(DateOnly Date, UsageAnalysisTotals Totals);
@@ -104,4 +114,5 @@ public sealed record UsageAnalysisResult(
     IReadOnlyList<UsageProjectOption> AvailableProjects,
     IReadOnlyList<string> Diagnostics,
     IReadOnlyList<UsageMissingRate>? MissingRates = null,
-    IReadOnlyList<ModelCreditRate>? AppliedRates = null);
+    IReadOnlyList<ModelCreditRate>? AppliedRates = null,
+    double AmountPerThousandCredits = UsageCredits.DefaultAmountPerThousandCredits);

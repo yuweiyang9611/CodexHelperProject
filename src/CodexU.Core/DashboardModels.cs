@@ -182,7 +182,8 @@ public sealed record TokenPeriod(
     IReadOnlyList<ModelCreditUsage> CreditsByModel,
     DataQuality Quality,
     long MissingRateTokens = 0,
-    long IncompleteBreakdownTokens = 0);
+    long IncompleteBreakdownTokens = 0,
+    UsageAmount? Valuation = null);
 
 public sealed record TokenSummary(
     TokenPeriod Today,
@@ -205,12 +206,16 @@ public sealed record DailyUsage(
     double CreditsUsed,
     DataQuality Quality,
     string Source = "live",
-    IReadOnlyList<UsageDistributionSlice>? Distribution = null);
+    IReadOnlyList<UsageDistributionSlice>? Distribution = null,
+    long UnratedTokens = 0,
+    UsageAmount? Valuation = null);
 
 /// <summary>Disjoint local token contributions, after session/fork deduplication.</summary>
 public sealed record UsageDistributionSlice(string Model, string Feature, long Tokens);
 
 public sealed record UsageHistoryStatus(int RetainedSources, int Conflicts, int LegacyDays);
+
+public enum ProjectCostStatus { Unknown, Partial, Known }
 
 public sealed record ProjectUsage(
     string Id,
@@ -222,13 +227,13 @@ public sealed record ProjectUsage(
     string? Branch,
     double? CreditsUsed,
     DataQuality Quality,
-    bool CostIsEstimated = false)
+    bool CostIsEstimated = false,
+    long UnratedTokens = 0)
 {
-    /// <summary>
-    /// Null cost means unknown. Model usage is priced within each project;
-    /// projects without a rated contribution must not appear to have zero cost.
-    /// </summary>
-    public bool HasKnownCost => CreditsUsed is > 0;
+    /// <summary>A zero-priced contribution is still priced. Any remaining unrated tokens make this amount a lower bound.</summary>
+    public ProjectCostStatus CostStatus => !CreditsUsed.HasValue ? ProjectCostStatus.Unknown
+        : UnratedTokens > 0 ? ProjectCostStatus.Partial : ProjectCostStatus.Known;
+    public bool HasKnownCost => CreditsUsed.HasValue;
 }
 
 public sealed record RankedUsage(
@@ -263,10 +268,27 @@ public sealed record DashboardSnapshot(
     [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null,
     DateTimeOffset? ClaudeDesktopQueryObservedAt = null,
     MonthlyValue? MonthlyValue = null,
-    ClaudeQuotaState? ClaudeQuotaState = null)
+    ClaudeQuotaState? ClaudeQuotaState = null,
+    ProjectRanking? ProjectRanking = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public bool LocalReadFailed { get; init; }
+
+    public DashboardSnapshot WithValuation(AppSettings settings)
+    {
+        var conversion = settings.AmountPerThousandCredits;
+        TokenPeriod Price(TokenPeriod period) => period with { Valuation = UsageAmount.FromPeriod(period, conversion) };
+        return this with
+        {
+            MonthlyValue = MonthlyValue.Calculate(this, settings),
+            ProjectRanking = ProjectRanking.Calculate(this, settings),
+            Tokens = new(Price(Tokens.Today), Price(Tokens.SevenDays), Price(Tokens.Month), Price(Tokens.Lifetime)),
+            DailyUsage = DailyUsage.Select(day => day with
+            {
+                Valuation = UsageAmount.FromPeriod(day.Tokens, day.CreditsUsed, day.UnratedTokens, day.Quality, conversion)
+            }).ToArray()
+        };
+    }
 
     public static DashboardSnapshot Empty(AgentRuntime runtime, params string[] diagnostics) => new(
         runtime,

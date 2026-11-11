@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { formatUsageAmount } from '../format'
+import type { UsageAmount } from '../types'
 
 interface Quota { text: string; accessibleText: string; resetText?: string; resetsAt?: string }
 interface Presentation {
@@ -11,7 +13,7 @@ interface Presentation {
 interface SurfaceData {
   presentation?: Presentation; expanded?: boolean; theme?: string
   statusStripPositionLocked?: boolean; statusStripShowTodayTokens?: boolean
-  todayAmount?: number; error?: string; refreshing?: boolean; refreshError?: string
+  todayValuation?: UsageAmount; error?: string; refreshing?: boolean; refreshError?: string
 }
 declare global {
   interface Window {
@@ -47,7 +49,7 @@ onUnmounted(() => unsubscribe?.())
       <p v-if="desktop || data.statusStripShowTodayTokens">今日 Token <strong>{{ data.presentation?.today.text || '--' }}</strong></p>
       <p>近 7 天 <strong>{{ data.presentation?.sevenDays.text || '--' }}</strong></p>
       <p>累计 <strong>{{ data.presentation?.lifetime.text || '--' }}</strong></p>
-      <p>今日等效金额 <strong>US${{ (data.todayAmount || 0).toFixed(2) }}</strong></p>
+      <p>今日等效金额 <strong>{{ formatUsageAmount(data.todayValuation) }}</strong></p>
       <p :title="data.presentation?.statusToolTip">{{ data.refreshing ? '刷新中…' : (data.refreshError || data.presentation?.statusText || '等待数据') }}</p>
       <nav>
         <button :disabled="busy || data.refreshing" @click="action('refresh')">{{ busy || data.refreshing ? '刷新中' : '刷新' }}</button>

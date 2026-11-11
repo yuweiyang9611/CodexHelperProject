@@ -38,9 +38,9 @@ test('only user moves persist; recovery survives restart and clears pending save
   const file = path.join(root, 'status-strip-placement.json');
   try {
     host.update({ statusStripEnabled: true, statusStripShowTodayTokens: false, statusStripQuotaMode: 'dual',
-      todayAmount: 42, presentation: { title: 'Codex', quotaText: '72%', todayTokensText: '420K' } });
+      todayValuation: { knownAmount: 42, isLowerBound: true }, presentation: { title: 'Codex', quotaText: '72%', todayTokensText: '420K' } });
     await host.request('ready');
-    assert.equal(lastSurface.todayAmount, 42);
+    assert.deepEqual(lastSurface.todayValuation, { knownAmount: 42, isLowerBound: true });
     assert.equal(lastSurface.statusStripQuotaMode, 'dual');
     assert.equal(lastSurface.presentation.todayTokensText, '420K');
     await host.control({ action: 'preview', settings: { theme: 'dark', statusStripShowTodayTokens: true } });

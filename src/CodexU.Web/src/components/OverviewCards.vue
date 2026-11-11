@@ -16,13 +16,11 @@ const snapshotRef = computed<DashboardSnapshot | null>(() => props.snapshot)
 const {
   monthlyValue,
   valueProgress,
-  monthlyCreditBreakdown,
-  money,
   amountMoney,
   creditTooltip,
 } = useEquivalentValue(snapshotRef)
 
-const amountAvailable = computed(() => props.snapshot.tokens.month.quality !== 'unavailable' && monthlyValue.value != null)
+const amountAvailable = computed(() => monthlyValue.value?.knownAmount != null)
 const lowerBound = computed(() => amountAvailable.value && monthlyValue.value?.isLowerBound ? '≥ ' : '')
 const monthlyLabel = computed(() => monthlyValue.value?.subscriptionSource === 'manual' ? '手动'
   : monthlyValue.value?.subscriptionSource === 'auto' ? '自动' : '未知')
@@ -130,22 +128,22 @@ function splitPercentage(value?: number | null): string {
             <span class="info-icon">i</span>
             <div class="credit-popover">
               <div class="credit-popover-heading"><strong>本月金额明细</strong><span>按模型和 Token 类型核算后换算</span></div>
-              <template v-for="model in snapshot.tokens.month.creditsByModel" :key="model.model">
+              <template v-for="model in monthlyValue?.models" :key="model.model">
                 <div class="credit-model-row">
                   <strong>{{ model.model }}</strong>
-                  <span>未缓存输入 {{ money(model.inputCredits) }}</span>
-                  <span>缓存输入 {{ money(model.cachedInputCredits) }}</span>
-                  <span v-if="model.cacheWriteCredits">缓存写入 {{ money(model.cacheWriteCredits) }}</span>
-                  <span>输出 {{ money(model.outputCredits) }}</span>
-                  <em>{{ money(model.totalCredits) }}</em>
+                  <span>未缓存输入 {{ amountMoney(model.input) }}</span>
+                  <span>缓存输入 {{ amountMoney(model.cachedInput) }}</span>
+                  <span v-if="model.cacheWrite">缓存写入 {{ amountMoney(model.cacheWrite) }}</span>
+                  <span>输出 {{ amountMoney(model.output) }}</span>
+                  <em>{{ amountMoney(model.total) }}</em>
                 </div>
                 <div v-if="model.rateVersions?.length" class="credit-version-list">
                   <span v-for="version in model.rateVersions" :key="`${version.catalogVersion}-${version.effectiveFrom ?? 'baseline'}-${version.source}`">
-                    {{ version.catalogVersion }} · {{ version.effectiveFrom ?? '全部历史' }} · {{ version.source }} · {{ money(version.totalCredits) }}
+                    {{ version.catalogVersion }} · {{ version.effectiveFrom ?? '全部历史' }} · {{ version.source }} · {{ amountMoney(version.total) }}
                   </span>
                 </div>
               </template>
-              <div v-if="!snapshot.tokens.month.creditsByModel.length" class="credit-empty">暂无可核算的模型数据</div>
+              <div v-if="!monthlyValue?.models?.length" class="credit-empty">暂无可核算的模型数据</div>
             </div>
           </div>
           <button class="value-toggle" type="button" :aria-expanded="valueExpanded" @click="valueExpanded = !valueExpanded">
@@ -163,15 +161,15 @@ function splitPercentage(value?: number | null): string {
           <span><small>回本倍数</small><strong>{{ monthlyValue?.paybackMultiple != null ? lowerBound + monthlyValue.paybackMultiple.toFixed(1) + '×' : '无法计算' }}</strong></span>
         </div>
         <div class="value-breakdown">
-          <span><small>输入与写入</small><strong>{{ money(monthlyCreditBreakdown.input + monthlyCreditBreakdown.cacheWrite, true) }}</strong></span>
-          <span><small>缓存读取</small><strong>{{ money(monthlyCreditBreakdown.cached, true) }}</strong></span>
-          <span><small>模型输出</small><strong>{{ money(monthlyCreditBreakdown.output, true) }}</strong></span>
-          <span class="saved"><small>缓存省下</small><strong>{{ money(monthlyCreditBreakdown.saved, true) }}</strong></span>
+          <span><small>输入与写入</small><strong>{{ monthlyValue?.breakdown ? lowerBound + amountMoney(monthlyValue.breakdown.inputAndWrites, true) : '--' }}</strong></span>
+          <span><small>缓存读取</small><strong>{{ monthlyValue?.breakdown ? lowerBound + amountMoney(monthlyValue.breakdown.cachedInput, true) : '--' }}</strong></span>
+          <span><small>模型输出</small><strong>{{ monthlyValue?.breakdown ? lowerBound + amountMoney(monthlyValue.breakdown.output, true) : '--' }}</strong></span>
+          <span class="saved"><small>缓存省下</small><strong>{{ monthlyValue?.breakdown ? lowerBound + amountMoney(monthlyValue.breakdown.cachedSavings, true) : '--' }}</strong></span>
         </div>
         <div class="value-bottom">
           <div>
             <span>本月本机原始 {{ compactNumber(snapshot.tokens.month.tokens) }} Token</span>
-            <small v-if="monthlyValue?.coveragePercent != null">已核算 {{ monthlyValue.coveragePercent.toFixed(1) }}% · {{ snapshot.tokens.month.creditsByModel.length }} 个模型</small>
+            <small v-if="monthlyValue?.coveragePercent != null">已核算 {{ monthlyValue.coveragePercent.toFixed(1) }}% · {{ monthlyValue?.models?.length ?? 0 }} 个模型</small>
             <small v-if="snapshot.tokens.month.unratedTokens">未核算 {{ compactNumber(snapshot.tokens.month.unratedTokens) }} Token<span v-if="snapshot.tokens.month.missingRateTokens"> · 缺费率 {{ compactNumber(snapshot.tokens.month.missingRateTokens) }}</span><span v-if="snapshot.tokens.month.incompleteBreakdownTokens"> · 缺计价分项 {{ compactNumber(snapshot.tokens.month.incompleteBreakdownTokens) }}</span></small>
           </div>
           <div>

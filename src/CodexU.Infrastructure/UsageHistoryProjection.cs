@@ -100,7 +100,8 @@ internal static class UsageHistoryProjection
                 priced.Tokens, group.Where(e => e.SessionId is not null).Select(e => e.SessionId).Distinct().Count(),
                 new DateTimeOffset(group.Max(e => e.Date).ToDateTime(TimeOnly.MinValue)), projectBranches.GetValueOrDefault(group.Key),
                 priced.CreditsUsed,
-                group.Any(e => e.Source == "legacy") ? DataQuality.Approximate : quality);
+                group.Any(e => e.Source == "legacy") ? DataQuality.Approximate : quality,
+                UnratedTokens: priced.UnratedTokens);
         }).ToList();
         var days = Enumerable.Range(0, 182).Select(i => today.AddDays(i - 181)).Select(date =>
         {
@@ -109,7 +110,7 @@ internal static class UsageHistoryProjection
                 legacy.ContainsKey(date) ? "legacy" : daySources.GetValueOrDefault(date, "live"),
                 legacy.ContainsKey(date)
                     ? LegacyDistribution(legacy[date].Tokens.VisibleTotalTokens, measured.GetValueOrDefault(date) ?? [])
-                    : Distribution(measured.GetValueOrDefault(date) ?? []));
+                    : Distribution(measured.GetValueOrDefault(date) ?? []), day?.UnratedTokens ?? 0);
         }).ToArray();
         return new(new(Period(d => d == today), Period(d => d >= today.AddDays(-6) && d <= today),
             Period(d => d.Year == today.Year && d.Month == today.Month && d <= today), Period(_ => true)), days,

@@ -1,5 +1,6 @@
 export type AgentRuntime = 'codex' | 'claudeCode'
 export type DataQuality = 'detailed' | 'partial' | 'approximate' | 'unavailable'
+export interface UsageAmount { knownAmount?: number | null; isLowerBound: boolean }
 export interface UsageAnalysisRequest {
   runtime: AgentRuntime
   from?: string | null
@@ -10,6 +11,7 @@ export interface UsageAnalysisRequest {
   pageSize: number
 }
 export interface UsageAnalysisTotals {
+  valuation?: UsageAmount | null
   availableBreakdownFields?: string[] | null
   tokens: number
   breakdown: TokenBreakdown
@@ -20,6 +22,8 @@ export interface UsageAnalysisTotals {
   unattributedTokens: number
 }
 export interface UsageAnalysisEntry {
+  amount?: number | null
+  amountsPerMillion?: { input: number; cachedInput: number; output: number } | null
   availableBreakdownFields?: string[] | null
   date: string
   sessionId: string | null
@@ -71,7 +75,7 @@ export interface UsageAnalysisResult {
   page: number
   pageSize: number
   unattributed: UsageAnalysisEntry[]
-  legacyEstimates: { date: string, tokens: number, creditsUsed: number, explanation: string }[]
+  legacyEstimates: { date: string, tokens: number, creditsUsed: number, amount?: number | null, explanation: string }[]
   availableModels: string[]
   availableProjects: { id: string, label: string }[]
   diagnostics: string[]
@@ -124,7 +128,7 @@ export interface CombinedRuntimeSummary {
     unknownSubscriptions: AgentRuntime[]; hasManual: boolean; paybackMultiple?: number | null; netAmount?: number | null
     paybackReason: 'none' | 'unknownSubscription' | 'zeroSubscription' | 'incompleteUsage'
   }
-  projects: { id: string; name: string; branch?: string | null; tokens: number; amount?: number | null; costIsEstimated: boolean; lastActiveAt?: string | null;
+  projects: { id: string; name: string; branch?: string | null; tokens: number; amount?: number | null; costStatus: ProjectCostStatus; costIsEstimated: boolean; lastActiveAt?: string | null;
     runtimes: AgentRuntime[]; threadCounts: Partial<Record<AgentRuntime, number>>; quality: DataQuality }[]
   forecasts: { runtime: AgentRuntime; weekly: boolean; exhaustsAt: string; validUntil?: string | null; predictable: number; total: number }[]
   diagnostics: string[]
@@ -159,6 +163,7 @@ export interface TokenBreakdown {
 }
 
 export interface TokenPeriod {
+  valuation?: UsageAmount | null
   tokens: number
   breakdown: TokenBreakdown
   creditsUsed: number
@@ -213,12 +218,22 @@ export interface TaskItem {
 }
 
 export interface DailyUsage {
+  valuation?: UsageAmount | null
   distribution?: { model: string, feature: string, tokens: number }[] | null
   source?: 'live' | 'retained' | 'legacy' | 'conflict'
   date: string
   tokens: number
   creditsUsed: number
   quality: DataQuality
+}
+
+export type ProjectCostStatus = 'known' | 'partial' | 'unknown'
+export interface ProjectRankEntry { projectIndex: number; amount?: number | null }
+export interface ProjectRanking {
+  byCost: ProjectRankEntry[]
+  byTokens: ProjectRankEntry[]
+  hasCost: boolean
+  hasEstimatedCost: boolean
 }
 
 export interface ProjectUsage {
@@ -229,8 +244,10 @@ export interface ProjectUsage {
   threadCount: number
   lastActiveAt?: string
   branch?: string
-  /** Absent or zero means the cost is unknown, never that it was free. */
+  /** Zero is a priced amount; no priced records means the amount is absent. */
   creditsUsed?: number
+  costStatus?: ProjectCostStatus
+  unratedTokens?: number
   /** True when the cost was apportioned by token share rather than measured. */
   costIsEstimated?: boolean
   hasKnownCost?: boolean
@@ -423,7 +440,7 @@ export interface TodoItem {
 }
 
 export interface MonthlyValue {
-  knownAmount: number
+  knownAmount?: number | null
   isLowerBound: boolean
   subscriptionAmount?: number | null
   subscriptionSource: 'auto' | 'manual' | 'unknown'
@@ -432,9 +449,15 @@ export interface MonthlyValue {
   paybackStatus: 'unknown' | 'below' | 'reached'
   projectedAmount?: number | null
   coveragePercent?: number | null
+  breakdown?: { inputAndWrites: number; cachedInput: number; output: number; cachedSavings: number } | null
+  models: {
+    model: string; input: number; cachedInput: number; cacheWrite: number; output: number; cachedSavings: number; total: number
+    rateVersions: { catalogVersion: string; source: string; effectiveFrom?: string | null; total: number }[]
+  }[]
 }
 
 export interface DashboardSnapshot {
+  projectRanking?: ProjectRanking
   monthlyValue?: MonthlyValue | null
   claudeQuotaState?: {
     source: 'none' | 'desktopQuery' | 'desktopHistory' | 'statusLine'

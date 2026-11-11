@@ -19,7 +19,7 @@ async function mountSurface(overrides: Partial<SurfaceData> = {}) {
   const data: SurfaceData = {
     expanded: true,
     statusStripShowTodayTokens: true,
-    todayAmount: 12.34,
+    todayValuation: { knownAmount: 12.34, isLowerBound: false },
     presentation: {
       runtimeTitle: 'Claude Code 使用状态', primaryLabel: '5h 剩余', secondaryLabel: '7d 剩余',
       primaryQuota: { text: '75%', accessibleText: '5 小时剩余额度 75%', resetText: '9/22 18:00 刷新' },
@@ -80,6 +80,17 @@ describe('restored rich status strip', () => {
     expect(container.querySelector('header')?.classList.contains('locked')).toBe(true)
     button(container, '展开').click()
     expect(action).toHaveBeenCalledWith('expand')
+  })
+
+  it('replaces a lower bound with unknown on a new reading and preserves a measured zero', async () => {
+    const { container, emit, data } = await mountSurface({ todayValuation: { knownAmount: 5, isLowerBound: true } })
+    expect(container.textContent).toContain('今日等效金额 ≥ US$5.00')
+    emit({ ...data, todayValuation: { isLowerBound: false } })
+    await nextTick()
+    expect(container.textContent).toContain('今日等效金额 金额未知')
+    emit({ ...data, todayValuation: { knownAmount: 0, isLowerBound: false } })
+    await nextTick()
+    expect(container.textContent).toContain('今日等效金额 US$0.00')
   })
 
   it('keeps refresh recovery and host errors visible', async () => {

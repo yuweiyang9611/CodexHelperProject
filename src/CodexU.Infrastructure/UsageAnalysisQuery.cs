@@ -34,6 +34,26 @@ public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<st
         IReadOnlyList<string>? diagnostics)
     {
         var all = data?.Entries ?? [];
+        double Dollars(double credits) => UsageCredits.ToAmount(credits, request.AmountPerThousandCredits);
+        UsageAnalysisEntry ValueEntry(UsageAnalysisEntry entry) => entry with
+        {
+            Amount = entry.CreditsUsed is { } credits ? Dollars(credits) : null,
+            AmountsPerMillion = entry.Rate is { } rate ? new(Dollars(rate.InputCreditsPerMillion),
+                Dollars(rate.CachedInputCreditsPerMillion), Dollars(rate.OutputCreditsPerMillion)) : null
+        };
+        UsageAnalysisTotals ValueTotal(IEnumerable<UsageAnalysisEntry> rows)
+        {
+            var total = Total(rows);
+            return total with
+            {
+                Valuation = new(total.CreditsUsed is { } credits ? Dollars(credits) : null,
+                    total.CreditsUsed.HasValue && total.UnratedTokens > 0)
+            };
+        }
+        UsageAnalysisGroup[] Groups(IEnumerable<UsageAnalysisEntry> rows, Func<UsageAnalysisEntry, string> key,
+            Func<string, string> label) => rows.GroupBy(key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new UsageAnalysisGroup(g.Key, label(g.Key), ValueTotal(g)))
+            .OrderByDescending(g => g.Totals.Tokens).ThenBy(g => g.Id, StringComparer.OrdinalIgnoreCase).ToArray();
         var model = string.IsNullOrWhiteSpace(request.Model) ? null : UsageCredits.NormalizeModel(request.Model);
         var project = NormalizeProjectFilter(request.Project);
         bool DateMatches(DateOnly date) => (request.From is null || date >= request.From)
@@ -70,12 +90,12 @@ public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<st
             var members = group.GroupBy(e => e.SessionId!, StringComparer.Ordinal).Select(member => new UsageSessionMember(
                 member.Key, parents.GetValueOrDefault(member.Key), member.FirstOrDefault(e => e.Title is not null)?.Title,
                 member.Select(e => e.Project).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1 ? member.First().Project : null,
-                member.Min(e => e.Date), member.Max(e => e.Date), Total(member),
+                member.Min(e => e.Date), member.Max(e => e.Date), ValueTotal(member),
                 member.Select(e => e.Source).Distinct().Order().ToArray(),
-                member.OrderBy(e => e.Date).ThenBy(e => e.Model, StringComparer.Ordinal).ToArray()))
+                member.OrderBy(e => e.Date).ThenBy(e => e.Model, StringComparer.Ordinal).Select(ValueEntry).ToArray()))
                 .OrderBy(e => e.Id == group.Key ? 0 : 1).ThenByDescending(e => e.Totals.Tokens).ThenBy(e => e.Id, StringComparer.Ordinal).ToArray();
             return new UsageSessionGroup(group.Key, titles.GetValueOrDefault(group.Key),
-                group.Min(e => e.Date), group.Max(e => e.Date), Total(group), members);
+                group.Min(e => e.Date), group.Max(e => e.Date), ValueTotal(group), members);
         }).ToArray();
 
         var notes = (diagnostics ?? []).ToList();
@@ -88,15 +108,16 @@ public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<st
             notes.Add("来源发生不兼容改写，保留先前确认的历史用量并标记冲突。");
         notes.Add("输入已包含缓存读取及来源支持的缓存写入；推理 Token 已包含在输出中，不能再次相加。分项仅覆盖有明细的用量。");
         var estimates = model is null && project is null
-            ? (data?.LegacyEstimates ?? []).Where(e => DateMatches(e.Date)).OrderBy(e => e.Date).ToArray() : [];
+            ? (data?.LegacyEstimates ?? []).Where(e => DateMatches(e.Date)).OrderBy(e => e.Date)
+                .Select(e => e with { Amount = Dollars(e.CreditsUsed) }).ToArray() : [];
         var result = new UsageAnalysisResult(request.Runtime, request.From, request.To,
             all.Count == 0 ? null : all.Min(e => e.Date), all.Count == 0 ? null : all.Max(e => e.Date),
-            Total(selected), selected.GroupBy(e => e.Date).OrderBy(g => g.Key).Select(g => new UsageAnalysisDay(g.Key, Total(g))).ToArray(),
+            ValueTotal(selected), selected.GroupBy(e => e.Date).OrderBy(g => g.Key).Select(g => new UsageAnalysisDay(g.Key, ValueTotal(g))).ToArray(),
             Groups(selected, e => e.Model, id => id == "unknown" ? "未知模型" : id),
             Groups(selected, e => e.Feature, id => id),
             Groups(selected, e => e.Project ?? UnknownProject, ProjectLabel),
             [], groups.Length, 1, request.PageSize,
-            selected.Where(e => e.SessionId is null).OrderBy(e => e.Date).ToArray(), estimates,
+            selected.Where(e => e.SessionId is null).OrderBy(e => e.Date).Select(ValueEntry).ToArray(), estimates,
             all.Select(e => e.Model).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             all.Select(e => e.Project ?? UnknownProject).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)
                 .Select(id => new UsageProjectOption(id, ProjectLabel(id))).ToArray(), notes.Distinct().ToArray(),
@@ -104,7 +125,8 @@ public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<st
                 .GroupBy(e => (e.Model, e.Date)).OrderBy(g => g.Key.Model).ThenBy(g => g.Key.Date)
                 .Select(g => new UsageMissingRate(g.Key.Model, g.Key.Date, g.Sum(e => e.Tokens))).ToArray(),
             selected.Where(e => e.Rate is not null).Select(e => e.Rate!).Distinct()
-                .OrderBy(e => e.Model, StringComparer.Ordinal).ThenBy(e => e.EffectiveFrom).ToArray());
+                .OrderBy(e => e.Model, StringComparer.Ordinal).ThenBy(e => e.EffectiveFrom).ToArray(),
+            request.AmountPerThousandCredits);
         return (requestedPage, pageSize) =>
         {
             var page = Math.Min(requestedPage, Math.Max(1, (groups.Length + pageSize - 1) / pageSize));
@@ -153,11 +175,6 @@ public sealed class UsageAnalysisQuery(UsageAnalysisData? data, IReadOnlyList<st
             rows.Where(e => e.SessionId is null).Sum(e => e.Tokens),
             available?.ToArray() ?? []);
     }
-
-    private static UsageAnalysisGroup[] Groups(IEnumerable<UsageAnalysisEntry> entries,
-        Func<UsageAnalysisEntry, string> key, Func<string, string> label) => entries.GroupBy(key, StringComparer.OrdinalIgnoreCase)
-        .Select(g => new UsageAnalysisGroup(g.Key, label(g.Key), Total(g)))
-        .OrderByDescending(g => g.Totals.Tokens).ThenBy(g => g.Id, StringComparer.OrdinalIgnoreCase).ToArray();
 
     private static string ProjectLabel(string id) => id == UnknownProject ? "未知项目" : Path.GetFileName(id.TrimEnd('/', '\\')) is { Length: > 0 } name ? name : id;
 }

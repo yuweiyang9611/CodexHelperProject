@@ -131,6 +131,9 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
                 DataQuality.Detailed, null, false, 0, 0, default);
             Assert.Equal(0, projection.Tokens.Lifetime.CreditsUsed);
             Assert.Equal(100, projection.Tokens.Lifetime.UnratedTokens);
+            var project = Assert.Single(projection.Projects);
+            Assert.Equal(ProjectCostStatus.Unknown, project.CostStatus);
+            Assert.Equal(100, project.UnratedTokens);
             Assert.Equal(12, Assert.Single(projection.AnalysisData.LegacyEstimates).CreditsUsed);
             Assert.Equal("legacy", projection.Daily.Last().Source);
             Assert.Equal(new UsageDistributionSlice("unknown", "unknown", 100), Assert.Single(projection.Daily.Last().Distribution!));

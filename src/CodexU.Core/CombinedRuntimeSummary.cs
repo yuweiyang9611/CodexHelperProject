@@ -13,7 +13,7 @@ public sealed record CombinedCost(double? KnownAmount, bool IsLowerBound, double
     IReadOnlyList<AgentRuntime> UnknownSubscriptions, bool HasManual, double? PaybackMultiple,
     double? NetAmount, CombinedPaybackReason PaybackReason);
 
-public sealed record CombinedProject(string Id, string Name, string? Branch, long Tokens, double? Amount,
+public sealed record CombinedProject(string Id, string Name, string? Branch, long Tokens, double? Amount, ProjectCostStatus CostStatus,
     bool CostIsEstimated, DateTimeOffset? LastActiveAt, IReadOnlyList<AgentRuntime> Runtimes,
     IReadOnlyDictionary<AgentRuntime, int> ThreadCounts, DataQuality Quality);
 
@@ -30,7 +30,7 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
         // Settings may change between the two asynchronous reads. Use one price basis.
         RuntimeReadResult Revalue(RuntimeReadResult read) => read.ReadFailed ? read : read with
         {
-            Snapshot = read.Snapshot with { MonthlyValue = MonthlyValue.Calculate(read.Snapshot, settings) }
+            Snapshot = read.Snapshot.WithValuation(settings)
         };
         codex = Revalue(codex);
         claude = Revalue(claude);
@@ -42,14 +42,14 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
             var rows = present.Select(s => select(s.Tokens)).ToArray();
             var quality = rows.Select(p => p.Quality).DefaultIfEmpty(DataQuality.Unavailable).Max();
             if (failed.Length > 0 && quality == DataQuality.Detailed) quality = DataQuality.Partial;
-            var known = rows.Where(p => p.Quality != DataQuality.Unavailable).ToArray();
+            var known = rows.Where(p => p.Valuation?.KnownAmount is not null).ToArray();
             var partial = failed.Length > 0 || known.Length != rows.Length || rows.Any(p => p.UnratedTokens > 0);
             var credits = known.Sum(p => p.CreditsUsed);
             return new(rows.Sum(p => p.Tokens), rows.Sum(p => p.UnratedTokens), credits,
                 known.Length == 0 ? null : UsageCredits.ToAmount(credits, settings.AmountPerThousandCredits), quality, partial);
         }
         var periods = new CombinedPeriods(Period(p => p.Today), Period(p => p.SevenDays), Period(p => p.Month));
-        return new(codex, claude, new(periods, ProjectCost(reads, periods.Month), MergeProjects(present, settings),
+        return new(codex, claude, new(periods, ProjectCost(reads, periods.Month), MergeProjects(present, settings, failed.Length > 0),
             ForecastsFor(present), reads.SelectMany(r => r.Snapshot.Diagnostics.Select(d =>
                 (r.Snapshot.Runtime == AgentRuntime.Codex ? "Codex：" : "Claude Code：") + d)).ToArray(),
             present.Min(s => (DateTimeOffset?)s.RefreshedAt), failed));
@@ -72,7 +72,7 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
             reason == CombinedPaybackReason.None ? month.Amount - subscription : null, reason);
     }
 
-    private static IReadOnlyList<CombinedProject> MergeProjects(DashboardSnapshot[] snapshots, AppSettings settings)
+    private static IReadOnlyList<CombinedProject> MergeProjects(DashboardSnapshot[] snapshots, AppSettings settings, bool missingRuntime)
     {
         var projects = snapshots.SelectMany(s => s.Projects.Select(p => (s.Runtime, Project: p))).ToArray();
         // An unidentified path stays a separate row even when another project shares its label.
@@ -83,11 +83,15 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
                 var rows = group.Select(item => item.row).ToArray();
                 var first = rows[0].Project;
                 var latest = rows.OrderByDescending(r => r.Project.LastActiveAt).First().Project;
-                double? amount = rows.All(r => r.Project.CreditsUsed.HasValue)
-                    ? UsageCredits.ToAmount(rows.Sum(r => r.Project.CreditsUsed!.Value), settings.AmountPerThousandCredits) : null;
+                var priced = rows.Where(r => r.Project.CreditsUsed.HasValue).ToArray();
+                var costStatus = priced.Length == 0 ? ProjectCostStatus.Unknown
+                    : missingRuntime || rows.Any(r => r.Project.CostStatus != ProjectCostStatus.Known)
+                        ? ProjectCostStatus.Partial : ProjectCostStatus.Known;
+                double? amount = priced.Length == 0 ? null
+                    : UsageCredits.ToAmount(priced.Sum(r => r.Project.CreditsUsed!.Value), settings.AmountPerThousandCredits);
                 var threads = rows.GroupBy(r => r.Runtime).ToDictionary(g => g.Key, g => g.Sum(r => r.Project.ThreadCount));
                 return new CombinedProject(first.Id, first.Name, latest.Branch, rows.Sum(r => r.Project.Tokens),
-                    amount, rows.Any(r => r.Project.CostIsEstimated), latest.LastActiveAt, threads.Keys.ToArray(),
+                    amount, costStatus, priced.Any(r => r.Project.CostIsEstimated), latest.LastActiveAt, threads.Keys.ToArray(),
                     threads, rows.Max(r => r.Project.Quality));
             }).OrderByDescending(p => p.Tokens).ToArray();
     }

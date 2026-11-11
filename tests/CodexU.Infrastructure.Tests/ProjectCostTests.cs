@@ -6,8 +6,10 @@ namespace CodexU.Infrastructure.Tests;
 
 public sealed class ProjectCostTests
 {
-    [Fact]
-    public async Task ClaudeProjects_ReportMeasuredCostAndTheirBranch()
+    [Theory]
+    [InlineData(100d, 10d, 200d, 0.4d)]
+    [InlineData(0d, 0d, 0d, 0d)]
+    public async Task ClaudeProjects_ReportMeasuredCostAndTheirBranch(double inputRate, double cacheRate, double outputRate, double expected)
     {
         var root = Path.Combine(Path.GetTempPath(), $"codexu-projcost-{Guid.NewGuid():N}");
         var claude = Path.Combine(root, ".claude");
@@ -22,7 +24,7 @@ public sealed class ProjectCostTests
                 Line(root, now, 1_000, 500, "feature/current"),
             ]);
 
-            var rates = new[] { new ModelCreditRate("claude-opus-5", 100, 10, 200) };
+            var rates = new[] { new ModelCreditRate("claude-opus-5", inputRate, cacheRate, outputRate) };
             var result = await new ClaudeCodeUsageReader(
                 CreatePaths(root, claude),
                 customRates: rates,
@@ -30,6 +32,9 @@ public sealed class ProjectCostTests
 
             var project = Assert.Single(result.Projects);
             Assert.True(project.HasKnownCost);
+            Assert.Equal(ProjectCostStatus.Known, project.CostStatus);
+            Assert.Equal(expected, project.CreditsUsed!.Value, 8);
+            Assert.Equal(0, project.UnratedTokens);
             // Claude attributes usage per message, so this is measured, not apportioned.
             Assert.False(project.CostIsEstimated);
             // The newest message decides the branch, not whichever line was read last.
@@ -68,31 +73,14 @@ public sealed class ProjectCostTests
             Assert.True(project.Tokens > 0);
             Assert.Null(project.CreditsUsed);
             Assert.False(project.HasKnownCost);
+            Assert.Equal(ProjectCostStatus.Unknown, project.CostStatus);
+            Assert.Equal(project.Tokens, project.UnratedTokens);
         }
         finally
         {
             Directory.Delete(root, recursive: true);
         }
     }
-
-    [Fact]
-    public void ProjectUsage_TreatsAbsentAndZeroCostAsUnknown()
-    {
-        Assert.False(Project(null).HasKnownCost);
-        Assert.False(Project(0).HasKnownCost);
-        Assert.True(Project(0.01).HasKnownCost);
-    }
-
-    private static ProjectUsage Project(double? credits) => new(
-        "id",
-        "name",
-        null,
-        1_000,
-        1,
-        null,
-        null,
-        credits,
-        DataQuality.Detailed);
 
     private static string Line(string cwd, DateTimeOffset timestamp, long input, long output, string branch) =>
         JsonSerializer.Serialize(new
