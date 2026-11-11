@@ -1,5 +1,26 @@
 import { expect, test } from '@playwright/test'
 import { openTab, settleUi } from './demo'
+import { CLAUDE_DESKTOP_QUERY_INSTRUCTION } from '../../src/quotaPresentation'
+
+test('copies the stale query instruction with clipboard permission requests blocked', async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-dark-100', 'One Chromium project verifies user-gesture clipboard handling.')
+  await context.grantPermissions(['clipboard-read'])
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.clipboard, 'writeText', { value: () => Promise.reject(new Error('Permission denied')) })
+  })
+  await page.goto('/?visualTest=1&claudeDesktopQuery=1&staleQuery=1')
+  await page.getByRole('button', { name: 'Claude Code', exact: true }).click()
+  const card = page.locator('.overview-grid .quota-card')
+  await expect(card.locator('.query-actions time')).toHaveAttribute('datetime', '2026-11-01T08:55:00.000Z')
+  await card.getByRole('button', { name: '复制查询指令' }).click()
+  await expect(card.getByRole('status')).toContainText('已复制')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(CLAUDE_DESKTOP_QUERY_INSTRUCTION)
+
+  await openTab(page, 'combined')
+  const combined = page.locator('.combined-runtime-column').filter({ has: page.getByText('Claude Code', { exact: true }) })
+  await expect(combined.locator('.query-actions time')).toHaveAttribute('datetime', '2026-11-01T08:55:00.000Z')
+  await expect(combined.getByRole('button', { name: '复制查询指令' })).toBeVisible()
+})
 
 test('Desktop quota samples and manual subscription are clear in both views', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-dark-100', 'One explicit synthetic scenario covers Desktop source presentation.')
@@ -18,7 +39,8 @@ test('Desktop quota samples and manual subscription are clear in both views', as
   await expect(quota.locator('.sample-time').first()).toContainText('本地时间 · 非实时')
   await expect(quota.locator('.reset-time')).toHaveText(['来源未提供重置时间', '来源未提供重置时间'])
   await expect(quota).toContainText('超过 30 分钟')
-  await expect(quota).toContainText('订阅档位未识别')
+  await expect(quota).toContainText('订阅月费 US$100.00（手动）')
+  await expect(quota).not.toContainText('订阅档位未识别')
   await expect(quota.locator('.burn-down')).toHaveCount(0)
   await expect(overview.locator('.quota-risk-notice')).toHaveCount(0)
   await page.getByRole('button', { name: '展开明细' }).click()

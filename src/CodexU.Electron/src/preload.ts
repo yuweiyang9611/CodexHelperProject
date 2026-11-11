@@ -14,6 +14,8 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set([
   'usage.query',
   'runtime.select',
   'settings.get',
+  'settings.pickClaudeTranscript',
+  'settings.validateClaudeTranscript',
   'settings.update',
   'statusStrip.getState',
   'statusStrip.preview',

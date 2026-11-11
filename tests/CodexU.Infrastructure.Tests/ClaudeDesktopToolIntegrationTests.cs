@@ -24,6 +24,7 @@ public sealed class ClaudeDesktopToolIntegrationTests
         Assert.Equal(27, result.PrimaryQuota?.UsedPercent);
         Assert.Equal(Now.AddHours(2), result.PrimaryQuota?.ResetsAt);
         Assert.Equal("claude-desktop-get-usage", result.PrimaryQuota?.Source);
+        Assert.Equal(Now.AddMinutes(-1), result.ClaudeDesktopQueryObservedAt);
         Assert.Null(result.SecondaryQuota);
         Assert.Null(result.Account);
     }
@@ -61,6 +62,7 @@ public sealed class ClaudeDesktopToolIntegrationTests
         Assert.Null(result.PrimaryQuota);
         Assert.Equal(42, result.SecondaryQuota?.UsedPercent);
         Assert.Equal("claude-desktop-history", result.SecondaryQuota?.Source);
+        Assert.Equal(stale ? Now.AddMinutes(-16) : Now, result.ClaudeDesktopQueryObservedAt);
         Assert.Null(result.SecondaryQuota?.ResetsAt);
         Assert.Contains(result.Diagnostics, line => line.Contains("Claude Desktop 原生额度", StringComparison.Ordinal));
     }

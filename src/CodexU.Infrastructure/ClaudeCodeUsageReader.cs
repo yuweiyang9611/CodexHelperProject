@@ -70,7 +70,7 @@ public sealed partial class ClaudeCodeUsageReader(
             diagnostics.Add($"Claude Code 有 {lifetimePeriod.UnratedTokens:N0} tokens 尚未配置点数费率");
         }
 
-        var (account, primary, secondary, quotaDiagnostic) = await ReadQuotaSnapshotAsync(cancellationToken);
+        var (account, primary, secondary, quotaDiagnostic, queryObservedAt) = await ReadQuotaSnapshotAsync(cancellationToken);
         diagnostics.Add($"Claude transcripts：已聚合 {parsedFiles} 个文件、{assistantMessages} 条 assistant 消息、{usageEvents} 条 usage");
         diagnostics.Add(quotaDiagnostic);
         if (rateLimitHits > 0)
@@ -110,7 +110,8 @@ public sealed partial class ClaudeCodeUsageReader(
             indexStatus,
             diagnostics.Distinct().ToArray(),
             projection.History,
-            projection.AnalysisData);
+            projection.AnalysisData,
+            queryObservedAt);
     }
 
     private static bool IsAssistantMessage(JsonElement root, out JsonElement message)
@@ -257,16 +258,17 @@ public sealed partial class ClaudeCodeUsageReader(
         }
     }
 
-    private async Task<(AccountSnapshot? Account, RateLimitWindow? Primary, RateLimitWindow? Secondary, string Diagnostic)>
+    private async Task<(AccountSnapshot? Account, RateLimitWindow? Primary, RateLimitWindow? Secondary, string Diagnostic, DateTimeOffset? QueryObservedAt)>
         ReadQuotaSnapshotAsync(CancellationToken cancellationToken)
     {
         var now = Clock.GetUtcNow();
         var queried = await new ClaudeDesktopToolUsageReader(claudeDesktopUsageTranscript).ReadAsync(now, cancellationToken);
+        var queryObservedAt = queried.ObservedAt <= now ? queried.ObservedAt : null;
         if (queried.Success)
         {
             // An explicitly bound, fresh native result owns the entire measurement.
             // A successful empty result must not acquire old windows from another source.
-            return (null, queried.Primary, queried.Secondary, queried.Diagnostic);
+            return (null, queried.Primary, queried.Secondary, queried.Diagnostic, queryObservedAt);
         }
         var statusline = await ReadStatuslineQuotaAsync(now, cancellationToken);
         var desktop = await new ClaudeDesktopQuotaReader(paths.ClaudeDesktopDataDirectory).ReadAsync(now, cancellationToken);
@@ -275,11 +277,11 @@ public sealed partial class ClaudeCodeUsageReader(
             // These sources do not share an authenticated account identity. Choose
             // one whole measurement, never fill a missing window or plan from the
             // other source (a missing 5h window can be intentional on some plans).
-            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried));
+            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried), queryObservedAt);
         }
         var diagnostic = string.IsNullOrEmpty(desktop.Diagnostic)
             ? statusline.Diagnostic : statusline.Diagnostic + "；" + desktop.Diagnostic;
-        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried));
+        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried), queryObservedAt);
     }
 
     private string WithQueryDiagnostic(string diagnostic, ClaudeDesktopToolUsageReadResult queried) =>

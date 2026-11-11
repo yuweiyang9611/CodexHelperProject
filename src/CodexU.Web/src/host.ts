@@ -28,8 +28,10 @@ const visualTestMode = demoParameters.get('visualTest') === '1'
 // Explicit opt-in for synthetic browser QA; native requests never use the mock.
 const desktopQuotaFixture = visualTestMode && demoParameters.get('claudeDesktopQuota') === '1'
 const desktopQueryFixture = visualTestMode && demoParameters.get('claudeDesktopQuery') === '1'
+const demoTranscript = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
 const fixedDemoNow = new Date(desktopQuotaFixture || desktopQueryFixture ? '2026-11-01T18:40:00+09:00' : '2026-07-14T12:00:00+09:00')
 const interactiveHostMethods = new Set([
+  'settings.pickClaudeTranscript',
   'rates.export',
   'rates.import',
   'rates.reset',
@@ -109,7 +111,7 @@ class HostBridge {
       if (desktopQueryFixture) {
         this.mockSettings.claudeAutoDetectSubscriptionAmount = false
         this.mockSettings.claudeMonthlySubscriptionAmount = 100
-        this.mockSettings.claudeDesktopUsageTranscript = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
+        this.mockSettings.claudeDesktopUsageTranscript = demoTranscript
       }
       if (demoParameters.get('pinnedRates') === '1') {
         this.mockSettings.customModelRates = [
@@ -261,6 +263,12 @@ class HostBridge {
       return createDemoSnapshot(this.mockRuntime) as T
     }
     if (method === 'settings.get') return { ...this.mockSettings } as T
+    if (method === 'settings.pickClaudeTranscript') return (visualTestMode ? demoTranscript : null) as T
+    if (method === 'settings.validateClaudeTranscript') {
+      return (visualTestMode && (payload as { path?: string }).path === demoTranscript
+        ? { status: 'fresh', message: '验证通过，已读取有效的 Desktop 额度。', observedAt: demoNow().toISOString() }
+        : { status: 'unavailable', message: '浏览器预览无法读取本地会话文件。' }) as T
+    }
     if (method === 'settings.update') {
       const patch = (payload as { patch?: Partial<AppSettings> }).patch
       if (!patch) throw new Error('设置更新缺少 patch')
@@ -633,9 +641,16 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
   }
   if (isClaude && desktopQueryFixture) {
     const measuredAt = new Date(now - 5 * 60_000).toISOString()
+    if (demoParameters.get('staleQuery') === '1') return {
+      ...result, account: undefined, primaryQuota: undefined, secondaryQuota: undefined,
+      primaryForecast: undefined, secondaryForecast: undefined,
+      claudeDesktopQueryObservedAt: new Date(now - 45 * 60_000).toISOString(),
+      diagnostics: ['Claude Desktop 原生额度：最新原生结果已过期（超过 15 分钟）'],
+    }
     return {
       ...result,
       account: undefined,
+      claudeDesktopQueryObservedAt: measuredAt,
       primaryQuota: { usedPercent: 27, remainingPercent: 73, windowDurationMinutes: 300,
         source: 'claude-desktop-get-usage', measuredAt, resetsAt: new Date(now + 2 * 3_600_000).toISOString() },
       secondaryQuota: { usedPercent: 82, remainingPercent: 18, windowDurationMinutes: 10080,

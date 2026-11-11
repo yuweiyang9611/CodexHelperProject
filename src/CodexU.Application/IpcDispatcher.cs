@@ -142,6 +142,16 @@ public sealed class IpcDispatcher : IDisposable
             case "settings.get":
                 return _session.CurrentSettings;
 
+            case "settings.pickClaudeTranscript":
+                return await _userInteraction.PickOpenFileAsync(
+                    new HostFileDialogRequest("选择 Claude Desktop 额度会话文件", "", ".jsonl",
+                        [new HostFileType("Desktop 会话", ["*.jsonl"])], CheckFileExists: true),
+                    _session.LifetimeToken);
+
+            case "settings.validateClaudeTranscript":
+                return await new ClaudeDesktopToolUsageReader(GetRequiredString(request.Payload, "path").Trim())
+                    .ValidateBindingAsync(DateTimeOffset.UtcNow, _session.LifetimeToken);
+
             case "settings.update":
                 if (!request.Payload.TryGetProperty("patch", out var settingsPatch))
                 {

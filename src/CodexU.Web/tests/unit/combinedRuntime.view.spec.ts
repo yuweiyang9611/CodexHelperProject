@@ -74,6 +74,7 @@ describe('combined subscription amounts', () => {
     const costs = [...container.querySelectorAll('.combined-card')]
       .find(card => card.querySelector('h2')?.textContent === '合计成本')!
     expect(claude.textContent).toContain('US$100.00 · 手动')
+    expect(claude.textContent).not.toContain('订阅档位未识别')
     expect(costs.textContent).toContain('US$300.00')
     expect(costs.textContent).toContain('含手动值')
     expect(costs.textContent).toContain('不代表实际账单')
@@ -86,6 +87,7 @@ describe('combined subscription amounts', () => {
     store.settings.claudeAutoDetectSubscriptionAmount = true
     await nextTick()
     expect(claude.textContent).toContain('无法推算')
+    expect(claude.textContent).toContain('订阅档位未识别')
     expect(costs.textContent).not.toContain('US$400.00')
     expect(costs.textContent).not.toContain('含手动值')
   })

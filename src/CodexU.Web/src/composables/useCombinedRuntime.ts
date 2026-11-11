@@ -137,6 +137,16 @@ type SubscriptionSettings = Partial<Pick<AppSettings,
   'codexAutoDetectSubscriptionAmount' | 'claudeAutoDetectSubscriptionAmount'
   | 'codexMonthlySubscriptionAmount' | 'claudeMonthlySubscriptionAmount'>>
 
+export function resolveSubscription(runtime: AgentRuntime, suggested: number | null | undefined, settings?: SubscriptionSettings | null): CombinedSubscription['perRuntime'][number] {
+  const isClaude = runtime === 'claudeCode'
+  const manual = (isClaude ? settings?.claudeAutoDetectSubscriptionAmount : settings?.codexAutoDetectSubscriptionAmount) === false
+  const amount = manual
+    ? isClaude ? settings?.claudeMonthlySubscriptionAmount : settings?.codexMonthlySubscriptionAmount
+    : suggested
+  if (amount == null || !Number.isFinite(amount) || amount < 0) return { runtime, amount: null, source: 'unknown' }
+  return { runtime, amount, source: manual ? 'manual' : 'auto' }
+}
+
 /**
  * Combines monthly estimates while preserving whether each amount was inferred or
  * explicitly selected by the user. Automatic mode never falls back to a manual
@@ -146,16 +156,7 @@ export function combineSubscription(entries: RuntimeEntry[], settings?: Subscrip
   const inPlay = entries.filter(entry => entry.contribution !== 'absent')
   const perRuntime = inPlay.map((entry): CombinedSubscription['perRuntime'][number] => {
     if (entry.contribution === 'failed') return { runtime: entry.runtime, amount: null, source: 'unknown' }
-    const manual = (entry.runtime === 'claudeCode'
-      ? settings?.claudeAutoDetectSubscriptionAmount
-      : settings?.codexAutoDetectSubscriptionAmount) === false
-    const amount = manual
-      ? entry.runtime === 'claudeCode' ? settings?.claudeMonthlySubscriptionAmount : settings?.codexMonthlySubscriptionAmount
-      : entry.snapshot.account?.suggestedMonthlySubscriptionAmount
-    if (amount == null || !Number.isFinite(amount) || amount < 0) {
-      return { runtime: entry.runtime, amount: null, source: 'unknown' }
-    }
-    return { runtime: entry.runtime, amount, source: manual ? 'manual' : 'auto' }
+    return resolveSubscription(entry.runtime, entry.snapshot.account?.suggestedMonthlySubscriptionAmount, settings)
   })
   const unknownRuntimes = perRuntime.filter(row => row.amount == null).map(row => row.runtime)
   const isComplete = inPlay.length > 0 && unknownRuntimes.length === 0

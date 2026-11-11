@@ -232,6 +232,21 @@ public partial class MainWindow
             case "settings.get":
                 return _settings;
 
+            case "settings.pickClaudeTranscript":
+                var sessionDialog = new OpenFileDialog
+                {
+                    Title = "选择 Claude Desktop 额度会话文件",
+                    DefaultExt = ".jsonl",
+                    Filter = "Desktop 会话 (*.jsonl)|*.jsonl",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+                return sessionDialog.ShowDialog(this) == true ? sessionDialog.FileName : null;
+
+            case "settings.validateClaudeTranscript":
+                return await new ClaudeDesktopToolUsageReader(GetRequiredString(request.Payload, "path").Trim())
+                    .ValidateBindingAsync(DateTimeOffset.UtcNow, _lifetimeCancellation.Token);
+
             case "settings.update":
                 if (!request.Payload.TryGetProperty("patch", out var settingsPatch))
                 {

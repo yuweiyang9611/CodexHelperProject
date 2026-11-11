@@ -258,7 +258,8 @@ public sealed record DashboardSnapshot(
     QuotaForecast? PrimaryForecast = null,
     QuotaForecast? SecondaryForecast = null,
     UsageHistoryStatus? History = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null)
+    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null,
+    DateTimeOffset? ClaudeDesktopQueryObservedAt = null)
 {
     public static DashboardSnapshot Empty(AgentRuntime runtime, params string[] diagnostics) => new(
         runtime,
@@ -327,7 +328,8 @@ public sealed record LocalUsageSnapshot(
     IndexStatus IndexStatus,
     IReadOnlyList<string> Diagnostics,
     UsageHistoryStatus? History = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null,
+    DateTimeOffset? ClaudeDesktopQueryObservedAt = null);
 
 public sealed record AppServerSnapshot(
     AccountSnapshot? Account,

@@ -262,6 +262,12 @@ export interface IndexStatus {
   fullValidationDue?: boolean
 }
 
+export interface ClaudeTranscriptValidation {
+  status: 'fresh' | 'noWindows' | 'missingResult' | 'tooLarge' | 'stale' | 'unavailable'
+  message: string
+  observedAt?: string | null
+}
+
 export interface AppSettings {
   codexHome?: string
   codexExecutable?: string
@@ -388,6 +394,7 @@ export interface TodoItem {
 }
 
 export interface DashboardSnapshot {
+  claudeDesktopQueryObservedAt?: string | null
   history?: { retainedSources: number; conflicts: number; legacyDays: number }
   runtime: AgentRuntime
   refreshedAt: string

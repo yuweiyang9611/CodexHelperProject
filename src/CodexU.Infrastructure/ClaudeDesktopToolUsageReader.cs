@@ -5,15 +5,22 @@ using CodexU.Core;
 
 namespace CodexU.Infrastructure;
 
+public enum ClaudeTranscriptStatus { Fresh, NoWindows, MissingResult, TooLarge, Stale, Unavailable }
+
+public sealed record ClaudeTranscriptValidation(ClaudeTranscriptStatus Status, string Message, DateTimeOffset? ObservedAt);
+
 internal sealed record ClaudeDesktopToolUsageReadResult(
-    bool Success,
+    ClaudeTranscriptStatus Status,
     RateLimitWindow? Primary,
     RateLimitWindow? Secondary,
     DateTimeOffset? ObservedAt,
     string Diagnostic,
-    bool FoundResponse);
+    bool FoundResponse)
+{
+    internal bool Success => Status is ClaudeTranscriptStatus.Fresh or ClaudeTranscriptStatus.NoWindows;
+}
 
-internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
+public sealed class ClaudeDesktopToolUsageReader(string? filePath)
 {
     private const int MaximumFileBytes = 32 * 1024 * 1024;
     private const int MaximumPendingCalls = 64;
@@ -28,10 +35,25 @@ internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
         "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"
     ];
 
+    public async Task<ClaudeTranscriptValidation> ValidateBindingAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var result = await ReadAsync(now, cancellationToken);
+        var message = result.Status switch
+        {
+            ClaudeTranscriptStatus.Fresh => "验证通过，已读取有效的 Desktop 额度。",
+            ClaudeTranscriptStatus.NoWindows => "验证通过，最近一次查询没有返回仍有效的一般额度窗口。",
+            ClaudeTranscriptStatus.MissingResult => "会话文件可读，尚未找到查询结果。请在此 Desktop 会话中执行额度更新指令。",
+            ClaudeTranscriptStatus.TooLarge => "会话文件超过 32 MiB。请新建专用于额度查询的 Desktop 会话，执行更新指令后选择新文件。",
+            ClaudeTranscriptStatus.Stale => "查询结果已过期。请在此 Desktop 会话中执行额度更新指令。",
+            _ => result.Diagnostic
+        };
+        return new(result.Status, message, result.ObservedAt);
+    }
+
     internal async Task<ClaudeDesktopToolUsageReadResult> ReadAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var latest = Unavailable("未找到匹配的原生工具结果");
+        var latest = Unavailable("未找到匹配的原生工具结果", status: ClaudeTranscriptStatus.MissingResult);
         try
         {
             var path = ValidatePath(filePath, out var sessionId);
@@ -40,7 +62,7 @@ internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
             await using var source = new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             var length = source.Length;
-            if (length > MaximumFileBytes) return Unavailable("指定会话文件超过 32 MiB 安全上限");
+            if (length > MaximumFileBytes) return Unavailable("指定会话文件超过 32 MiB 安全上限", status: ClaudeTranscriptStatus.TooLarge);
 
             // Capture at most the already-bounded file size. An append must not
             // turn a single read into an unbounded scan of a live transcript.
@@ -93,7 +115,7 @@ internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
                         if (!TryTimestamp(Text(root, "timestamp"), out var observedAt)) continue;
                         var parsed = ClaudeDesktopToolUsageParser.Parse(use, block, observedAt);
                         latest = parsed.Success
-                            ? new(true, parsed.Primary, parsed.Secondary, observedAt,
+                            ? new(ClaudeTranscriptStatus.Fresh, parsed.Primary, parsed.Secondary, observedAt,
                                 "Claude Desktop 原生额度：已读取指定会话的工具结果", true)
                             : Unavailable("最新原生工具结果不可用", foundResponse: true, observedAt);
                     }
@@ -104,12 +126,13 @@ internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
             if (measuredAt - now > MaximumClockSkew)
                 return Unavailable("最新原生结果采样时间在未来（超过 5 分钟）", true, measuredAt);
             if (now - measuredAt > MaximumAge)
-                return Unavailable("最新原生结果已过期（超过 15 分钟），请在 Desktop 重新获取用量", true, measuredAt);
+                return Unavailable("最新原生结果已过期（超过 15 分钟），请在 Desktop 重新获取用量", true, measuredAt, ClaudeTranscriptStatus.Stale);
 
             var primary = DropExpired(latest.Primary, now);
             var secondary = DropExpired(latest.Secondary, now);
             return latest with
             {
+                Status = primary is null && secondary is null ? ClaudeTranscriptStatus.NoWindows : ClaudeTranscriptStatus.Fresh,
                 Primary = primary,
                 Secondary = secondary,
                 Diagnostic = primary is null && secondary is null
@@ -126,8 +149,8 @@ internal sealed class ClaudeDesktopToolUsageReader(string? filePath)
     }
 
     private static ClaudeDesktopToolUsageReadResult Unavailable(
-        string reason, bool foundResponse = false, DateTimeOffset? observedAt = null) =>
-        new(false, null, null, observedAt, "Claude Desktop 原生额度：" + reason, foundResponse);
+        string reason, bool foundResponse = false, DateTimeOffset? observedAt = null, ClaudeTranscriptStatus status = ClaudeTranscriptStatus.Unavailable) =>
+        new(status, null, null, observedAt, "Claude Desktop 原生额度：" + reason, foundResponse);
 
     private static RateLimitWindow? DropExpired(RateLimitWindow? window, DateTimeOffset now) =>
         window?.ResetsAt is { } reset && reset <= now ? null : window;

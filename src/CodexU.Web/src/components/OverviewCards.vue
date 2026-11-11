@@ -84,7 +84,7 @@ function splitPercentage(value?: number | null): string {
           :forecast="snapshot.secondaryForecast"
         />
       </div>
-      <ClaudeDataNotice :snapshot="snapshot" />
+      <ClaudeDataNotice :snapshot="snapshot" show-manual-amount />
     </article>
 
     <article class="glass-card token-card">

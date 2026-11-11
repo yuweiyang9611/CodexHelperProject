@@ -1,8 +1,10 @@
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
-import { createApp, type App } from 'vue'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createApp, nextTick, type App } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OverviewCards from '../../src/components/OverviewCards.vue'
-import { quotaForecast, rateLimitWindow, snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
+import { CLAUDE_DESKTOP_QUERY_INSTRUCTION } from '../../src/quotaPresentation'
+import { useDashboardStore } from '../../src/stores/dashboard'
+import { appSettings, quotaForecast, rateLimitWindow, snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
 
 let pinia: Pinia
 let app: App | null
@@ -28,6 +30,51 @@ function mountOverview(overviewSnapshot: ReturnType<typeof snapshot>) {
 }
 
 describe('OverviewCards local token activity', () => {
+  it('directs an oversized transcript to a new binding', () => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode', diagnostics: ['Claude Desktop 原生额度：指定会话文件超过 32 MiB 安全上限'],
+    })).querySelector('.quota-card')!
+    expect(card.textContent).toContain('绑定新会话')
+    expect(card.querySelector('.query-actions')).toBeNull()
+  })
+  it('shows the saved monthly amount, including zero, until automatic detection is enabled', async () => {
+    const store = useDashboardStore(pinia)
+    store.settings = appSettings({ claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100 })
+    const card = mountOverview(snapshot({ runtime: 'claudeCode' })).querySelector('.quota-card')!
+    expect(card.textContent).toContain('订阅月费 US$100.00（手动）')
+    expect(card.textContent).not.toContain('订阅档位未识别')
+    store.settings.claudeMonthlySubscriptionAmount = 0
+    await nextTick()
+    expect(card.textContent).toContain('订阅月费 US$0.00（手动）')
+    store.settings.claudeAutoDetectSubscriptionAmount = true
+    await nextTick()
+    expect(card.textContent).toContain('订阅档位未识别')
+  })
+
+  it('copies only the fixed query instruction and displays the paired query time beside stale fallback data', async () => {
+    const queryTime = '2026-11-01T09:00:00Z'
+    const fallbackTime = '2026-11-01T10:01:00Z'
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      claudeDesktopQueryObservedAt: queryTime,
+      primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', measuredAt: fallbackTime }),
+      diagnostics: ['Claude Desktop 原生额度：最新原生结果已过期；sensitive-session-id'],
+    })).querySelector('.quota-card')!
+    const update = card.querySelector('.query-actions')!
+    expect(update.querySelector('time')?.dateTime).toBe(queryTime)
+    expect(update.textContent).not.toContain(fallbackTime)
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    try {
+      update.querySelector('button')!.click()
+      await vi.waitFor(() => expect(update.textContent).toContain('已复制'))
+      expect(write).toHaveBeenCalledWith(CLAUDE_DESKTOP_QUERY_INSTRUCTION)
+      write.mockRejectedValueOnce(new Error('denied'))
+      update.querySelector('button')!.click()
+      await vi.waitFor(() => expect(update.querySelector('input')?.value).toBe(CLAUDE_DESKTOP_QUERY_INSTRUCTION))
+    } finally {
+      write.mockRestore()
+    }
+  })
   it.each([
     ['最新原生结果已过期（超过 15 分钟），请在 Desktop 重新获取用量', 'get_usage 结果已过期'],
     ['指定会话无法安全读取，未使用其中的旧结果', 'get_usage 结果不可用'],
@@ -43,6 +90,7 @@ describe('OverviewCards local token activity', () => {
     expect(quotaCard?.textContent).toContain('当前为历史采样')
     expect(quotaCard?.textContent).toContain('请在绑定的 Desktop 会话重新调用 get_usage')
     expect(quotaCard?.textContent).not.toContain('private-person')
+    expect(quotaCard?.querySelector('.query-actions time')).toBeNull()
     expect(quotaCard?.textContent).not.toContain('private-session')
     expect(quotaCard?.textContent).not.toContain('C:\\')
   })
@@ -100,6 +148,7 @@ describe('OverviewCards local token activity', () => {
     const quotaCard = container.querySelector('.quota-card')
     expect(quotaCard?.textContent).toContain('当前没有可用的 Claude 额度采样')
     expect(quotaCard?.textContent).toContain('终端 Claude Code')
+    expect(quotaCard?.querySelector('.query-actions')).toBeNull()
     expect(quotaCard?.textContent).not.toContain('private-person')
   })
 

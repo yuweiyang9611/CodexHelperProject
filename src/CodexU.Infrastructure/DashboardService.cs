@@ -202,7 +202,8 @@ public sealed class DashboardService(
         local.Goals,
         local.TaskLifecycle,
         local.IndexStatus,
-        local.Diagnostics, History: local.History, AnalysisData: local.AnalysisData);
+        local.Diagnostics, History: local.History, AnalysisData: local.AnalysisData,
+        ClaudeDesktopQueryObservedAt: local.ClaudeDesktopQueryObservedAt);
 
     public async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request, CancellationToken cancellationToken = default)
     {

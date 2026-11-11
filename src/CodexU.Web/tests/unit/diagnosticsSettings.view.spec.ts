@@ -2,6 +2,7 @@ import { createApp, nextTick, type App } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DiagnosticsSettings from '../../src/views/DiagnosticsSettings.vue'
+import { host } from '../../src/host'
 import { HOST_CAPABILITY } from '../../src/hostCapabilities'
 import { useDashboardStore } from '../../src/stores/dashboard'
 import { appSettings, snapshot } from './fixtures'
@@ -62,6 +63,46 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
+  it('selects and checks a draft transcript before saving; cancel preserves the selection and result', async () => {
+    const { container, store } = mountSettings([])
+    const path = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
+    const request = vi.spyOn(host, 'request')
+      .mockResolvedValueOnce(path)
+      .mockResolvedValueOnce({ status: 'tooLarge', message: '文件超过 32 MiB，请换用新的专用会话。' })
+      .mockResolvedValueOnce(null)
+    expect(button(container, '验证绑定').disabled).toBe(true)
+    button(container, '选择文件').click()
+    await vi.waitFor(() => expect(button(container, '验证绑定').disabled).toBe(false))
+    expect(store.settingsDraft?.claudeDesktopUsageTranscript).toBe(path)
+    button(container, '验证绑定').click()
+    const feedback = container.querySelector('.binding-feedback')
+    await vi.waitFor(() => expect(feedback?.textContent).toContain('新的专用会话'))
+    expect(request.mock.calls[1]).toEqual(['settings.validateClaudeTranscript', { path }])
+    button(container, '选择文件').click()
+    await vi.waitFor(() => expect(button(container, '选择文件').disabled).toBe(false))
+    expect(store.settingsDraft?.claudeDesktopUsageTranscript).toBe(path)
+    expect(feedback?.textContent).toContain('新的专用会话')
+    expect(store.settings?.claudeDesktopUsageTranscript).toBeFalsy()
+    request.mockRestore()
+  })
+
+  it('drops a late validation result after editing the path', async () => {
+    const { container, store } = mountSettings([])
+    const firstPath = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
+    store.settingsDraft!.claudeDesktopUsageTranscript = firstPath
+    await nextTick()
+    let finish!: (result: unknown) => void
+    const request = vi.spyOn(host, 'request').mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    button(container, '验证绑定').click()
+    store.settingsDraft!.claudeDesktopUsageTranscript = ''
+    await nextTick()
+    finish({ status: 'fresh', message: '已验证' })
+    await vi.waitFor(() => expect(button(container, '选择文件').disabled).toBe(false))
+    expect(container.querySelector('.binding-feedback')?.textContent).toBe('')
+    expect(button(container, '验证绑定').disabled).toBe(true)
+    request.mockRestore()
+  })
+
   it('binds a Desktop usage transcript without changing a manual subscription or sending an update', async () => {
     const { container, store } = mountSettings([], snapshot({ runtime: 'claudeCode' }))
     store.settingsDraft!.claudeMonthlySubscriptionAmount = 100

@@ -1,5 +1,7 @@
 import type { RateLimitWindow } from './types'
 
+export const CLAUDE_DESKTOP_QUERY_INSTRUCTION = '请调用 mcp__ccd_session_mgmt__get_usage 查询当前 Claude 额度和重置时间。'
+
 export function isDesktopQuota(quota?: RateLimitWindow | null): boolean {
   return isDesktopHistoryQuota(quota) || isDesktopQueryQuota(quota)
 }

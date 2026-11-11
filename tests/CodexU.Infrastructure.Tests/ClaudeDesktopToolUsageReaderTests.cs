@@ -279,6 +279,38 @@ public sealed class ClaudeDesktopToolUsageReaderTests
     }
 
     [Fact]
+    public async Task ValidateBindingAsync_ClassifiesResultsWithoutExposingTheTranscript()
+    {
+        using var fixture = new Fixture();
+        var reader = new ClaudeDesktopToolUsageReader(fixture.PathName);
+        async Task CheckAsync(ClaudeTranscriptStatus expected, DateTimeOffset? observedAt = null)
+        {
+            var validation = await reader.ValidateBindingAsync(Now, default);
+            Assert.Equal(expected, validation.Status);
+            Assert.Equal(observedAt, validation.ObservedAt);
+            Assert.DoesNotContain(fixture.Root, validation.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(fixture.SessionId, validation.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("private-content", validation.Message, StringComparison.Ordinal);
+        }
+
+        await CheckAsync(ClaudeTranscriptStatus.Unavailable);
+        await fixture.WriteAsync(fixture.AssistantText("private-content"));
+        await CheckAsync(ClaudeTranscriptStatus.MissingResult);
+        var previous = Now.AddMinutes(-16);
+        await fixture.WriteAsync(fixture.Use("call"), fixture.Result("call", GoodPayload(12, 36), previous.ToString("O")));
+        await CheckAsync(ClaudeTranscriptStatus.Stale, previous);
+        await fixture.WriteAsync(fixture.Use("call"), fixture.Result("call", GoodPayload(12, 36)));
+        await CheckAsync(ClaudeTranscriptStatus.Fresh, Now);
+        await fixture.WriteAsync(fixture.Use("call"), fixture.Result("call", """{"plan":{"status":"ok","windows":[]}}"""));
+        await CheckAsync(ClaudeTranscriptStatus.NoWindows, Now);
+        using (var stream = File.Create(fixture.PathName))
+        {
+            stream.SetLength(32 * 1024 * 1024 + 1);
+        }
+        await CheckAsync(ClaudeTranscriptStatus.TooLarge);
+    }
+
+    [Fact]
     public async Task ReadAsync_HonorsCancellation()
     {
         using var fixture = new Fixture();

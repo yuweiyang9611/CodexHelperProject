@@ -102,10 +102,29 @@ jobs:
         run: dotnet publish src/CodexU.Sidecar/CodexU.Sidecar.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishReadyToRun=false -p:DebugSymbols=false -p:DebugType=None --output src/CodexU.Electron/backend
 
       - name: Verify third-party inventory
+        id: inventory
         shell: powershell
         run: |
           ./tools/Generate-ThirdPartyInventory.ps1
-          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt LICENSES/dotnet-runtime-MIT.txt LICENSES/dotnet-runtime-ThirdPartyNotices.txt
+          $files = @('THIRD-PARTY-INVENTORY.md', 'THIRD-PARTY-LICENSES.txt', 'LICENSES/dotnet-runtime-MIT.txt', 'LICENSES/dotnet-runtime-ThirdPartyNotices.txt')
+          $patch = Join-Path $env:RUNNER_TEMP 'third-party-inventory.patch'
+          git diff --exit-code --binary --output="$patch" -- $files
+          $diffExit = $LASTEXITCODE
+          if ($diffExit -eq 1) {
+            git diff --stat -- $files
+            'mismatch=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            throw 'Generated inventory differs. Download the inventory patch from the workflow artifacts and review it with git apply --stat.'
+          }
+          if ($diffExit -ne 0) { throw "git diff failed with exit code $diffExit." }
+
+      - name: Upload third-party inventory patch
+        if: failure() && steps.inventory.outputs.mismatch == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: third-party-inventory-${{ github.sha }}
+          path: ${{ runner.temp }}/third-party-inventory.patch
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Package Electron Windows app
         working-directory: src/CodexU.Electron

@@ -22,6 +22,8 @@ public static class IpcSecurityPolicy
         "usage.query",
         "runtime.select",
         "settings.get",
+        "settings.pickClaudeTranscript",
+        "settings.validateClaudeTranscript",
         "settings.update",
         "statusStrip.getState",
         "statusStrip.preview",
