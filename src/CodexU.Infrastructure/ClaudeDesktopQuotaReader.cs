@@ -7,7 +7,8 @@ internal sealed record ClaudeDesktopQuotaResult(
     RateLimitWindow? Primary,
     RateLimitWindow? Secondary,
     DateTimeOffset? MeasuredAt,
-    string Diagnostic)
+    string Diagnostic,
+    bool Expired = false)
 {
     internal bool HasQuota => Primary is not null || Secondary is not null;
 }
@@ -63,7 +64,7 @@ internal sealed class ClaudeDesktopQuotaReader(string? dataDirectory)
             if (latest.MeasuredAt > now + MaximumClockSkew)
                 return Unavailable("Claude Desktop 额度：采样时间在未来（超过 5 分钟），已忽略");
             if (now - latest.MeasuredAt > MaximumAge)
-                return Unavailable("Claude Desktop 额度：历史采样已过期（超过 30 分钟），请在 Desktop 中刷新用量");
+                return new(null, null, null, "Claude Desktop 额度：历史采样已过期（超过 30 分钟），请在 Desktop 中刷新用量", Expired: true);
             if (latest.Primary is null && latest.Secondary is null)
                 return Unavailable("Claude Desktop 额度：最新样本没有可识别的 5 小时或 7 天窗口；不会从旧样本补齐");
 

@@ -21,7 +21,7 @@ public sealed record AppSettings(
     int UiScalePercent = 110,
     double AmountPerThousandCredits = UsageCredits.DefaultAmountPerThousandCredits,
     string CreditCurrencySymbol = "US$",
-    // Manual fallbacks used only when a runtime's plan cannot be priced automatically.
+    // Manual prices are used only when automatic subscription pricing is disabled.
     // They are per runtime because the same money question has a different answer per
     // vendor: one shared field defaulting to a ChatGPT price reported US$200 for a
     // Claude user whenever the statusline snapshot was missing. The defaults are each
@@ -61,7 +61,8 @@ public sealed record AppSettings(
             && (!Path.IsPathFullyQualified(ClaudeDesktopUsageTranscript.Trim())
                 || !string.Equals(Path.GetExtension(ClaudeDesktopUsageTranscript.Trim()), ".jsonl", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("Claude Desktop 查询来源必须是完整的本地 JSONL 文件路径。", nameof(ClaudeDesktopUsageTranscript));
-        ValidateCustomRates(CustomModelRates, IsRateCatalogPinned);
+        if (CustomRateError(CustomModelRates, IsRateCatalogPinned) is { } rateError)
+            throw new ArgumentException(rateError, nameof(CustomModelRates));
         ValidatePinnedRateCatalog();
         return this;
     }
@@ -132,7 +133,7 @@ public sealed record AppSettings(
         && !string.IsNullOrWhiteSpace(PinnedRateCatalogVersion)
         && !string.IsNullOrWhiteSpace(PinnedRateCatalogSource);
 
-    private static IReadOnlyList<ModelCreditRate> NormalizeCustomRates(
+    internal static IReadOnlyList<ModelCreditRate> NormalizeCustomRates(
         IReadOnlyList<ModelCreditRate>? rates,
         bool completeCatalog)
     {
@@ -163,20 +164,18 @@ public sealed record AppSettings(
             : ordered;
     }
 
-    private static void ValidateCustomRates(
+    internal static string? CustomRateError(
         IReadOnlyList<ModelCreditRate>? rates,
         bool completeCatalog)
     {
         if (rates is null)
         {
-            return;
+            return null;
         }
 
         if (rates.Count > UsageCredits.MaximumCatalogRateCount)
         {
-            throw new ArgumentException(
-                $"费率目录不能超过 {UsageCredits.MaximumCatalogRateCount} 条。",
-                nameof(CustomModelRates));
+            return $"费率目录不能超过 {UsageCredits.MaximumCatalogRateCount} 条。";
         }
 
         var keys = new HashSet<(string Model, DateOnly? EffectiveFrom)>(ModelRateVersionKeyComparer.Instance);
@@ -185,40 +184,38 @@ public sealed record AppSettings(
         {
             if (rate is null)
             {
-                throw new ArgumentException("费率目录不能包含 null 项。", nameof(CustomModelRates));
+                return "费率目录不能包含 null 项。";
             }
 
             if (string.IsNullOrWhiteSpace(rate.Model) || rate.Model.Trim().Length > 100)
             {
-                throw new ArgumentException("模型名称不能为空且不能超过 100 个字符。", nameof(CustomModelRates));
+                return "模型名称不能为空且不能超过 100 个字符。";
             }
 
-            ValidateRate(rate.InputCreditsPerMillion, "普通输入");
-            ValidateRate(rate.CachedInputCreditsPerMillion, "缓存输入");
-            ValidateRate(rate.OutputCreditsPerMillion, "输出");
+            var priceError = RateError(rate.InputCreditsPerMillion, "普通输入")
+                ?? RateError(rate.CachedInputCreditsPerMillion, "缓存输入")
+                ?? RateError(rate.OutputCreditsPerMillion, "输出");
+            if (priceError is not null) return priceError;
             if (!string.Equals(rate.MatchMode, "exact", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(rate.MatchMode, "prefix", StringComparison.OrdinalIgnoreCase))
             {
-                throw new ArgumentException("费率匹配方式只能是 exact 或 prefix。", nameof(CustomModelRates));
+                return "费率匹配方式只能是 exact 或 prefix。";
             }
 
             var normalized = NormalizeCustomRate(rate);
             if (!keys.Add((normalized.Model, normalized.EffectiveFrom)))
             {
-                throw new ArgumentException(
-                    $"模型 {rate.Model} 在同一生效日期存在重复费率。",
-                    nameof(CustomModelRates));
+                return $"模型 {rate.Model} 在同一生效日期存在重复费率。";
             }
 
             if (!completeCatalog
                 && !UsageCredits.IsBuiltInRate(normalized)
                 && ++customRateCount > UsageCredits.MaximumCustomRateCount)
             {
-                throw new ArgumentException(
-                    $"自定义费率不能超过 {UsageCredits.MaximumCustomRateCount} 条；内置基线不计入该限制。",
-                    nameof(CustomModelRates));
+                return $"自定义费率不能超过 {UsageCredits.MaximumCustomRateCount} 条；内置基线不计入该限制。";
             }
         }
+        return null;
     }
 
     private void ValidatePinnedRateCatalog()
@@ -269,13 +266,9 @@ public sealed record AppSettings(
             ? "prefix"
             : "exact");
 
-    private static void ValidateRate(double value, string field)
-    {
-        if (!double.IsFinite(value) || value < 0 || value > 1_000_000d)
-        {
-            throw new ArgumentException($"{field}费率必须是 0 到 1,000,000 之间的有限数值。", nameof(CustomModelRates));
-        }
-    }
+    private static string? RateError(double value, string field) =>
+        double.IsFinite(value) && value is >= 0 and <= 1_000_000d
+            ? null : $"{field}费率必须是 0 到 1,000,000 之间的有限数值。";
 
     private static double NormalizeRate(double value) =>
         !double.IsFinite(value) || value < 0 ? 0d : Math.Clamp(value, 0d, 1_000_000d);

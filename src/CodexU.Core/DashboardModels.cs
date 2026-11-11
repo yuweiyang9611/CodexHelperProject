@@ -180,7 +180,9 @@ public sealed record TokenPeriod(
     double CreditsUsed,
     long UnratedTokens,
     IReadOnlyList<ModelCreditUsage> CreditsByModel,
-    DataQuality Quality);
+    DataQuality Quality,
+    long MissingRateTokens = 0,
+    long IncompleteBreakdownTokens = 0);
 
 public sealed record TokenSummary(
     TokenPeriod Today,
@@ -259,8 +261,13 @@ public sealed record DashboardSnapshot(
     QuotaForecast? SecondaryForecast = null,
     UsageHistoryStatus? History = null,
     [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null,
-    DateTimeOffset? ClaudeDesktopQueryObservedAt = null)
+    DateTimeOffset? ClaudeDesktopQueryObservedAt = null,
+    MonthlyValue? MonthlyValue = null,
+    ClaudeQuotaState? ClaudeQuotaState = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool LocalReadFailed { get; init; }
+
     public static DashboardSnapshot Empty(AgentRuntime runtime, params string[] diagnostics) => new(
         runtime,
         DateTimeOffset.Now,
@@ -299,17 +306,23 @@ public sealed record DashboardSnapshot(
 public sealed record RuntimeReadResult(
     DashboardSnapshot Snapshot,
     bool ReadFailed,
-    string? FailureMessage = null);
+    string? FailureMessage = null)
+{
+    public static RuntimeReadResult FromSnapshot(DashboardSnapshot snapshot) =>
+        new(snapshot, snapshot.LocalReadFailed, snapshot.LocalReadFailed ? "本机用量读取失败" : null);
+
+    public RuntimeContribution Contribution => ReadFailed ? RuntimeContribution.Failed
+        : Snapshot.Tokens.Lifetime.Tokens > 0 || Snapshot.Tokens.Month.Tokens > 0 || Snapshot.Account is not null
+            ? RuntimeContribution.Present : RuntimeContribution.Absent;
+}
 
 /// <summary>
-/// Both runtimes read in one pass, deliberately unmerged on the wire. Every rule for
-/// what may and may not be combined lives in one place in the frontend, where it is
-/// directly testable, rather than being baked into a merged snapshot no caller could
-/// take apart again.
+/// Independent readings plus their shared projection for the combined dashboard.
 /// </summary>
 public sealed record CombinedSnapshots(
     RuntimeReadResult Codex,
-    RuntimeReadResult ClaudeCode);
+    RuntimeReadResult ClaudeCode,
+    CombinedRuntimeSummary Summary);
 
 public sealed record LocalUsageSnapshot(
     AccountSnapshot? Account,
@@ -329,7 +342,8 @@ public sealed record LocalUsageSnapshot(
     IReadOnlyList<string> Diagnostics,
     UsageHistoryStatus? History = null,
     [property: System.Text.Json.Serialization.JsonIgnore] UsageAnalysisData? AnalysisData = null,
-    DateTimeOffset? ClaudeDesktopQueryObservedAt = null);
+    DateTimeOffset? ClaudeDesktopQueryObservedAt = null,
+    ClaudeQuotaState? ClaudeQuotaState = null);
 
 public sealed record AppServerSnapshot(
     AccountSnapshot? Account,

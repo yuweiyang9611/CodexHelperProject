@@ -2,12 +2,13 @@
 import { computed } from 'vue'
 import type { QuotaForecast, RateLimitWindow } from '../types'
 import { exhaustionTime, resetTime } from '../format'
-import { isDesktopQuota, isDesktopQueryQuota, quotaQueryTime, quotaSampleTime } from '../quotaPresentation'
+import { hasQuotaReset, isDesktopQuota, isDesktopQueryQuota, quotaQueryTime, quotaSampleTime } from '../quotaPresentation'
 
 const props = defineProps<{
   label: string
   quota?: RateLimitWindow
   color: 'blue' | 'violet'
+  now: number
   forecast?: QuotaForecast
 }>()
 
@@ -18,13 +19,24 @@ const dashOffset = computed(() => circumference * (1 - percent.value / 100))
 const gradientId = computed(() => `quota-${props.color}-${props.label.replace(/\W/g, '')}`)
 const isSample = computed(() => isDesktopQuota(props.quota))
 const isQuery = computed(() => isDesktopQueryQuota(props.quota))
-const caption = computed(() => isQuery.value ? '查询时剩余' : isSample.value ? '采样剩余' : '剩余')
+const expired = computed(() => hasQuotaReset(props.quota, props.now))
+const caption = computed(() => isQuery.value ? '查询时剩余' : isSample.value ? '采样剩余' : expired.value ? '上次剩余' : '剩余')
+const localReset = computed(() => {
+  const reset = props.quota?.resetsAt
+  if (!reset || !Number.isFinite(Date.parse(reset))) return ''
+  const date = new Date(reset)
+  const today = date.toDateString() === new Date(props.now).toDateString()
+  return date.toLocaleString('zh-CN', {
+    month: today ? undefined : '2-digit', day: today ? undefined : '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  })
+})
 
 // A window that resets before it would run out is not news, however fast it is being
 // consumed — showing a countdown for it would cry wolf at every busy stretch.
 const burnDown = computed(() =>
-  props.quota && !isSample.value && props.forecast?.exhaustsBeforeReset
-    ? exhaustionTime(props.forecast.exhaustsAt)
+  props.quota && !isSample.value && !expired.value && props.forecast?.exhaustsBeforeReset
+    ? exhaustionTime(props.forecast.exhaustsAt, props.now)
     : '')
 
 const burnRate = computed(() =>
@@ -69,7 +81,9 @@ const burnRate = computed(() =>
       <time :datetime="quota?.measuredAt ?? undefined">{{ isQuery ? quotaQueryTime(quota?.measuredAt) : quotaSampleTime(quota?.measuredAt) }}</time>
       <span>{{ isQuery ? '本地时间 · 查询快照' : '本地时间 · 非实时' }}</span>
     </span>
-    <span class="reset-time">{{ isSample && !quota?.resetsAt ? '来源未提供重置时间' : resetTime(quota?.resetsAt) }}</span>
+    <span class="reset-time">
+      <time v-if="localReset && !expired" :datetime="quota?.resetsAt ?? undefined" :title="`本地重置时间 ${quotaSampleTime(quota?.resetsAt)}`">{{ localReset }} · </time>{{ isSample && !quota?.resetsAt ? '来源未提供重置时间' : resetTime(quota?.resetsAt, now) }}
+    </span>
     <span v-if="burnDown" class="burn-down" :title="burnRate">{{ burnDown }}</span>
   </div>
 </template>

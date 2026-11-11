@@ -5,8 +5,6 @@ using CodexU.Core;
 
 namespace CodexU.Infrastructure;
 
-public enum ClaudeTranscriptStatus { Fresh, NoWindows, MissingResult, TooLarge, Stale, Unavailable }
-
 public sealed record ClaudeTranscriptValidation(ClaudeTranscriptStatus Status, string Message, DateTimeOffset? ObservedAt);
 
 internal sealed record ClaudeDesktopToolUsageReadResult(

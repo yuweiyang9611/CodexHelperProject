@@ -1,5 +1,7 @@
 import type { AgentRuntime, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
 import { createDemoAnalysis } from './demoAnalysis'
+import { demoRateCatalog, demoRatePreview } from './demoRateEditor'
+import { demoCombined } from './demoCombined'
 import { DEMO_HOST_CAPABILITIES } from './hostCapabilities'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
@@ -248,6 +250,7 @@ class HostBridge {
   }
 
   private async mockRequest<T>(method: string, payload: object): Promise<T> {
+    if (method === 'rates.previewDraft') return demoRatePreview(payload, this.mockSettings.isRateCatalogPinned ?? false) as T
     await new Promise((resolve) => window.setTimeout(resolve, 180))
     if (method === 'app.initialize') {
       return {
@@ -260,7 +263,7 @@ class HostBridge {
     }
     if (method === 'runtime.select') {
       this.mockRuntime = (payload as { runtime: AgentRuntime }).runtime
-      return createDemoSnapshot(this.mockRuntime) as T
+      return createDemoSnapshot(this.mockRuntime, this.mockSettings) as T
     }
     if (method === 'settings.get') return { ...this.mockSettings } as T
     if (method === 'settings.pickClaudeTranscript') return (visualTestMode ? demoTranscript : null) as T
@@ -307,49 +310,7 @@ class HostBridge {
       }
       return { ...this.mockStatusStripState } as T
     }
-    if (method === 'rates.getCatalog') {
-      return {
-        builtIn: {
-          schemaVersion: 1,
-          catalogVersion: '2026.11.1',
-          source: '内置费率目录（OpenAI API Standard 短上下文价目 + 历史 Credits 参考表 + Anthropic 公布价目）',
-          publishedOn: '2026-11-01',
-          rateCount: 41,
-        },
-        // A representative slice of the real catalog rather than an empty list:
-        // the rate editor seeds a new row from these, so an empty array would
-        // leave the browser demo — and the visual baseline — exercising the
-        // zero-filled path the defaults exist to replace. Credits are USD/M x 25.
-        builtInRates: [
-          { model: 'claude-opus-5', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 625, effectiveFrom: null, source: 'Anthropic 公布的 Claude API 价目', catalogVersion: 'anthropic-2026.07.1', matchMode: 'exact' },
-          { model: 'claude-sonnet-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: null, source: 'Anthropic 公布的 Claude API 价目', catalogVersion: 'anthropic-2026.07.1', matchMode: 'exact' },
-          { model: 'claude-haiku-4-5', inputCreditsPerMillion: 25, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 125, effectiveFrom: null, source: 'Anthropic 公布的 Claude API 价目', catalogVersion: 'anthropic-2026.07.1', matchMode: 'exact' },
-          { model: 'gpt-5.2', inputCreditsPerMillion: 43.75, cachedInputCreditsPerMillion: 4.375, outputCreditsPerMillion: 350, effectiveFrom: null, source: '用户提供的 OpenAI Credits 参考表', catalogVersion: '2026.07.1', matchMode: 'exact' },
-          { model: 'gpt-5.4-mini', inputCreditsPerMillion: 18.75, cachedInputCreditsPerMillion: 1.875, outputCreditsPerMillion: 112.5, effectiveFrom: '2026-03-17', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.03.1', matchMode: 'exact' },
-          { model: 'gpt-5.6-sol', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 750, effectiveFrom: null, source: '用户提供的 OpenAI Credits 参考表', catalogVersion: '2026.07.1', matchMode: 'exact' },
-          { model: 'gpt-5.6-terra', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 300, effectiveFrom: '2026-07-30', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.07.2', matchMode: 'exact' },
-          { model: 'gpt-5.6-luna', inputCreditsPerMillion: 5, cachedInputCreditsPerMillion: 0.5, outputCreditsPerMillion: 30, effectiveFrom: '2026-07-30', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.07.2', matchMode: 'exact' },
-          { model: 'gpt-5.6-cyber', inputCreditsPerMillion: 312.5, cachedInputCreditsPerMillion: 31.25, outputCreditsPerMillion: 1875, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
-          { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 750, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
-          { model: 'gpt-daybreak-red', inputCreditsPerMillion: 312.5, cachedInputCreditsPerMillion: 31.25, outputCreditsPerMillion: 1875, effectiveFrom: '2026-08-07', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.08.1', matchMode: 'exact' },
-          { model: 'gpt-5.6-sol', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
-          { model: 'gpt-daybreak-blue', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 10, outputCreditsPerMillion: 500, effectiveFrom: '2026-08-21', source: 'OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）', catalogVersion: '2026.08.2', matchMode: 'exact' },
-          { model: 'gpt-6-astra', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-03', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.1', matchMode: 'exact' },
-          { model: 'gpt-6-sol', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
-          { model: 'gpt-6-luna', inputCreditsPerMillion: 2.5, cachedInputCreditsPerMillion: 0.25, outputCreditsPerMillion: 12.5, effectiveFrom: '2026-09-22', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.09.2', matchMode: 'exact' },
-          { model: 'gpt-6.1-sol', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-29', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.10.1', matchMode: 'exact' },
-          { model: 'gpt-rosalind-research', inputCreditsPerMillion: 125, cachedInputCreditsPerMillion: 12.5, outputCreditsPerMillion: 625, effectiveFrom: '2026-10-05', source: 'OpenAI API 官方专业模型价目与 Changelog（GPT-Rosalind 自 2026-10-05 起计费）', catalogVersion: '2026.10.1', matchMode: 'exact' },
-          { model: 'claude-fable-5-1', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 6.25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-01', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
-          { model: 'claude-mythos-5-1', inputCreditsPerMillion: 250, cachedInputCreditsPerMillion: 6.25, outputCreditsPerMillion: 1250, effectiveFrom: '2026-09-01', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
-          { model: 'claude-opus-5-5', inputCreditsPerMillion: 100, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 500, effectiveFrom: '2026-09-22', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
-          { model: 'claude-sonnet-5-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 5, outputCreditsPerMillion: 250, effectiveFrom: '2026-09-28', source: 'Anthropic 官方 Claude API 模型页与发布记录', catalogVersion: 'anthropic-2026.10.1', matchMode: 'exact' },
-          { model: 'gpt-6.1-terra', inputCreditsPerMillion: 25, cachedInputCreditsPerMillion: 1.25, outputCreditsPerMillion: 125, effectiveFrom: '2026-10-26', source: 'OpenAI API 官方 Standard 短上下文价目与 Changelog', catalogVersion: '2026.11.1', matchMode: 'exact' },
-          { model: 'gpt-6-rosalind', inputCreditsPerMillion: 375, cachedInputCreditsPerMillion: 37.5, outputCreditsPerMillion: 1875, effectiveFrom: '2026-10-30', source: 'OpenAI API 官方专业模型价目与 Changelog（GPT-6 Rosalind 自 2026-10-30 发布）', catalogVersion: '2026.11.1', matchMode: 'exact' },
-          { model: 'claude-sonnet-5-5', inputCreditsPerMillion: 50, cachedInputCreditsPerMillion: 2.5, outputCreditsPerMillion: 250, effectiveFrom: '2026-10-07', source: 'Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）', catalogVersion: 'anthropic-2026.11.1', matchMode: 'exact' },
-          { model: 'claude-haiku-5-5', inputCreditsPerMillion: 2.5, cachedInputCreditsPerMillion: 0.25, outputCreditsPerMillion: 12.5, effectiveFrom: '2026-10-07', source: 'Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）', catalogVersion: 'anthropic-2026.11.1', matchMode: 'exact' },
-        ],
-      } as T
-    }
+    if (method === 'rates.getCatalog') return demoRateCatalog as T
     if (method === 'rates.reset') {
       this.mockSettings.customModelRates = []
       this.mockSettings.isRateCatalogPinned = false
@@ -379,14 +340,12 @@ class HostBridge {
     // Ahead of the usage. prefix branch below, which would otherwise swallow it and
     // hand the combined view a bare single-runtime snapshot.
     if (method === 'usage.getCombined') {
-      return {
-        codex: { snapshot: createDemoSnapshot('codex'), readFailed: false },
-        claudeCode: { snapshot: createDemoSnapshot('claudeCode'), readFailed: false },
-      } as T
+      return demoCombined(createDemoSnapshot('codex', this.mockSettings),
+        createDemoSnapshot('claudeCode', this.mockSettings), this.mockSettings.amountPerThousandCredits) as T
     }
     if (method === 'usage.query') return createDemoAnalysis(payload as UsageAnalysisRequest, demoNow()) as T
     if (method === 'data.clearHistory') return { success: true, message: '演示环境：已确认清理入口，未修改真实历史。' } as T
-    if (method.startsWith('usage.')) return createDemoSnapshot(this.mockRuntime) as T
+    if (method.startsWith('usage.')) return createDemoSnapshot(this.mockRuntime, this.mockSettings) as T
     return {} as T
   }
 }
@@ -477,7 +436,30 @@ function period(tokens: number, quality: 'detailed' | 'unavailable' = 'detailed'
   }
 }
 
-function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot {
+function createDemoSnapshot(runtime: AgentRuntime, settings: AppSettings): DashboardSnapshot {
+  const result = demoUsage(runtime)
+  const claude = runtime === 'claudeCode'
+  const auto = claude ? settings.claudeAutoDetectSubscriptionAmount : settings.codexAutoDetectSubscriptionAmount
+  const subscription = auto ? result.account?.suggestedMonthlySubscriptionAmount ?? null
+    : claude ? settings.claudeMonthlySubscriptionAmount : settings.codexMonthlySubscriptionAmount
+  const amount = result.tokens.month.creditsUsed / 1000 * settings.amountPerThousandCredits
+  const today = demoNow()
+  const days = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const elapsedDays = Math.max(1 / 24, today.getDate() - 1 + (today.getHours() + today.getMinutes() / 60) / 24)
+  // The mock only supplies fully priced synthetic records. Native hosts calculate
+  // the complete projection, including incomplete readings, in .NET.
+  result.monthlyValue = {
+    knownAmount: amount, isLowerBound: false, coveragePercent: 100,
+    subscriptionAmount: subscription, subscriptionSource: subscription == null ? 'unknown' : auto ? 'auto' : 'manual',
+    netAmount: subscription == null ? null : amount - subscription,
+    paybackMultiple: subscription ? amount / subscription : null,
+    paybackStatus: subscription == null ? 'unknown' : amount >= subscription ? 'reached' : 'below',
+    projectedAmount: amount / elapsedDays * days,
+  }
+  return result
+}
+
+function demoUsage(runtime: AgentRuntime): DashboardSnapshot {
   const today = demoNow()
   const now = today.getTime()
   // The combined view puts the two runtimes side by side, so demo data that differed
@@ -645,12 +627,14 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
       ...result, account: undefined, primaryQuota: undefined, secondaryQuota: undefined,
       primaryForecast: undefined, secondaryForecast: undefined,
       claudeDesktopQueryObservedAt: new Date(now - 45 * 60_000).toISOString(),
+      claudeQuotaState: { source: 'none', queryStatus: 'stale', historyExpired: false, action: 'query' },
       diagnostics: ['Claude Desktop 原生额度：最新原生结果已过期（超过 15 分钟）'],
     }
     return {
       ...result,
       account: undefined,
       claudeDesktopQueryObservedAt: measuredAt,
+      claudeQuotaState: { source: 'desktopQuery', queryStatus: 'fresh', historyExpired: false, action: 'none' },
       primaryQuota: { usedPercent: 27, remainingPercent: 73, windowDurationMinutes: 300,
         source: 'claude-desktop-get-usage', measuredAt, resetsAt: new Date(now + 2 * 3_600_000).toISOString() },
       secondaryQuota: { usedPercent: 82, remainingPercent: 18, windowDurationMinutes: 10080,
@@ -665,6 +649,7 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
     return {
       ...result,
       account: undefined,
+      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, action: 'none' },
       primaryQuota: { usedPercent: 27, remainingPercent: 73, windowDurationMinutes: 300,
         source: 'claude-desktop-history', measuredAt, resetsAt: null },
       secondaryQuota: { usedPercent: 82, remainingPercent: 18, windowDurationMinutes: 10080,
@@ -674,6 +659,7 @@ function createDemoSnapshot(runtime: 'codex' | 'claudeCode'): DashboardSnapshot 
       diagnostics: ['Claude Desktop 额度：构造的视觉测试采样，来源不提供重置时间或订阅套餐'],
     }
   }
+  if (isClaude) result.claudeQuotaState = { source: 'statusLine', queryStatus: 'unbound', historyExpired: false, action: 'none' }
   return result
 }
 

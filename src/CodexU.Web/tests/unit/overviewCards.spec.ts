@@ -3,8 +3,7 @@ import { createApp, nextTick, type App } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OverviewCards from '../../src/components/OverviewCards.vue'
 import { CLAUDE_DESKTOP_QUERY_INSTRUCTION } from '../../src/quotaPresentation'
-import { useDashboardStore } from '../../src/stores/dashboard'
-import { appSettings, quotaForecast, rateLimitWindow, snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
+import { monthlyValue, quotaForecast, rateLimitWindow, snapshot, tokenBreakdown, tokenPeriod } from './fixtures'
 
 let pinia: Pinia
 let app: App | null
@@ -30,25 +29,90 @@ function mountOverview(overviewSnapshot: ReturnType<typeof snapshot>) {
 }
 
 describe('OverviewCards local token activity', () => {
+  it('ticks to the reported reset without refreshing the query or replacing its percentage', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-01T14:27:00+09:00'))
+      const card = mountOverview(snapshot({
+        runtime: 'claudeCode',
+        claudeQuotaState: { source: 'desktopQuery', queryStatus: 'fresh', historyExpired: false, action: 'none' },
+        primaryQuota: rateLimitWindow({ source: 'claude-desktop-get-usage', remainingPercent: 73,
+          resetsAt: '2026-11-01T14:30:15+09:00' }),
+      })).querySelector('.quota-card')!
+      const resetText = () => card.querySelector('.reset-time')?.textContent
+      expect(resetText()).toContain('14:30 · 4 分钟后重置')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(resetText()).toContain('14:30 · 3 分钟后重置')
+      await vi.advanceTimersByTimeAsync(135_000)
+      expect(resetText()).toContain('已到重置时间，等待新快照')
+      expect(card.querySelector('.quota-content strong')?.textContent).toBe('73%')
+      expect(card.querySelector('.query-actions button')?.textContent).toBe('复制查询指令')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('catches up immediately when the window becomes visible after a reset', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-01T14:27:00+09:00'))
+      const card = mountOverview(snapshot({ primaryQuota: rateLimitWindow({ resetsAt: '2026-11-01T14:30:00+09:00' }) }))
+      vi.setSystemTime(new Date('2026-11-01T14:31:00+09:00'))
+      document.dispatchEvent(new Event('visibilitychange'))
+      await nextTick()
+      expect(card.querySelector('.reset-time')?.textContent).toBe('已到重置时间，等待新快照')
+      expect(card.querySelector('.quota-caption')?.textContent).toBe('上次剩余')
+      expect(card.querySelector('.query-actions')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('directs an oversized transcript to a new binding', () => {
     const card = mountOverview(snapshot({
-      runtime: 'claudeCode', diagnostics: ['Claude Desktop 原生额度：指定会话文件超过 32 MiB 安全上限'],
+      runtime: 'claudeCode',
+      claudeQuotaState: { source: 'none', queryStatus: 'tooLarge', historyExpired: false, action: 'rebind' },
     })).querySelector('.quota-card')!
     expect(card.textContent).toContain('绑定新会话')
     expect(card.querySelector('.query-actions')).toBeNull()
   })
-  it('shows the saved monthly amount, including zero, until automatic detection is enabled', async () => {
-    const store = useDashboardStore(pinia)
-    store.settings = appSettings({ claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100 })
-    const card = mountOverview(snapshot({ runtime: 'claudeCode' })).querySelector('.quota-card')!
-    expect(card.textContent).toContain('订阅月费 US$100.00（手动）')
+
+  it('keeps unbound or older snapshots from offering an action based on diagnostic text', () => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      diagnostics: ['Claude Desktop 原生额度：最新原生结果已过期；private-session'],
+    })).querySelector('.quota-card')!
+    expect(card.querySelector('.query-actions')).toBeNull()
+    expect(card.textContent).not.toContain('private-session')
+  })
+
+  it('offers a new query for a valid response with no current windows', () => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      claudeQuotaState: { source: 'desktopQuery', queryStatus: 'noWindows', historyExpired: false, action: 'query' },
+    })).querySelector('.quota-card')!
+    expect(card.textContent).toContain('查询成功')
+    expect(card.querySelector('.query-actions button')?.textContent).toBe('复制查询指令')
+  })
+  it.each([0, 100])('shows the resolved manual monthly amount (%s)', amount => {
+    const card = mountOverview(snapshot({ runtime: 'claudeCode', monthlyValue: monthlyValue({ subscriptionAmount: amount }) })).querySelector('.quota-card')!
+    expect(card.textContent).toContain(`订阅月费 US$${amount.toFixed(2)}（手动）`)
     expect(card.textContent).not.toContain('订阅档位未识别')
-    store.settings.claudeMonthlySubscriptionAmount = 0
+  })
+
+  it.each([
+    [monthlyValue(), 'US$80.00', '待回本 · 尚差 US$20.00'],
+    [monthlyValue({ isLowerBound: true, paybackStatus: 'unknown', netAmount: null, paybackMultiple: null, projectedAmount: null }), '≥ US$80.00', '暂无法判断是否回本'],
+    [monthlyValue({ knownAmount: 120, isLowerBound: true, paybackStatus: 'reached', netAmount: 20, paybackMultiple: 1.2, projectedAmount: null }), '≥ US$120.00', '已回本 · 超出至少 US$20.00'],
+    [monthlyValue({ subscriptionAmount: null, subscriptionSource: 'unknown', paybackStatus: 'unknown', netAmount: null, paybackMultiple: null }), 'US$80.00', '暂无法判断是否回本'],
+  ] as const)('renders the host amount and payback status (%j)', async (reported, amount, status) => {
+    const card = mountOverview(snapshot({ monthlyValue: reported })).querySelector('.value-card')!
+    expect(card.querySelector('.value-main strong')?.textContent).toBe(amount)
+    card.querySelector<HTMLElement>('.value-toggle')!.click()
     await nextTick()
-    expect(card.textContent).toContain('订阅月费 US$0.00（手动）')
-    store.settings.claudeAutoDetectSubscriptionAmount = true
-    await nextTick()
-    expect(card.textContent).toContain('订阅档位未识别')
+    expect(card.querySelector('.value-bottom strong')?.textContent).toBe(status)
+    if (reported.projectedAmount == null) expect(card.textContent).not.toContain('预计本月')
+    if (reported.subscriptionSource === 'unknown') expect(card.textContent).toContain('无法推算')
   })
 
   it('copies only the fixed query instruction and displays the paired query time beside stale fallback data', async () => {
@@ -57,6 +121,7 @@ describe('OverviewCards local token activity', () => {
     const card = mountOverview(snapshot({
       runtime: 'claudeCode',
       claudeDesktopQueryObservedAt: queryTime,
+      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'stale', historyExpired: false, action: 'query' },
       primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', measuredAt: fallbackTime }),
       diagnostics: ['Claude Desktop 原生额度：最新原生结果已过期；sensitive-session-id'],
     })).querySelector('.quota-card')!
@@ -76,13 +141,14 @@ describe('OverviewCards local token activity', () => {
     }
   })
   it.each([
-    ['最新原生结果已过期（超过 15 分钟），请在 Desktop 重新获取用量', 'get_usage 结果已过期'],
-    ['指定会话无法安全读取，未使用其中的旧结果', 'get_usage 结果不可用'],
-  ])('explains a fallback from a bound query without exposing raw diagnostics (%s)', (reason, expected) => {
+    ['stale', 'get_usage 结果已过期'],
+    ['unavailable', 'get_usage 结果不可用'],
+  ] as const)('explains a fallback from a bound query without exposing raw diagnostics (%s)', (queryStatus, expected) => {
     const container = mountOverview(snapshot({
       runtime: 'claudeCode',
       primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null, measuredAt: '2026-11-01T09:35:00Z' }),
-      diagnostics: [`Claude Desktop 原生额度：${reason}；C:\\Users\\private-person\\session.jsonl id=private-session`],
+      claudeQuotaState: { source: 'desktopHistory', queryStatus, historyExpired: false, action: 'query' },
+      diagnostics: ['C:\\Users\\private-person\\session.jsonl id=private-session'],
     }))
 
     const quotaCard = container.querySelector('.quota-card')
@@ -98,6 +164,7 @@ describe('OverviewCards local token activity', () => {
   it('explains how a bound Desktop query snapshot is refreshed without claiming the reset is missing', () => {
     const container = mountOverview(snapshot({
       runtime: 'claudeCode',
+      claudeQuotaState: { source: 'desktopQuery', queryStatus: 'fresh', historyExpired: false, action: 'none' },
       primaryQuota: rateLimitWindow({ source: 'claude-desktop-get-usage', measuredAt: '2026-11-01T09:35:00Z', resetsAt: '2026-11-01T10:40:00Z' }),
     }))
 
@@ -113,6 +180,7 @@ describe('OverviewCards local token activity', () => {
   it('explains Desktop sample limits and missing subscription identification beside the quota', () => {
     const container = mountOverview(snapshot({
       runtime: 'claudeCode',
+      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, action: 'none' },
       primaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null, measuredAt: '2026-11-01T09:35:00Z' }),
     }))
 
@@ -128,6 +196,7 @@ describe('OverviewCards local token activity', () => {
     const container = mountOverview(snapshot({
       runtime: 'claudeCode',
       account: { isAuthenticated: true, suggestedMonthlySubscriptionAmount: 20 },
+      claudeQuotaState: { source: 'none', queryStatus: 'unbound', historyExpired: true, action: 'none' },
       diagnostics: ['Claude Desktop 额度：历史采样已过期（超过 30 分钟）：C:\\Users\\private-person\\usage.json'],
     }))
 

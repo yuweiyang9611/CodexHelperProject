@@ -187,6 +187,9 @@ public sealed class IpcDispatcher : IDisposable
             case "rates.getCatalog":
                 return UsageCredits.CatalogSnapshot;
 
+            case "rates.previewDraft":
+                return RateEditorPreview.FromPayload(request.Payload, _session.CurrentSettings.IsRateCatalogPinned);
+
             case "rates.export":
                 var rateExportPath = await _userInteraction.PickSaveFileAsync(
                     JsonSaveRequest(

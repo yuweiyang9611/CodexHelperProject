@@ -105,6 +105,7 @@ export interface QuotaForecast {
  * an empty snapshot — and only one of them means usage is missing from the totals.
  */
 export interface RuntimeReadResult {
+  contribution: 'present' | 'absent' | 'failed'
   snapshot: DashboardSnapshot
   readFailed: boolean
   failureMessage?: string
@@ -113,6 +114,22 @@ export interface RuntimeReadResult {
 export interface CombinedSnapshots {
   codex: RuntimeReadResult
   claudeCode: RuntimeReadResult
+  summary: CombinedRuntimeSummary
+}
+
+export interface CombinedRuntimeSummary {
+  periods: Record<'today' | 'sevenDays' | 'month', { tokens: number; unratedTokens: number; creditsUsed: number; amount?: number | null; quality: DataQuality; creditsAreLowerBound: boolean }>
+  cost: {
+    knownAmount?: number | null; isLowerBound: boolean; subscriptionAmount?: number | null
+    unknownSubscriptions: AgentRuntime[]; hasManual: boolean; paybackMultiple?: number | null; netAmount?: number | null
+    paybackReason: 'none' | 'unknownSubscription' | 'zeroSubscription' | 'incompleteUsage'
+  }
+  projects: { id: string; name: string; branch?: string | null; tokens: number; amount?: number | null; costIsEstimated: boolean; lastActiveAt?: string | null;
+    runtimes: AgentRuntime[]; threadCounts: Partial<Record<AgentRuntime, number>>; quality: DataQuality }[]
+  forecasts: { runtime: AgentRuntime; weekly: boolean; exhaustsAt: string; validUntil?: string | null; predictable: number; total: number }[]
+  diagnostics: string[]
+  refreshedAt?: string | null
+  failedRuntimes: AgentRuntime[]
 }
 
 export interface AccountSnapshot {
@@ -146,6 +163,8 @@ export interface TokenPeriod {
   breakdown: TokenBreakdown
   creditsUsed: number
   unratedTokens: number
+  missingRateTokens?: number
+  incompleteBreakdownTokens?: number
   creditsByModel: ModelCreditUsage[]
   quality: DataQuality
 }
@@ -322,6 +341,16 @@ export interface ModelCreditRate {
   matchMode?: 'exact' | 'prefix'
 }
 
+export interface RateEditorPreview {
+  validationMessage?: string | null
+  customOverrideCount: number
+  versionCount: number
+  canAdd: boolean
+  nextRate?: ModelCreditRate | null
+  builtInRate?: ModelCreditRate | null
+  effectiveRate?: ModelCreditRate | null
+}
+
 export interface RateCatalogInfo {
   schemaVersion: number
   catalogVersion: string
@@ -393,7 +422,26 @@ export interface TodoItem {
   updatedAt?: string
 }
 
+export interface MonthlyValue {
+  knownAmount: number
+  isLowerBound: boolean
+  subscriptionAmount?: number | null
+  subscriptionSource: 'auto' | 'manual' | 'unknown'
+  netAmount?: number | null
+  paybackMultiple?: number | null
+  paybackStatus: 'unknown' | 'below' | 'reached'
+  projectedAmount?: number | null
+  coveragePercent?: number | null
+}
+
 export interface DashboardSnapshot {
+  monthlyValue?: MonthlyValue | null
+  claudeQuotaState?: {
+    source: 'none' | 'desktopQuery' | 'desktopHistory' | 'statusLine'
+    queryStatus: ClaudeTranscriptValidation['status'] | 'unbound'
+    historyExpired: boolean
+    action: 'none' | 'query' | 'rebind'
+  } | null
   claudeDesktopQueryObservedAt?: string | null
   history?: { retainedSources: number; conflicts: number; legacyDays: number }
   runtime: AgentRuntime

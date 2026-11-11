@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodexU.Core;
 using CodexU.Infrastructure;
 
 namespace CodexU.Infrastructure.Tests;
@@ -66,6 +67,8 @@ public sealed class ClaudeDesktopQuotaReaderTests
         Assert.Null(result.PrimaryQuota);
         Assert.Null(result.SecondaryQuota);
         Assert.Contains(result.Diagnostics, item => item.Contains(diagnostic, StringComparison.Ordinal));
+        Assert.Equal(new ClaudeQuotaState(ClaudeQuotaSource.None, ClaudeTranscriptStatus.Unbound, offsetMinutes < 0), result.ClaudeQuotaState);
+        Assert.Equal(ClaudeQuotaAction.None, result.ClaudeQuotaState!.Action);
     }
 
     [Theory]

@@ -5,27 +5,27 @@ import ClaudeDataNotice from './ClaudeDataNotice.vue'
 import UiIcon from './UiIcon.vue'
 import { compactNumber, exhaustionTime, qualityLabel } from '../format'
 import { useEquivalentValue } from '../composables/useEquivalentValue'
-import { isDesktopQuota } from '../quotaPresentation'
+import { hasQuotaReset, isDesktopQuota } from '../quotaPresentation'
+import { useQuotaClock } from '../composables/useQuotaClock'
 import type { DashboardSnapshot } from '../types'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
+const now = useQuotaClock(() => [props.snapshot.primaryQuota?.resetsAt, props.snapshot.secondaryQuota?.resetsAt])
 const valueExpanded = ref(false)
 const snapshotRef = computed<DashboardSnapshot | null>(() => props.snapshot)
 const {
-  monthlyAmount,
-  subscriptionAmountIsAuto,
-  subscriptionAmount,
-  subscriptionSourceLabel,
-  netEquivalentAmount,
-  paybackMultiple,
+  monthlyValue,
   valueProgress,
   monthlyCreditBreakdown,
-  rateCoverage,
-  estimatedMonthAmount,
   money,
   amountMoney,
   creditTooltip,
 } = useEquivalentValue(snapshotRef)
+
+const amountAvailable = computed(() => props.snapshot.tokens.month.quality !== 'unavailable' && monthlyValue.value != null)
+const lowerBound = computed(() => amountAvailable.value && monthlyValue.value?.isLowerBound ? '≥ ' : '')
+const monthlyLabel = computed(() => monthlyValue.value?.subscriptionSource === 'manual' ? '手动'
+  : monthlyValue.value?.subscriptionSource === 'auto' ? '自动' : '未知')
 
 const tokenMetrics = computed(() => [
   { label: '今日', value: props.snapshot.tokens.today.tokens, quality: props.snapshot.tokens.today.quality },
@@ -38,8 +38,8 @@ const split = computed(() => props.snapshot.tokens.today.breakdown)
 const quotaRisks = computed(() => [
   { label: '5 小时额度', quota: props.snapshot.primaryQuota, forecast: props.snapshot.primaryForecast },
   { label: '7 天额度', quota: props.snapshot.secondaryQuota, forecast: props.snapshot.secondaryForecast },
-].filter((item) => !isDesktopQuota(item.quota) && item.forecast?.exhaustsBeforeReset)
-  .map((item) => `${item.label}：${exhaustionTime(item.forecast?.exhaustsAt)}`))
+].filter((item) => !hasQuotaReset(item.quota, now.value) && !isDesktopQuota(item.quota) && item.forecast?.exhaustsBeforeReset)
+  .map((item) => `${item.label}：${exhaustionTime(item.forecast?.exhaustsAt, now.value)}`))
 const splitTotal = computed(() => {
   if (!split.value) return 1
   // Cache writes are their own slice of the input side. Leaving them out of the
@@ -73,6 +73,7 @@ function splitPercentage(value?: number | null): string {
         <QuotaRing
           label="5 小时"
           :quota="snapshot.primaryQuota"
+          :now="now"
           color="blue"
           :forecast="snapshot.primaryForecast"
         />
@@ -80,11 +81,12 @@ function splitPercentage(value?: number | null): string {
         <QuotaRing
           label="7 天"
           :quota="snapshot.secondaryQuota"
+          :now="now"
           color="violet"
           :forecast="snapshot.secondaryForecast"
         />
       </div>
-      <ClaudeDataNotice :snapshot="snapshot" show-manual-amount />
+      <ClaudeDataNotice :snapshot="snapshot" :now="now" show-manual-amount />
     </article>
 
     <article class="glass-card token-card">
@@ -152,13 +154,13 @@ function splitPercentage(value?: number | null): string {
           </button>
         </div>
       </div>
-      <div class="value-main"><span>本机原始 Token 按 API 列表价估算，不是账单金额</span><strong>{{ amountMoney(monthlyAmount, true) }}</strong></div>
+      <div class="value-main"><span>本机原始 Token 按 API 列表价估算，不是账单金额</span><strong>{{ amountAvailable ? lowerBound + amountMoney(monthlyValue?.knownAmount, true) : '无法核算' }}</strong></div>
       <div v-if="valueExpanded" class="value-details">
-        <div class="value-track"><i :style="{ width: `${valueProgress}%` }" /></div>
+        <div v-if="valueProgress != null" class="value-track"><i :style="{ width: `${valueProgress}%` }" /></div>
         <div class="value-summary-grid">
-          <span :title="subscriptionSourceLabel"><small>订阅月费 · {{ subscriptionAmountIsAuto ? '自动' : '手动' }}</small><strong>{{ amountMoney(subscriptionAmount) }}</strong></span>
-          <span><small>净等价值</small><strong>{{ amountMoney(netEquivalentAmount, true, true) }}</strong></span>
-          <span><small>回本倍数</small><strong>{{ paybackMultiple == null ? '--' : `${paybackMultiple.toFixed(1)}×` }}</strong></span>
+          <span><small>订阅月费 · {{ monthlyLabel }}</small><strong>{{ monthlyValue?.subscriptionAmount != null ? amountMoney(monthlyValue.subscriptionAmount) : '无法推算' }}</strong></span>
+          <span><small>净等价值</small><strong>{{ monthlyValue?.netAmount != null ? lowerBound + amountMoney(monthlyValue.netAmount, true, true) : '无法计算' }}</strong></span>
+          <span><small>回本倍数</small><strong>{{ monthlyValue?.paybackMultiple != null ? lowerBound + monthlyValue.paybackMultiple.toFixed(1) + '×' : '无法计算' }}</strong></span>
         </div>
         <div class="value-breakdown">
           <span><small>输入与写入</small><strong>{{ money(monthlyCreditBreakdown.input + monthlyCreditBreakdown.cacheWrite, true) }}</strong></span>
@@ -167,8 +169,17 @@ function splitPercentage(value?: number | null): string {
           <span class="saved"><small>缓存省下</small><strong>{{ money(monthlyCreditBreakdown.saved, true) }}</strong></span>
         </div>
         <div class="value-bottom">
-          <div><span>本月本机原始 {{ compactNumber(snapshot.tokens.month.tokens) }} Token</span><small>官方价格覆盖 {{ rateCoverage.toFixed(1) }}% · {{ snapshot.tokens.month.creditsByModel.length }} 个模型</small></div>
-          <div><span>预计本月 {{ amountMoney(estimatedMonthAmount, true) }}</span><strong>{{ netEquivalentAmount >= 0 ? '已回本 · 超出' : '待回本 · 尚差' }} {{ amountMoney(Math.abs(netEquivalentAmount), true) }}</strong></div>
+          <div>
+            <span>本月本机原始 {{ compactNumber(snapshot.tokens.month.tokens) }} Token</span>
+            <small v-if="monthlyValue?.coveragePercent != null">已核算 {{ monthlyValue.coveragePercent.toFixed(1) }}% · {{ snapshot.tokens.month.creditsByModel.length }} 个模型</small>
+            <small v-if="snapshot.tokens.month.unratedTokens">未核算 {{ compactNumber(snapshot.tokens.month.unratedTokens) }} Token<span v-if="snapshot.tokens.month.missingRateTokens"> · 缺费率 {{ compactNumber(snapshot.tokens.month.missingRateTokens) }}</span><span v-if="snapshot.tokens.month.incompleteBreakdownTokens"> · 缺计价分项 {{ compactNumber(snapshot.tokens.month.incompleteBreakdownTokens) }}</span></small>
+          </div>
+          <div>
+            <span v-if="monthlyValue?.projectedAmount != null">预计本月 {{ amountMoney(monthlyValue.projectedAmount, true) }}</span>
+            <strong v-if="monthlyValue?.paybackStatus === 'reached'">已回本 · 超出{{ lowerBound ? '至少' : '' }} {{ amountMoney(monthlyValue.netAmount, true) }}</strong>
+            <strong v-else-if="monthlyValue?.paybackStatus === 'below' && monthlyValue.netAmount != null">待回本 · 尚差 {{ amountMoney(Math.abs(monthlyValue.netAmount), true) }}</strong>
+            <strong v-else>暂无法判断是否回本</strong>
+          </div>
         </div>
       </div>
     </article>

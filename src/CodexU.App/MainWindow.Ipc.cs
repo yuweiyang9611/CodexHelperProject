@@ -274,6 +274,9 @@ public partial class MainWindow
             case "rates.getCatalog":
                 return UsageCredits.CatalogSnapshot;
 
+            case "rates.previewDraft":
+                return RateEditorPreview.FromPayload(request.Payload, _settings.IsRateCatalogPinned);
+
             case "rates.export":
                 var rateExportDialog = new SaveFileDialog
                 {

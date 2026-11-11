@@ -151,7 +151,8 @@ public sealed class UsageDistributionTests
             var day = projection.Daily.Last();
             Assert.Equal("legacy", day.Source);
             Assert.Equal(1000, day.Tokens);
-            Assert.Equal(42, day.CreditsUsed);
+            Assert.Equal(0, day.CreditsUsed);
+            Assert.Equal(42, Assert.Single(projection.AnalysisData.LegacyEstimates).CreditsUsed);
             Assert.Equal(DataQuality.Approximate, day.Quality);
             var slices = Assert.IsAssignableFrom<IReadOnlyList<UsageDistributionSlice>>(day.Distribution);
             Assert.Equal(1000, slices.Sum(s => s.Tokens));

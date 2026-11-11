@@ -18,7 +18,7 @@ describe('quota source presentation', () => {
     vi.setSystemTime(new Date('2026-11-01T09:40:00Z'))
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(QuotaRing, {
+    app = createApp(QuotaRing, { now: Date.now(),
       label: '5 小时', color: 'blue',
       quota: rateLimitWindow({ source: 'claude-desktop-get-usage', measuredAt: '2026-11-01T09:35:00Z', resetsAt: '2026-11-01T10:40:00Z' }),
       forecast: quotaForecast({ exhaustsBeforeReset: true, exhaustsAt: '2026-11-01T10:00:00Z' }),
@@ -28,7 +28,7 @@ describe('quota source presentation', () => {
     expect(container.querySelector('.quota-caption')?.textContent).toBe('查询时剩余')
     expect(container.querySelector('.sample-time')?.textContent).toContain('读取于 2026/11/01 18:35:00')
     expect(container.querySelector('.sample-time')?.textContent).toContain('本地时间 · 查询快照')
-    expect(container.querySelector('.reset-time')?.textContent).toBe('1 小时后重置')
+    expect(container.querySelector('.reset-time')?.textContent).toBe('19:40 · 1 小时后重置')
     expect(container.querySelector('.burn-down')).toBeNull()
     expect(container.textContent).not.toContain('来源未提供重置时间')
   })
@@ -38,14 +38,14 @@ describe('quota source presentation', () => {
     vi.setSystemTime(new Date('2026-11-01T09:40:00Z'))
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(QuotaRing, {
+    app = createApp(QuotaRing, { now: Date.now(),
       label: '5 小时', color: 'blue',
       quota: rateLimitWindow({ resetsAt: '2026-11-01T10:40:00Z', measuredAt: '2026-11-01T09:35:00Z' }),
     })
     app.mount(container)
 
     expect(container.querySelector('.quota-caption')?.textContent).toBe('剩余')
-    expect(container.querySelector('.reset-time')?.textContent).toBe('1 小时后重置')
+    expect(container.querySelector('.reset-time')?.textContent).toBe('19:40 · 1 小时后重置')
     expect(container.querySelector('.sample-time')).toBeNull()
     expect(container.querySelector('.sampled')).toBeNull()
   })
@@ -55,7 +55,7 @@ describe('quota source presentation', () => {
     vi.setSystemTime(new Date('2026-11-01T09:40:00Z'))
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(QuotaRing, {
+    app = createApp(QuotaRing, { now: Date.now(),
       label: '5 小时', color: 'blue',
       quota: rateLimitWindow({
         source: 'claude-desktop-history', remainingPercent: 73, usedPercent: 27,
@@ -79,7 +79,7 @@ describe('quota source presentation', () => {
   it('does not replace a missing sample timestamp with the refresh time', () => {
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(QuotaRing, {
+    app = createApp(QuotaRing, { now: Date.now(),
       label: '7 天', color: 'violet',
       quota: rateLimitWindow({ source: 'claude-desktop-history', measuredAt: null, resetsAt: null }),
     })
@@ -93,7 +93,7 @@ describe('quota source presentation', () => {
   it('keeps missing reset and read times unknown for a Desktop query snapshot', () => {
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(QuotaRing, {
+    app = createApp(QuotaRing, { now: Date.now(),
       label: '7 天', color: 'violet',
       quota: rateLimitWindow({ source: 'claude-desktop-get-usage', measuredAt: null, resetsAt: null }),
     })

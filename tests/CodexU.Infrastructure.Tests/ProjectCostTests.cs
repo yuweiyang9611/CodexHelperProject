@@ -104,7 +104,7 @@ public sealed class ProjectCostTests
             message = new
             {
                 model = "claude-opus-5",
-                usage = new { input_tokens = input, output_tokens = output }
+                usage = new { input_tokens = input, output_tokens = output, cache_read_input_tokens = 0, cache_creation_input_tokens = 0 }
             }
         });
 

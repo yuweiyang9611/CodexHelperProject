@@ -478,9 +478,15 @@ public partial class MainWindow : Window
         try
         {
             ThrowIfStateMutationUnavailable();
-            return new CombinedSnapshots(
-                await ReadRuntimeForCombinedAsync(AgentRuntime.Codex),
-                await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode));
+            while (true)
+            {
+                var service = _dashboardService;
+                var codex = await ReadRuntimeForCombinedAsync(AgentRuntime.Codex);
+                var claude = await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode);
+                var settings = _settings;
+                if (ReferenceEquals(service, _dashboardService))
+                    return CombinedRuntimeSummary.Project(codex, claude, settings);
+            }
         }
         finally
         {
@@ -498,7 +504,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            return new RuntimeReadResult(await ReadSnapshotCoreAsync(runtime), ReadFailed: false);
+            return RuntimeReadResult.FromSnapshot(await ReadSnapshotCoreAsync(runtime));
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
@@ -566,7 +572,7 @@ public partial class MainWindow : Window
             };
         }
 
-        return snapshot;
+        return snapshot with { MonthlyValue = MonthlyValue.Calculate(snapshot, _settings) };
     }
 
     private void PublishSnapshotIfCurrent(AgentRuntime runtime, DashboardSnapshot snapshot)

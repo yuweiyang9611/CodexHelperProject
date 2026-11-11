@@ -286,9 +286,15 @@ public sealed class ApplicationSession : IDisposable
         try
         {
             ThrowIfStateMutationUnavailable();
-            return new CombinedSnapshots(
-                await ReadRuntimeForCombinedAsync(AgentRuntime.Codex),
-                await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode));
+            while (true)
+            {
+                var service = _dashboardService;
+                var codex = await ReadRuntimeForCombinedAsync(AgentRuntime.Codex);
+                var claude = await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode);
+                var settings = _settings;
+                if (ReferenceEquals(service, _dashboardService))
+                    return CombinedRuntimeSummary.Project(codex, claude, settings);
+            }
         }
         finally
         {
@@ -614,7 +620,7 @@ public sealed class ApplicationSession : IDisposable
     {
         try
         {
-            return new RuntimeReadResult(await ReadSnapshotCoreAsync(runtime), ReadFailed: false);
+            return RuntimeReadResult.FromSnapshot(await ReadSnapshotCoreAsync(runtime));
         }
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
         {
@@ -683,7 +689,7 @@ public sealed class ApplicationSession : IDisposable
             };
         }
 
-        return snapshot;
+        return snapshot with { MonthlyValue = MonthlyValue.Calculate(snapshot, _settings) };
     }
 
     private void PublishSnapshotIfCurrent(AgentRuntime runtime, SnapshotLoadResult loaded)

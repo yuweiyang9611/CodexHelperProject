@@ -161,12 +161,12 @@ describe('resetTime', () => {
     expect(resetTime(undefined)).toBe('重置时间不可用')
   })
 
-  it('treats past and present as imminent', () => {
+  it('marks a reached reset as awaiting a new snapshot', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-14T12:00:00Z'))
 
-    expect(resetTime('2026-07-14T12:00:00Z')).toBe('即将重置')
-    expect(resetTime('2026-07-14T11:00:00Z')).toBe('即将重置')
+    expect(resetTime('2026-07-14T12:00:00Z')).toBe('已到重置时间，等待新快照')
+    expect(resetTime('2026-07-14T11:00:00Z')).toBe('已到重置时间，等待新快照')
   })
 
   it('bucketed by minute, hour and day', () => {

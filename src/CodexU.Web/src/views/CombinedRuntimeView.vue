@@ -3,75 +3,35 @@ import { computed, onMounted } from 'vue'
 import QuotaRing from '../components/QuotaRing.vue'
 import ClaudeDataNotice from '../components/ClaudeDataNotice.vue'
 import { compactNumber, currencyAmount, exhaustionTime, qualityLabel, relativeTime } from '../format'
-import { RUNTIME_LABELS, useCombinedRuntime } from '../composables/useCombinedRuntime'
+import { useQuotaClock } from '../composables/useQuotaClock'
 import { useDashboardStore } from '../stores/dashboard'
-import type { AgentRuntime } from '../types'
+import type { AgentRuntime, RuntimeReadResult } from '../types'
 
 const store = useDashboardStore()
-const combined = computed(() => store.combined)
-const summary = useCombinedRuntime(combined, computed(() => store.settings))
-const hasManualSubscription = computed(() => summary.value?.subscription.perRuntime.some(row => row.source === 'manual') ?? false)
+const summary = computed(() => store.combined?.summary)
+const entries = computed(() => store.combined ? [store.combined.codex, store.combined.claudeCode] : [])
+const now = useQuotaClock(() => entries.value.flatMap(e => [e.snapshot.primaryQuota?.resetsAt, e.snapshot.secondaryQuota?.resetsAt]))
+const earliest = computed(() => summary.value?.forecasts.find(phase => !phase.validUntil || Date.parse(phase.validUntil) > now.value))
+const PERIODS = [{ key: 'today', label: '今日' }, { key: 'sevenDays', label: '近 7 日' }, { key: 'month', label: '本月' }] as const
+const runtimeLabel = (runtime: AgentRuntime) => runtime === 'codex' ? 'Codex' : 'Claude Code'
 
-// Lazy: the two reads are expensive and most sessions never open this tab. The data
-// lives in the store, so switching away and back does not pay for them again.
-onMounted(() => void store.loadCombined())
-
-const amountPerThousandCredits = computed(() => store.settings?.amountPerThousandCredits ?? 40)
-
-function money(credits: number | null | undefined) {
-  if (credits == null) return '--'
-  return currencyAmount(credits / 1_000 * amountPerThousandCredits.value)
+function subscriptionText(entry: RuntimeReadResult) {
+  const value = entry.snapshot.monthlyValue
+  if (entry.contribution !== 'present' || value?.subscriptionAmount == null) return '无法推算'
+  return `${currencyAmount(value.subscriptionAmount)} · ${value.subscriptionSource === 'manual' ? '手动' : '自动估算'}`
 }
-
-const PERIODS = [
-  { key: 'today' as const, label: '今日' },
-  { key: 'sevenDays' as const, label: '近 7 日' },
-  { key: 'month' as const, label: '本月' },
-]
-
-const monthly = computed(() => summary.value?.periods.month ?? null)
-
-const monthlyAmount = computed(() =>
-  monthly.value ? monthly.value.creditsUsed / 1_000 * amountPerThousandCredits.value : null)
-
-/**
- * Payback needs both sides of the ratio to describe the same set of runtimes. The
- * subscription total is complete only when every runtime in play resolved a price,
- * and the numerator only counts runtimes that were actually read — so a runtime that
- * contributes to one and not the other makes the ratio meaningless rather than
- * merely approximate.
- */
-const payback = computed(() => {
-  const current = summary.value
-  const amount = monthlyAmount.value
-  if (!current || amount == null || !current.subscription.isComplete) return null
-  const subscription = current.subscription.amount ?? 0
-  if (subscription <= 0) return null
-  const contributors = [...current.periods.month.contributors].sort().join(',')
-  const priced = current.subscription.perRuntime.map(row => row.runtime).sort().join(',')
-  if (contributors !== priced) return null
-  return { multiple: amount / subscription, net: amount - subscription, subscription }
-})
 
 const paybackSuppressedReason = computed(() => {
-  const current = summary.value
-  if (!current || payback.value) return null
-  if (!current.subscription.isComplete) {
-    const names = current.subscription.unknownRuntimes.map(runtime => RUNTIME_LABELS[runtime]).join('、')
-    return `${names || '部分运行时'}的订阅月费无法推算，合计与回本倍数暂不显示`
+  const cost = summary.value?.cost
+  switch (cost?.paybackReason) {
+    case 'unknownSubscription': return `${cost.unknownSubscriptions.map(runtimeLabel).join('、') || '部分运行时'}的订阅月费无法推算，合计与回本倍数暂不显示`
+    case 'zeroSubscription': return '订阅月费合计为零，回本倍数不适用'
+    case 'incompleteUsage': return '用量尚未完整核算，暂无法判断是否回本'
+    default: return null
   }
-  return '两侧统计口径不一致（有运行时只贡献了其中一边），回本倍数暂不显示'
 })
 
-function runtimeLabel(runtime: AgentRuntime) {
-  return RUNTIME_LABELS[runtime]
-}
-
-function subscriptionText(runtime: AgentRuntime) {
-  const subscription = summary.value?.subscription.perRuntime.find(row => row.runtime === runtime)
-  if (subscription?.amount == null) return '无法推算'
-  return `${currencyAmount(subscription.amount)} · ${subscription.source === 'manual' ? '手动' : '自动估算'}`
-}
+onMounted(() => void store.loadCombined())
 </script>
 
 <template>
@@ -94,9 +54,9 @@ function subscriptionText(runtime: AgentRuntime) {
       </div>
 
       <div class="combined-columns">
-        <article v-for="entry in summary.entries" :key="entry.runtime" class="combined-runtime-column glass-card">
+        <article v-for="entry in entries" :key="entry.snapshot.runtime" class="combined-runtime-column glass-card">
           <header>
-            <strong>{{ runtimeLabel(entry.runtime) }}</strong>
+            <strong>{{ runtimeLabel(entry.snapshot.runtime) }}</strong>
             <span v-if="entry.contribution === 'failed'" class="combined-tag combined-tag-error">读取失败</span>
             <span v-else-if="entry.contribution === 'absent'" class="combined-tag">未发现本机用量</span>
             <span v-else class="combined-tag">{{ entry.snapshot.account?.planType?.toUpperCase() ?? '本机' }}</span>
@@ -106,26 +66,28 @@ function subscriptionText(runtime: AgentRuntime) {
             <QuotaRing
               label="5 小时"
               :quota="entry.snapshot.primaryQuota"
+              :now="now"
               color="blue"
               :forecast="entry.snapshot.primaryForecast"
             />
             <QuotaRing
               label="7 天"
               :quota="entry.snapshot.secondaryQuota"
+              :now="now"
               color="violet"
               :forecast="entry.snapshot.secondaryForecast"
             />
           </div>
 
-          <ClaudeDataNotice :snapshot="entry.snapshot" />
+          <ClaudeDataNotice :snapshot="entry.snapshot" :now="now" />
 
           <dl class="combined-runtime-facts">
             <div><dt>本月本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.month.tokens) }}</dd></div>
-            <div><dt>本机原始 token API 估算</dt><dd>{{ money(entry.snapshot.tokens.month.creditsUsed) }}</dd></div>
+            <div><dt>本机原始 token API 估算</dt><dd>{{ entry.contribution === 'present' && entry.snapshot.tokens.month.quality !== 'unavailable' && entry.snapshot.monthlyValue ? (entry.snapshot.monthlyValue.isLowerBound ? '≥ ' : '') + currencyAmount(entry.snapshot.monthlyValue.knownAmount) : '无法核算' }}</dd></div>
             <div><dt>累计本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.lifetime.tokens) }}</dd></div>
             <div>
               <dt>订阅月费估算</dt>
-              <dd>{{ subscriptionText(entry.runtime) }}</dd>
+              <dd>{{ subscriptionText(entry) }}</dd>
             </div>
             <div><dt>统计精度</dt><dd>{{ qualityLabel(entry.snapshot.tokens.month.quality) }}</dd></div>
           </dl>
@@ -139,7 +101,7 @@ function subscriptionText(runtime: AgentRuntime) {
             <span class="combined-metric-label">{{ period.label }}</span>
             <strong>{{ compactNumber(summary.periods[period.key].tokens) }}</strong>
             <span class="combined-metric-sub">
-              {{ summary.periods[period.key].creditsAreLowerBound ? '≥ ' : '' }}{{ money(summary.periods[period.key].creditsUsed) }}
+              {{ summary.periods[period.key].amount == null ? '无法核算' : (summary.periods[period.key].creditsAreLowerBound ? '≥ ' : '') + currencyAmount(summary.periods[period.key].amount) }}
               · {{ qualityLabel(summary.periods[period.key].quality) }}
             </span>
           </div>
@@ -155,22 +117,22 @@ function subscriptionText(runtime: AgentRuntime) {
         <div class="combined-metrics">
           <div class="combined-metric">
             <span class="combined-metric-label">本机原始 Token 按 API 价估算</span>
-            <strong>{{ monthly?.creditsAreLowerBound ? '≥ ' : '' }}{{ currencyAmount(monthlyAmount) }}</strong>
+            <strong>{{ summary.cost.knownAmount == null ? '无法核算' : (summary.cost.isLowerBound ? '≥ ' : '') + currencyAmount(summary.cost.knownAmount) }}</strong>
             <span class="combined-metric-sub">基于本机原始 Token，按 API 列表价折算，不是账单金额</span>
           </div>
           <div class="combined-metric">
-            <span class="combined-metric-label">订阅月费合计{{ hasManualSubscription ? ' · 含手动值' : '' }}</span>
-            <strong>{{ summary.subscription.isComplete ? currencyAmount(summary.subscription.amount) : '无法推算' }}</strong>
+            <span class="combined-metric-label">订阅月费合计{{ summary.cost.hasManual ? ' · 含手动值' : '' }}</span>
+            <strong>{{ summary.cost.subscriptionAmount != null ? currencyAmount(summary.cost.subscriptionAmount) : '无法推算' }}</strong>
             <span class="combined-metric-sub">
-              {{ summary.subscription.perRuntime
-                .map(row => `${runtimeLabel(row.runtime)} ${subscriptionText(row.runtime)}`)
+              {{ entries.filter(row => row.contribution !== 'absent')
+                .map(row => `${runtimeLabel(row.snapshot.runtime)} ${subscriptionText(row)}`)
                 .join('；') }}
             </span>
           </div>
-          <div v-if="payback" class="combined-metric">
+          <div v-if="summary.cost.paybackMultiple != null" class="combined-metric">
             <span class="combined-metric-label">回本倍数</span>
-            <strong>{{ payback.multiple.toFixed(1) }}×</strong>
-            <span class="combined-metric-sub">净等价 {{ currencyAmount(payback.net, 'US$', false, true) }}</span>
+            <strong>{{ summary.cost.isLowerBound ? '≥ ' : '' }}{{ summary.cost.paybackMultiple.toFixed(1) }}×</strong>
+            <span class="combined-metric-sub">净等价 {{ summary.cost.isLowerBound ? '≥ ' : '' }}{{ currencyAmount(summary.cost.netAmount, 'US$', false, true) }}</span>
           </div>
         </div>
         <p class="combined-note">月费按标注来源估算，不代表实际账单。</p>
@@ -179,13 +141,13 @@ function subscriptionText(runtime: AgentRuntime) {
 
       <article class="combined-card glass-card">
         <h2>额度最先耗尽</h2>
-        <template v-if="summary.earliest">
+        <template v-if="earliest">
           <p class="combined-earliest">
-            <strong>{{ runtimeLabel(summary.earliest.runtime) }} · {{ summary.earliest.windowLabel }}</strong>
-            <span>{{ exhaustionTime(summary.earliest.forecast.exhaustsAt) }}</span>
+            <strong>{{ runtimeLabel(earliest.runtime) }} · {{ earliest.weekly ? '7 天' : '5 小时' }}</strong>
+            <span>{{ exhaustionTime(earliest.exhaustsAt, now) }}</span>
           </p>
           <p class="combined-note">
-            {{ summary.earliest.total }} 个额度窗口中有 {{ summary.earliest.predictable }} 个可预测，
+            {{ earliest.total }} 个额度窗口中有 {{ earliest.predictable }} 个可预测，
             其余窗口样本不足或会在耗尽前重置。四个窗口是四份独立额度，不做相加或平均。
           </p>
         </template>
@@ -206,8 +168,8 @@ function subscriptionText(runtime: AgentRuntime) {
               <td>{{ project.runtimes.map(runtimeLabel).join(' + ') }}</td>
               <td>{{ compactNumber(project.tokens) }}</td>
               <td>
-                {{ project.creditsUsed != null ? money(project.creditsUsed) : '成本不可得' }}
-                <small v-if="project.costIsEstimated && project.creditsUsed != null">（估算）</small>
+                {{ project.amount != null ? currencyAmount(project.amount) : '成本不可得' }}
+                <small v-if="project.costIsEstimated && project.amount != null">（估算）</small>
               </td>
               <td>{{ relativeTime(project.lastActiveAt) }}</td>
             </tr>

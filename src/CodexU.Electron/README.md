@@ -18,6 +18,13 @@ The backend transport is a private stdin/stdout stream. Every message is UTF-8 J
 preceded by a four-byte unsigned little-endian length. The maximum JSON payload is
 1 MiB. Backend logs must go to stderr because stdout is reserved for protocol frames.
 
+The .NET backend computes the combined usage and cost summary returned by
+`usage.getCombined`. Claude snapshots include the selected quota source, the
+bound query status and the available recovery action. The renderer formats those
+results and advances reset countdowns with the local clock. The settings editor
+uses `rates.previewDraft` to validate edits and look up the rate in force on a
+given date. Saving a draft goes through `settings.update` and validates it again.
+
 Normal UI calls travel from Electron to the sidecar as correlated `request` / `response`
 messages. Native dialogs use the same private stream in the reverse direction:
 

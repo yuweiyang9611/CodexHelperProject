@@ -63,6 +63,37 @@ function button(container: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('desktop host capabilities', () => {
+  it('only allows saving edited rates after the current draft was validated', async () => {
+    let finish!: (response: unknown) => void
+    const first = new Promise(resolve => { finish = resolve })
+    const request = vi.spyOn(host, 'request')
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce({ validationMessage: '日期冲突', canAdd: false })
+    try {
+      const { container, store } = mountSettings([])
+      store.settingsDraft!.customModelRates = [{
+        model: 'draft', inputCreditsPerMillion: 1, cachedInputCreditsPerMillion: 2, outputCreditsPerMillion: 3,
+      }]
+      await nextTick()
+      expect(button(container, '保存设置').disabled).toBe(true)
+      finish({ canAdd: true })
+      await vi.waitFor(() => expect(container.querySelector('.setting-error')?.textContent).toBe('日期冲突'))
+      expect(button(container, '保存设置').disabled).toBe(true)
+      expect(request.mock.calls.at(-1)?.[0]).toBe('rates.previewDraft')
+      expect(store.settings!.customModelRates).toHaveLength(0)
+    } finally { request.mockRestore() }
+  })
+
+  it('can save unrelated edits when the rate preview host is unavailable', async () => {
+    const request = vi.spyOn(host, 'request').mockRejectedValueOnce(new Error('offline'))
+    try {
+      const { container, store } = mountSettings([])
+      store.settingsDraft!.theme = 'light'
+      await vi.waitFor(() => expect(container.querySelector('.setting-error')?.textContent).toContain('预览失败'))
+      expect(button(container, '保存设置').disabled).toBe(false)
+    } finally { request.mockRestore() }
+  })
+
   it('selects and checks a draft transcript before saving; cancel preserves the selection and result', async () => {
     const { container, store } = mountSettings([])
     const path = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'

@@ -21,6 +21,7 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set([
   'statusStrip.preview',
   'statusStrip.recover',
   'rates.getCatalog',
+  'rates.previewDraft',
   'rates.export',
   'rates.import',
   'rates.reset',

@@ -52,7 +52,7 @@ test('settings announce local operations and reject ambiguous or invalid rates',
   await addRate.click()
   const rows = page.locator('.rate-row')
   await rows.nth(0).locator('input').first().fill('gpt-5.2')
-  await rows.nth(1).locator('input').first().fill('gpt-5.2-codex-latest')
+  await rows.nth(1).locator('input').first().fill('gpt-5.2')
 
   const validation = page.locator('.setting-error')
   const save = page.getByRole('button', { name: '保存设置', exact: true })

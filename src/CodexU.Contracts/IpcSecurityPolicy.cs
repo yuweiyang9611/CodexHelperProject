@@ -29,6 +29,7 @@ public static class IpcSecurityPolicy
         "statusStrip.preview",
         "statusStrip.recover",
         "rates.getCatalog",
+        "rates.previewDraft",
         "rates.export",
         "rates.import",
         "rates.reset",

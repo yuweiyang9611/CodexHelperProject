@@ -8,6 +8,14 @@ internal sealed record UsageProjection(TokenSummary Tokens, IReadOnlyList<DailyU
 
 internal static class UsageHistoryProjection
 {
+    internal static void AddPricingDiagnostics(TokenPeriod period, List<string> diagnostics)
+    {
+        if (period.MissingRateTokens > 0)
+            diagnostics.Add($"有 {period.MissingRateTokens:N0} tokens 的模型暂无适用费率，未计入点数");
+        if (period.IncompleteBreakdownTokens > 0)
+            diagnostics.Add($"有 {period.IncompleteBreakdownTokens:N0} tokens 缺少计价所需的用量分项，未计入点数");
+    }
+
     internal static IReadOnlyList<UsageDistributionSlice> Distribution(IEnumerable<AttributedUsage> entries) => entries
         .GroupBy(e => (Model: e.Model.ToLowerInvariant(), e.Feature))
         .Select(g => new UsageDistributionSlice(g.Key.Model, g.Key.Feature, g.Sum(e => e.Tokens.VisibleTotalTokens)))
@@ -31,7 +39,6 @@ internal static class UsageHistoryProjection
         string root, string? workspace, DataQuality quality, IReadOnlyList<ModelCreditRate>? rates,
         bool completeCatalog, int retained, int conflicts, CancellationToken ct)
     {
-        var today = DateOnly.FromDateTime(DateTime.Now);
         var scope = DailyUsageHistoryStore.ScopeFingerprint(workspace);
         var old = await new DailyUsageHistoryStore(root).LoadAsync(runtime, scope, ct);
         try
@@ -42,6 +49,13 @@ internal static class UsageHistoryProjection
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or System.Text.Json.JsonException)
         { /* Source observations remain usable even if archival migration is unavailable. */ }
+        return Build(entries, old, workspace, quality, rates, completeCatalog, retained, conflicts);
+    }
+
+    internal static UsageProjection Build(IReadOnlyList<AttributedUsage> entries, IReadOnlyCollection<DailyUsageRecord> old,
+        string? workspace, DataQuality quality, IReadOnlyList<ModelCreditRate>? rates, bool completeCatalog, int retained, int conflicts)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
         // Recheck the projection boundary as well as the reader boundary. A
         // workspace-specific snapshot cannot be explained by another workspace
         // or a source whose workspace is unknown.
@@ -54,39 +68,27 @@ internal static class UsageHistoryProjection
         var analysis = BuildAnalysis(contributions, legacy.Values, rates, completeCatalog);
         var daySources = selected.GroupBy(e => e.Date).ToDictionary(g => g.Key,
             g => g.Any(e => e.SourceKind == "conflict") ? "conflict" : g.Any(e => e.SourceKind == "retained") ? "retained" : "live");
-        var dayRecords = new Dictionary<DateOnly, DailyUsageRecord>();
-        foreach (var group in selected.GroupBy(e => e.Date))
-        {
-            var period = Price(group);
-            dayRecords[group.Key] = new(group.Key, period.Breakdown, period.CreditsUsed, period.UnratedTokens, quality);
-        }
-        foreach (var day in legacy.Values) dayRecords[day.Date] = day with { Quality = DataQuality.Approximate };
+        var dayRecords = analysis.Entries.GroupBy(e => e.Date).ToDictionary(group => group.Key, group => Price(group));
 
-        TokenPeriod Price(IEnumerable<AttributedUsage> rows)
+        TokenPeriod Price(IEnumerable<UsageAnalysisEntry> rows)
         {
             var data = rows.ToArray();
-            var tokens = data.Aggregate(TokenBreakdown.Zero, (sum, row) => sum.Add(row.Tokens));
-            var price = UsageCredits.Calculate(data.Select(e => new DatedModelTokenUsage(e.Date, e.Model, e.Tokens)), rates, completeCatalog);
-            return new(tokens.VisibleTotalTokens, tokens, price.CreditsUsed, price.UnratedTokens, price.ByModel, quality);
+            // Legacy totals preserve the known daily breakdown. Their archived price
+            // is a separate whole-day estimate; only verified detail contributes cost.
+            var snapshots = data.Select(e => e.Date).Distinct().Where(legacy.ContainsKey).Select(d => legacy[d]).ToArray();
+            var tokens = data.Where(e => !legacy.ContainsKey(e.Date))
+                .Aggregate(TokenBreakdown.Zero, (sum, row) => sum.Add(row.Breakdown ?? TokenBreakdown.Zero));
+            tokens = snapshots.Aggregate(tokens, (sum, day) => sum.Add(day.Tokens));
+            var priced = UsageCredits.CalculateAppliedRates(data.Where(e => e.CreditsUsed.HasValue)
+                .Select(e => (e.Model, e.Breakdown!, e.Rate)));
+            return new(data.Sum(e => e.Tokens), tokens, priced.CreditsUsed, data.Where(e => !e.CreditsUsed.HasValue).Sum(e => e.Tokens),
+                priced.ByModel, snapshots.Length > 0 ? DataQuality.Approximate : quality,
+                data.Where(e => e.Rate is null && e.Model is not ("unknown" or "legacy-unattributed")).Sum(e => e.Tokens),
+                data.Where(e => e.Rate is not null && !e.CreditsUsed.HasValue).Sum(e => e.Tokens));
         }
-        TokenPeriod Period(Func<DateOnly, bool> predicate)
-        {
-            var current = Price(selected.Where(e => predicate(e.Date)));
-            var snapshots = legacy.Values.Where(e => predicate(e.Date)).ToArray();
-            var tokens = snapshots.Aggregate(current.Breakdown, (sum, row) => sum.Add(row.Tokens));
-            return current with
-            {
-                Tokens = tokens.VisibleTotalTokens,
-                Breakdown = tokens,
-                CreditsUsed = current.CreditsUsed + snapshots.Sum(e => e.CreditsUsed),
-                UnratedTokens = current.UnratedTokens + snapshots.Sum(e => e.UnratedTokens),
-                Quality = snapshots.Length > 0 ? DataQuality.Approximate : quality
-            };
-        }
+        TokenPeriod Period(Func<DateOnly, bool> predicate) => Price(analysis.Entries.Where(e => predicate(e.Date)));
         var eventCounts = contributions.GroupBy(e => UsageCredits.NormalizeModel(e.Model), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Sum(e => e.Events), StringComparer.OrdinalIgnoreCase);
-        var compatibleProjectPrices = contributions.GroupBy(e => e.Workspace ?? "未知项目", StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => Price(g), StringComparer.OrdinalIgnoreCase);
         var projectBranches = contributions.GroupBy(e => e.Workspace ?? "未知项目", StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderBy(e => e.Date).LastOrDefault(e => e.Branch is not null)?.Branch, StringComparer.OrdinalIgnoreCase);
         var models = analysis.Entries.GroupBy(e => e.Model, StringComparer.OrdinalIgnoreCase)
@@ -97,16 +99,16 @@ internal static class UsageHistoryProjection
             return new ProjectUsage(group.Key, Path.GetFileName(group.Key), group.Key == "未知项目" ? null : group.Key,
                 priced.Tokens, group.Where(e => e.SessionId is not null).Select(e => e.SessionId).Distinct().Count(),
                 new DateTimeOffset(group.Max(e => e.Date).ToDateTime(TimeOnly.MinValue)), projectBranches.GetValueOrDefault(group.Key),
-                compatibleProjectPrices.TryGetValue(group.Key, out var compatible) && compatible.CreditsByModel.Count > 0 ? compatible.CreditsUsed : null,
+                priced.CreditsUsed,
                 group.Any(e => e.Source == "legacy") ? DataQuality.Approximate : quality);
         }).ToList();
         var days = Enumerable.Range(0, 182).Select(i => today.AddDays(i - 181)).Select(date =>
         {
             var day = dayRecords.GetValueOrDefault(date);
-            return new DailyUsage(date, day?.Tokens.VisibleTotalTokens ?? 0, day?.CreditsUsed ?? 0, day?.Quality ?? quality,
+            return new DailyUsage(date, day?.Tokens ?? 0, day?.CreditsUsed ?? 0, day?.Quality ?? quality,
                 legacy.ContainsKey(date) ? "legacy" : daySources.GetValueOrDefault(date, "live"),
                 legacy.ContainsKey(date)
-                    ? LegacyDistribution(day!.Tokens.VisibleTotalTokens, measured.GetValueOrDefault(date) ?? [])
+                    ? LegacyDistribution(legacy[date].Tokens.VisibleTotalTokens, measured.GetValueOrDefault(date) ?? [])
                     : Distribution(measured.GetValueOrDefault(date) ?? []));
         }).ToArray();
         return new(new(Period(d => d == today), Period(d => d >= today.AddDays(-6) && d <= today),
@@ -128,7 +130,7 @@ internal static class UsageHistoryProjection
             if (e.Tokens.BillableCacheWriteTokens > 0) required |= UsageBreakdownFields.CacheWrite5m | UsageBreakdownFields.CacheWrite1h;
             var priceable = (e.AvailableFields.GetValueOrDefault() & required) == required;
             var amount = rate is null || !priceable ? (double?)null
-                : UsageCredits.Calculate([new DatedModelTokenUsage(e.Date, e.Model, e.Tokens)], rates, completeCatalog).CreditsUsed;
+                : UsageCredits.CalculateAppliedRates([(model, e.Tokens, rate)]).CreditsUsed;
             var explanation = !priceable ? "来源缺少核算所需的 Token 分项；保留总量，金额暂不可核算。" : null;
             if (rate is null && model is not ("unknown" or "legacy-unattributed"))
                 explanation = "该模型在用量发生日期没有适用费率。" + explanation;

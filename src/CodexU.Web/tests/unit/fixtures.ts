@@ -2,6 +2,7 @@ import type {
   AppSettings,
   DashboardSnapshot,
   ModelCreditUsage,
+  MonthlyValue,
   ProjectUsage,
   QuotaForecast,
   RateLimitWindow,
@@ -9,6 +10,12 @@ import type {
   TokenBreakdown,
   TokenPeriod,
 } from '../../src/types'
+
+export function monthlyValue(overrides: Partial<MonthlyValue> = {}): MonthlyValue {
+  return { knownAmount: 80, isLowerBound: false, subscriptionAmount: 100, subscriptionSource: 'manual',
+    netAmount: -20, paybackMultiple: 0.8, paybackStatus: 'below', projectedAmount: 160, coveragePercent: 100,
+    ...overrides }
+}
 
 export function tokenBreakdown(overrides: Partial<TokenBreakdown> = {}): TokenBreakdown {
   return {
@@ -127,6 +134,7 @@ export function quotaForecast(overrides: Partial<QuotaForecast> = {}): QuotaFore
 
 export function runtimeRead(overrides: Partial<RuntimeReadResult> = {}): RuntimeReadResult {
   return {
+    contribution: 'present',
     snapshot: snapshot(),
     readFailed: false,
     ...overrides,

@@ -143,11 +143,11 @@ cd ..\CodexU.Electron
 npm.cmd test
 ```
 
-前端单元测试用 Vitest，位于 `src\CodexU.Web\tests\unit`，不需要浏览器或构建产物，可用 `npm.cmd run test:unit:watch` 监听、`npm.cmd run test:unit:coverage` 查看覆盖率。时区固定为 `Asia/Tokyo`，与 Playwright 一致，保证跨月投影一类的本地时间断言可复现。
+前端单元测试用 Vitest，位于 `src\CodexU.Web\tests\unit`，不需要浏览器或构建产物，可用 `npm.cmd run test:unit:watch` 监听、`npm.cmd run test:unit:coverage` 查看覆盖率。时区固定为 `Asia/Tokyo`，与 Playwright 一致，保证本地重置时刻与倒计时断言可复现。
 
 仅更新经过确认的视觉基线时使用 `npm.cmd run test:e2e:update`。无障碍和键盘测试可单独运行 `npm.cmd run test:a11y`。
 
-C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择历史费率、费率目录导入导出、Claude transcript 容错、增量续读、设置与待办持久化、备份恢复、导出隐私、诊断脱敏、更新版本比较、Goals、automation 元数据、本机数据库只读烟雾验证，以及 IPC 方法白名单与宿主 dispatch 分支的一致性。前端单元测试覆盖金额与 token 格式化、等效收益换算与本月投影、费率覆盖率，以及仪表盘 store 的过期响应丢弃、运行时切换竞态、设置草稿合并与各类失败降级。端到端测试覆盖深浅主题截图、axe 扫描和 Tab 键盘模式。
+C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择历史费率、费率目录导入导出、Claude transcript 容错、增量续读、设置与待办持久化、备份恢复、导出隐私、诊断脱敏、更新版本比较、Goals、automation 元数据、本机数据库只读烟雾验证，以及 IPC 方法白名单与宿主 dispatch 分支的一致性。C# 也负责验证双运行时汇总、月费与回本判断、费率草稿校验及 Claude 额度来源分类。前端单元测试覆盖这些结果的展示、金额与 Token 格式化、过期响应丢弃、运行时切换竞态及设置草稿合并。端到端测试覆盖深浅主题截图、axe 扫描和 Tab 键盘模式。
 
 ## GitHub 自动化
 

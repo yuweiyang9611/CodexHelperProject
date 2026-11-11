@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings, IpcEnvelope, RateCatalogSnapshot } from '../../src/types'
-import { builtInModelNames, newestBuiltInRateFor } from '../../src/builtInRates'
+import { builtInModelNames, newestBuiltInRateFor } from '../../src/demoRateEditor'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
 type WebViewMessageListener = (event: MessageEvent) => void

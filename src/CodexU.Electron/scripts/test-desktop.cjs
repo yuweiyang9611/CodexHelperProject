@@ -18,9 +18,10 @@ const os = require('node:os');
   await fs.mkdir(subagents);
   const childTranscript = path.join(subagents, 'agent-worker.jsonl');
   await fs.writeFile(transcript, JSON.stringify({ type: 'assistant', sessionId: 'desktop-e2e', cwd: root, timestamp: new Date().toISOString(),
-    message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 80, output_tokens: 20 } } }) + '\n');
+    message: { model: 'claude-opus-5', usage: { input_tokens: 80, output_tokens: 20,
+      cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }) + '\n');
   await fs.writeFile(childTranscript, JSON.stringify({ type: 'assistant', sessionId: 'desktop-e2e', agentId: 'worker', cwd: root, timestamp: new Date().toISOString(),
-    message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 15, output_tokens: 5 } } }) + '\n');
+    message: { model: 'claude-opus-5', usage: { input_tokens: 15, output_tokens: 5 } } }) + '\n');
   let application;
   async function launch() {
     application = await _electron.launch({ executablePath: require('electron'), args: [path.resolve(__dirname, '..')],
@@ -58,10 +59,41 @@ const os = require('node:os');
     let page = await launch();
     const capabilities = await request(page, 'app.initialize');
     assert(capabilities.capabilities.includes('statusStripControl'));
+    const draftRate = { model: 'gpt-5.2', inputCreditsPerMillion: 17, cachedInputCreditsPerMillion: 2,
+      outputCreditsPerMillion: 64, effectiveFrom: '2026-10-01', matchMode: 'exact' };
+    const draftPayload = { rates: [draftRate], model: 'gpt-5.2-codex-latest', effectiveOn: '2026-10-05' };
+    const preview = await request(page, 'rates.previewDraft', draftPayload);
+    assert.equal(preview.validationMessage ?? null, null);
+    assert.equal(preview.effectiveRate.inputCreditsPerMillion, 17);
+    assert.notEqual(preview.builtInRate.inputCreditsPerMillion, 17);
+    const duplicate = await request(page, 'rates.previewDraft', { ...draftPayload,
+      rates: [draftRate, { ...draftRate, model: 'gpt-5.2-codex-latest' }] });
+    assert(duplicate.validationMessage);
+    assert.equal((await request(page, 'settings.get')).customModelRates.length, 0);
     await request(page, 'runtime.select', { runtime: 'claudeCode' });
     const initial = await request(page, 'usage.refresh'); assert.equal(initial.tokens.lifetime.tokens, 120);
-    assertGroupedUsage(await query(page), 'live');
-    const filtered = await request(page, 'usage.query', { runtime: 'claudeCode', model: 'claude-sonnet-4-5', project: root });
+    const detail = await query(page);
+    assertGroupedUsage(detail, 'live');
+    assert.equal(initial.tokens.month.creditsUsed, detail.totals.creditsUsed);
+    assert.equal(initial.tokens.month.unratedTokens, 20);
+    assert(initial.monthlyValue.knownAmount > 0);
+    assert.equal(initial.monthlyValue.isLowerBound, true);
+    assert.equal(initial.monthlyValue.subscriptionSource, 'unknown');
+    await request(page, 'settings.update', { patch: { claudeAutoDetectSubscriptionAmount: false, claudeMonthlySubscriptionAmount: 100 } });
+    const combined = await request(page, 'usage.getCombined');
+    const manual = combined.claudeCode.snapshot.monthlyValue;
+    assert.equal(manual.subscriptionAmount, 100);
+    assert.equal(manual.paybackStatus, 'unknown');
+    assert.equal(manual.netAmount ?? null, null);
+    assert.equal(combined.claudeCode.contribution, 'present');
+    assert.equal(combined.summary.periods.month.tokens, 120);
+    assert.equal(combined.summary.cost.knownAmount, manual.knownAmount);
+    assert.equal(combined.summary.cost.isLowerBound, true);
+    await page.locator('#tab-combined').click();
+    const combinedCosts = page.locator('.combined-card').filter({ has: page.getByRole('heading', { name: '合计成本', exact: true }) });
+    await combinedCosts.getByText(/≥/).first().waitFor();
+    await page.locator('#tab-usage').click();
+    const filtered = await request(page, 'usage.query', { runtime: 'claudeCode', model: 'claude-opus-5', project: root });
     assertGroupedUsage(filtered, 'live');
     assert(capabilities.capabilities.includes('desktopMode'));
     if (process.env.CODEXU_RUN_DESKTOP_ATTACH_TEST === '1') {
@@ -121,11 +153,11 @@ const os = require('node:os');
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
     }, selectedExport);
     assert.equal((await request(page, 'data.exportAggregates', {
-      format: 'json', query: { runtime: 'claudeCode', model: 'claude-sonnet-4-5' },
+      format: 'json', query: { runtime: 'claudeCode', model: 'claude-opus-5' },
     })).success, true);
     const selected = JSON.parse(await fs.readFile(selectedExport, 'utf8'));
     assert.equal(selected.schemaVersion, 3);
-    assert.equal(selected.filters.model, 'claude-sonnet-4-5');
+    assert.equal(selected.filters.model, 'claude-opus-5');
     assert.equal(selected.totals.tokens, 120);
     assert(Array.isArray(selected.appliedRates));
     assert(strings(selected).every(value => !value.includes(root)));
@@ -145,6 +177,11 @@ const os = require('node:os');
     await binding.getByRole('status').filter({ hasText: '尚未找到查询结果' }).waitFor();
     assert.equal(await binding.getByLabel('Claude Desktop 额度会话文件').inputValue(), selectedTranscript);
     assert.equal((await request(page, 'settings.get')).claudeDesktopUsageTranscript ?? null, null);
+    await request(page, 'settings.update', { patch: { claudeDesktopUsageTranscript: selectedTranscript } });
+    const bound = (await request(page, 'usage.refresh')).claudeQuotaState;
+    assert.equal(bound.queryStatus, 'missingResult');
+    assert.equal(bound.action, 'query');
+    assert(!JSON.stringify(bound).includes(root));
     await binding.locator('summary').click();
     await page.getByRole('button', { name: '导出 CSV 日报', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '已取消导出' }).waitFor();

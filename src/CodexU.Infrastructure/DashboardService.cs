@@ -70,12 +70,12 @@ public sealed class DashboardService(
         InvalidateUsageAnalysis();
         if (runtime == AgentRuntime.ClaudeCode)
         {
-            var claude = await ReadLocalSafelyAsync(
+            var (claude, failed) = await ReadLocalSafelyAsync(
                 claudeUsageReader,
                 AgentRuntime.ClaudeCode,
                 cancellationToken);
             return await WithForecastsAsync(
-                ToDashboard(runtime, claude),
+                ToDashboard(runtime, claude) with { LocalReadFailed = failed },
                 new QuotaReading(claude.PrimaryQuota, claude.PrimaryQuota?.Source ?? QuotaForecastCollector.StatuslineSource),
                 new QuotaReading(claude.SecondaryQuota, claude.SecondaryQuota?.Source ?? QuotaForecastCollector.StatuslineSource),
                 cancellationToken);
@@ -86,7 +86,7 @@ public sealed class DashboardService(
         await Task.WhenAll(appServerTask, localTask);
 
         var appServer = await appServerTask;
-        var local = await localTask;
+        var (local, localFailed) = await localTask;
         var diagnostics = appServer.Diagnostics.Concat(local.Diagnostics).Distinct().ToList();
         var primary = Prefer(appServer.PrimaryQuota, local.PrimaryQuota);
         var secondary = Prefer(appServer.SecondaryQuota, local.SecondaryQuota);
@@ -107,7 +107,8 @@ public sealed class DashboardService(
             local.Goals,
             local.TaskLifecycle,
             local.IndexStatus,
-            diagnostics.Distinct().ToArray(), History: local.History, AnalysisData: local.AnalysisData);
+            diagnostics.Distinct().ToArray(), History: local.History, AnalysisData: local.AnalysisData)
+        { LocalReadFailed = localFailed };
         return await WithForecastsAsync(snapshot, primary, secondary, cancellationToken);
     }
 
@@ -203,7 +204,8 @@ public sealed class DashboardService(
         local.TaskLifecycle,
         local.IndexStatus,
         local.Diagnostics, History: local.History, AnalysisData: local.AnalysisData,
-        ClaudeDesktopQueryObservedAt: local.ClaudeDesktopQueryObservedAt);
+        ClaudeDesktopQueryObservedAt: local.ClaudeDesktopQueryObservedAt,
+        ClaudeQuotaState: local.ClaudeQuotaState);
 
     public async Task<UsageAnalysisResult> QueryUsageAsync(UsageAnalysisRequest request, CancellationToken cancellationToken = default)
     {
@@ -269,19 +271,19 @@ public sealed class DashboardService(
         }
     }
 
-    private static async Task<LocalUsageSnapshot> ReadLocalSafelyAsync(
+    private static async Task<(LocalUsageSnapshot Snapshot, bool Failed)> ReadLocalSafelyAsync(
         ILocalUsageReader? reader,
         AgentRuntime runtime,
         CancellationToken cancellationToken)
     {
         if (reader is null)
         {
-            return ToLocalSnapshot(DashboardSnapshot.Empty(runtime, $"{runtime} 本机数据适配器不可用"));
+            return (ToLocalSnapshot(DashboardSnapshot.Empty(runtime, $"{runtime} 本机数据适配器不可用")), false);
         }
 
         try
         {
-            return await reader.ReadAsync(cancellationToken);
+            return (await reader.ReadAsync(cancellationToken), false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -289,7 +291,7 @@ public sealed class DashboardService(
         }
         catch (Exception exception)
         {
-            return ToLocalSnapshot(DashboardSnapshot.Empty(runtime, $"本机数据读取失败：{exception.Message}"));
+            return (ToLocalSnapshot(DashboardSnapshot.Empty(runtime, $"本机数据读取失败：{exception.Message}")), true);
         }
     }
 

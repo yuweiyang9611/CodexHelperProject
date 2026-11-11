@@ -51,15 +51,6 @@ public sealed partial class CodexSessionReader(
         }
 
         var now = DateTimeOffset.Now;
-        var todayDate = DateOnly.FromDateTime(now.Date);
-        var sevenDayStart = todayDate.AddDays(-6);
-        var monthStart = new DateOnly(now.Year, now.Month, 1);
-
-        var today = new PeriodAccumulator();
-        var sevenDays = new PeriodAccumulator();
-        var month = new PeriodAccumulator();
-        var lifetime = new PeriodAccumulator();
-        var daily = new Dictionary<DateOnly, PeriodAccumulator>();
         var tools = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var parsedFiles = 0;
@@ -187,7 +178,6 @@ public sealed partial class CodexSessionReader(
         {
             diagnostics.Add($"用量历史不可用，使用当前日志：{e.Message}");
         }
-        var projectBuckets = new Dictionary<string, List<SessionUsageBucket>>(StringComparer.OrdinalIgnoreCase);
         var attributed = new List<AttributedUsage>();
         var projectSessions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var reconstruction = ReconstructCached(physicalFiles, "history");
@@ -213,12 +203,8 @@ public sealed partial class CodexSessionReader(
             tokenEvents += parsed.TokenEventCount;
             skippedLines += parsed.SkippedLineCount;
             var projectKey = parsed.Workspace ?? "未知项目";
-            if (!projectBuckets.ContainsKey(projectKey))
-            {
-                projectBuckets[projectKey] = [];
-                projectSessions[projectKey] = new(StringComparer.Ordinal);
-            }
-            projectSessions[projectKey].Add(parsed.SessionId ?? resolved.Source.Path);
+            if (!projectSessions.TryGetValue(projectKey, out var sessions)) projectSessions[projectKey] = sessions = new(StringComparer.Ordinal);
+            sessions.Add(parsed.SessionId ?? resolved.Source.Path);
 
             taskStarted += parsed.TaskLifecycle.Started;
             taskCompleted += parsed.TaskLifecycle.Completed;
@@ -228,34 +214,11 @@ public sealed partial class CodexSessionReader(
 
             foreach (var bucket in EffectiveBuckets(resolved))
             {
-                projectBuckets[projectKey].Add(bucket);
                 attributed.Add(new(parsed.SessionId ?? resolved.Source.Path, parsed.Workspace,
                     bucket.Date, bucket.Model, bucket.Tokens, bucket.EventCount, SourceKind: historyRead?.Kind(resolved.Source.Path) ?? "live",
                     Feature: parsed.Feature,
                     ParentSessionId: parsed.Feature == "subagents" ? parsed.ForkedFromId ?? parsed.ForkReplayParentId : null,
                     Title: parsed.Title, AvailableFields: bucket.AvailableFields));
-                lifetime.Add(bucket);
-                if (!daily.TryGetValue(bucket.Date, out var dailyPeriod))
-                {
-                    dailyPeriod = new PeriodAccumulator();
-                    daily.Add(bucket.Date, dailyPeriod);
-                }
-
-                dailyPeriod.Add(bucket);
-                if (bucket.Date >= monthStart && bucket.Date <= todayDate)
-                {
-                    month.Add(bucket);
-                }
-
-                if (bucket.Date >= sevenDayStart && bucket.Date <= todayDate)
-                {
-                    sevenDays.Add(bucket);
-                }
-
-                if (bucket.Date == todayDate)
-                {
-                    today.Add(bucket);
-                }
             }
 
             MergeCounts(tools, parsed.Tools);
@@ -310,17 +273,19 @@ public sealed partial class CodexSessionReader(
                            || reconstruction.DivergentDuplicateCount > 0
             ? DataQuality.Partial
             : tokenEvents == 0 ? DataQuality.Unavailable : DataQuality.Detailed;
-        var lifetimePeriod = lifetime.ToPeriod(tokenQuality, customRates, completeRateCatalog);
+        var projection = historyEnabled
+            ? await UsageHistoryProjection.BuildAsync(AgentRuntime.Codex, attributed,
+                indexDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
+                defaultWorkspace, tokenQuality, customRates, completeRateCatalog, retainedSources, historyConflicts, cancellationToken)
+            : UsageHistoryProjection.Build(attributed, [], defaultWorkspace, tokenQuality, customRates, completeRateCatalog, 0, 0);
+        var lifetimePeriod = projection.Tokens.Lifetime;
         if (reconstruction.AmbiguousForkTokens > 0)
         {
             var lowerBound = Math.Max(0, lifetimePeriod.Tokens - reconstruction.AmbiguousForkTokens);
             diagnostics.Add($"本机历史 Token 保守区间：{lowerBound:N0}–{lifetimePeriod.Tokens:N0}；主值保留未确认 fork，取区间上界");
         }
 
-        if (lifetimePeriod.UnratedTokens > 0)
-        {
-            diagnostics.Add($"有 {lifetimePeriod.UnratedTokens:N0} tokens 的模型暂无点数费率，未计入点数");
-        }
+        UsageHistoryProjection.AddPricingDiagnostics(lifetimePeriod, diagnostics);
 
         var toolRanking = tools
             .OrderByDescending(pair => pair.Value)
@@ -332,7 +297,6 @@ public sealed partial class CodexSessionReader(
             .Take(10)
             .Select(pair => new RankedUsage(pair.Key, pair.Key, pair.Value, null, null, "Skill"))
             .ToArray();
-        var models = lifetime.ModelUsages();
         var keptPrimary = QuotaFreshness.KeepCurrent(
             latestRateLimit?.Primary,
             latestRateLimit?.PrimaryTimestamp,
@@ -362,30 +326,27 @@ public sealed partial class CodexSessionReader(
             ? null
             : keptSecondary with { MeasuredAt = latestRateLimit!.SecondaryTimestamp };
 
-        UsageProjection? projection = null;
-        if (historyEnabled)
+        // Live-only reads also list sessions without usage.
+        var projects = projection.Projects;
+        if (!historyEnabled)
         {
-            projection = await UsageHistoryProjection.BuildAsync(AgentRuntime.Codex, attributed,
-                indexDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
-                defaultWorkspace, tokenQuality, customRates, completeRateCatalog, retainedSources, historyConflicts, cancellationToken);
+            var measured = projects.ToDictionary(project => project.Id, StringComparer.OrdinalIgnoreCase);
+            projects = projectSessions.Select(pair => measured.TryGetValue(pair.Key, out var project)
+                ? project with { ThreadCount = pair.Value.Count }
+                : new ProjectUsage(pair.Key, Path.GetFileName(pair.Key), pair.Key == "未知项目" ? null : pair.Key,
+                    0, pair.Value.Count, null, null, null, tokenQuality)).OrderByDescending(project => project.Tokens).ToArray();
         }
-        var distribution = attributed.GroupBy(e => e.Date).ToDictionary(g => g.Key, g => UsageHistoryProjection.Distribution(g));
-        var result = new SessionAnalytics(
+        return new SessionAnalytics(
             latestRateLimit is null
                 ? null
                 : new AccountSnapshot("chatgpt", latestRateLimit.PlanType, null, true),
             primaryQuota,
             secondaryQuota,
-            new TokenSummary(
-                today.ToPeriod(tokenQuality, customRates, completeRateCatalog),
-                sevenDays.ToPeriod(tokenQuality, customRates, completeRateCatalog),
-                month.ToPeriod(tokenQuality, customRates, completeRateCatalog),
-                lifetimePeriod),
-            BuildDailyUsage(daily, now, tokenQuality, customRates, completeRateCatalog)
-                .Select(day => day with { Distribution = distribution.GetValueOrDefault(day.Date, []) }).ToArray(),
+            projection.Tokens,
+            projection.Daily,
             toolRanking,
             skillRanking,
-            models,
+            projection.Models,
             new TaskLifecycleStats(taskStarted, taskCompleted, taskAborted, taskDuration, longestTaskDuration),
             new IndexStatus(incrementalIndexEnabled, reusedFiles, incrementalFiles, newlyParsedFiles, files.Length, DateTimeOffset.Now,
                 schedule.LastSuccess, schedule.Due(Clock.GetUtcNow())),
@@ -394,53 +355,10 @@ public sealed partial class CodexSessionReader(
             skippedFiles,
             diagnostics)
         {
-            AnalysisData = UsageHistoryProjection.BuildAnalysis(attributed, [], customRates, completeRateCatalog),
-            Projects = projectBuckets.Select(pair =>
-            {
-                var accumulator = new PeriodAccumulator();
-                foreach (var bucket in pair.Value) accumulator.Add(bucket);
-                var period = accumulator.ToPeriod(tokenQuality, customRates, completeRateCatalog);
-                return new ProjectUsage(pair.Key, Path.GetFileName(pair.Key), pair.Key == "未知项目" ? null : pair.Key,
-                    period.Tokens, projectSessions[pair.Key].Count,
-                    pair.Value.Count == 0 ? null : new DateTimeOffset(pair.Value.Max(b => b.Date).ToDateTime(TimeOnly.MinValue)),
-                    null, period.CreditsUsed > 0 ? period.CreditsUsed : null, tokenQuality);
-            }).OrderByDescending(project => project.Tokens).ToArray()
-        };
-        return projection is null ? result : result with
-        {
-            Tokens = projection.Tokens,
-            DailyUsage = projection.Daily,
-            Models = projection.Models,
-            Projects = projection.Projects,
-            History = projection.History,
+            Projects = projects,
+            History = historyEnabled ? projection.History : null,
             AnalysisData = projection.AnalysisData
         };
-    }
-
-    private static IReadOnlyList<DailyUsage> BuildDailyUsage(
-        Dictionary<DateOnly, PeriodAccumulator> source,
-        DateTimeOffset now,
-        DataQuality quality,
-        IReadOnlyList<ModelCreditRate>? configuredRates,
-        bool completeRateCatalog)
-    {
-        var end = DateOnly.FromDateTime(now.Date);
-        var start = end.AddDays(-181);
-        var result = new List<DailyUsage>(182);
-        for (var date = start; date <= end; date = date.AddDays(1))
-        {
-            if (source.TryGetValue(date, out var accumulator))
-            {
-                var period = accumulator.ToPeriod(quality, configuredRates, completeRateCatalog);
-                result.Add(new DailyUsage(date, period.Tokens, period.CreditsUsed, period.Quality));
-            }
-            else
-            {
-                result.Add(new DailyUsage(date, 0, 0, quality));
-            }
-        }
-
-        return result;
     }
 
     private static void MergeCounts(Dictionary<string, int> target, IReadOnlyDictionary<string, int> source)
@@ -491,56 +409,6 @@ public sealed partial class CodexSessionReader(
             [diagnostic]);
     }
 
-    private sealed class PeriodAccumulator
-    {
-        private TokenBreakdown _total = TokenBreakdown.Zero;
-        private readonly Dictionary<string, TokenBreakdown> _byModel = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<(DateOnly Date, string Model), TokenBreakdown> _datedByModel =
-            new(UsageBucketKeyComparer.Instance);
-        private readonly Dictionary<string, int> _modelEvents = new(StringComparer.OrdinalIgnoreCase);
-
-        public void Add(SessionUsageBucket bucket)
-        {
-            _total = _total.Add(bucket.Tokens);
-            _byModel[bucket.Model] = _byModel.GetValueOrDefault(bucket.Model, TokenBreakdown.Zero).Add(bucket.Tokens);
-            var datedKey = (bucket.Date, bucket.Model);
-            _datedByModel[datedKey] = _datedByModel
-                .GetValueOrDefault(datedKey, TokenBreakdown.Zero)
-                .Add(bucket.Tokens);
-            _modelEvents[bucket.Model] = _modelEvents.GetValueOrDefault(bucket.Model) + bucket.EventCount;
-        }
-
-        public TokenPeriod ToPeriod(
-            DataQuality quality,
-            IReadOnlyList<ModelCreditRate>? configuredRates = null,
-            bool completeRateCatalog = false)
-        {
-            var calculation = UsageCredits.Calculate(
-                _datedByModel.Select(pair => new DatedModelTokenUsage(
-                    pair.Key.Date,
-                    pair.Key.Model,
-                    pair.Value)),
-                configuredRates,
-                completeRateCatalog);
-            return new TokenPeriod(
-                _total.VisibleTotalTokens,
-                _total,
-                calculation.CreditsUsed,
-                calculation.UnratedTokens,
-                calculation.ByModel,
-                quality);
-        }
-
-        public IReadOnlyList<ModelUsage> ModelUsages() => _byModel
-            .Select(pair => new ModelUsage(
-                UsageCredits.NormalizeModel(pair.Key),
-                pair.Value.VisibleTotalTokens,
-                _modelEvents.GetValueOrDefault(pair.Key)))
-            .GroupBy(item => item.Model, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new ModelUsage(group.Key, group.Sum(item => item.Tokens), group.Sum(item => item.EventCount)))
-            .OrderByDescending(item => item.Tokens)
-            .ToArray();
-    }
 
 }
 

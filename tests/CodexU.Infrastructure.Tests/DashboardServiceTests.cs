@@ -6,6 +6,25 @@ namespace CodexU.Infrastructure.Tests;
 public sealed class DashboardServiceTests
 {
     [Fact]
+    public async Task CombinedTotalsDistinguishUnreadableRuntimeFromAbsentRuntime()
+    {
+        var period = new TokenPeriod(100, new TokenBreakdown(100, 0, 0, 0, 100), 10, 0, [], DataQuality.Detailed);
+        var codexReader = new StaticLocalReader(CreateLocalSnapshot(period));
+        var service = new DashboardService(new ThrowingAppServerClient(), codexReader, new ThrowingLocalReader());
+        var codex = RuntimeReadResult.FromSnapshot(await service.LoadAsync());
+        var failed = RuntimeReadResult.FromSnapshot(await service.LoadAsync(AgentRuntime.ClaudeCode));
+        var absent = RuntimeReadResult.FromSnapshot(await new DashboardService(new ThrowingAppServerClient(), codexReader)
+            .LoadAsync(AgentRuntime.ClaudeCode));
+
+        Assert.Equal(RuntimeContribution.Absent, absent.Contribution);
+        Assert.Equal(RuntimeContribution.Failed, failed.Contribution);
+        var summary = CombinedRuntimeSummary.Project(codex, failed, new AppSettings()).Summary;
+        Assert.Equal(100, summary.Periods.Month.Tokens);
+        Assert.True(summary.Cost.IsLowerBound);
+        Assert.Contains(AgentRuntime.ClaudeCode, summary.FailedRuntimes);
+    }
+
+    [Fact]
     public async Task LoadAsync_PreservesLocalSnapshotWhenAppServerFails()
     {
         var period = new TokenPeriod(
@@ -159,6 +178,12 @@ public sealed class DashboardServiceTests
     {
         public Task<LocalUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(snapshot);
+    }
+
+    private sealed class ThrowingLocalReader : ILocalUsageReader
+    {
+        public Task<LocalUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default) =>
+            throw new IOException("synthetic read failure");
     }
 
     private sealed class StaticAppServerClient(AppServerSnapshot snapshot) : IAppServerClient

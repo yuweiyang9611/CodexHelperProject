@@ -68,10 +68,10 @@ export function relativeTime(value?: string | null): string {
   return `${Math.floor(hours / 24)} 天前`
 }
 
-export function resetTime(value?: string | null): string {
-  if (!value) return '重置时间不可用'
-  const delta = new Date(value).getTime() - Date.now()
-  if (delta <= 0) return '即将重置'
+export function resetTime(value?: string | null, now = Date.now()): string {
+  const delta = value ? Date.parse(value) - now : NaN
+  if (!Number.isFinite(delta)) return '重置时间不可用'
+  if (delta <= 0) return '已到重置时间，等待新快照'
   const minutes = Math.ceil(delta / 60_000)
   if (minutes < 60) return `${minutes} 分钟后重置`
   const hours = Math.floor(minutes / 60)
@@ -84,9 +84,9 @@ export function resetTime(value?: string | null): string {
  * the countdown keeps shrinking between refreshes instead of freezing at whatever it
  * said when the snapshot was taken.
  */
-export function exhaustionTime(value?: string | null): string {
+export function exhaustionTime(value?: string | null, now = Date.now()): string {
   if (!value) return ''
-  const delta = new Date(value).getTime() - Date.now()
+  const delta = new Date(value).getTime() - now
   if (!Number.isFinite(delta)) return ''
   if (delta <= 0) return '预计即将耗尽'
   const minutes = Math.ceil(delta / 60_000)

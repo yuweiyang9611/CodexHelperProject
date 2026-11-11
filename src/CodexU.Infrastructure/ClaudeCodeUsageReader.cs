@@ -20,7 +20,6 @@ public sealed partial class ClaudeCodeUsageReader(
         var now = DateTimeOffset.Now;
         var todayDate = DateOnly.FromDateTime(now.Date);
         var sevenDayStart = todayDate.AddDays(-6);
-        var lifetime = new PeriodAccumulator(customRates, completeRateCatalog);
         var tools = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var parsedFiles = 0;
@@ -51,26 +50,17 @@ public sealed partial class ClaudeCodeUsageReader(
                 foreach (var pair in item.Skills) skills[pair.Key] = skills.GetValueOrDefault(pair.Key) + pair.Value;
                 if (item.Tokens is not { } tokens || item.Model is not { } model) continue;
                 usageEvents += summary.UsageCount;
-                var bucket = new UsageBucket(date, model, tokens);
                 attributed.Add(new(sourceId, item.Workspace, date, model, tokens, summary.UsageCount, item.Branch, history?.Kind(sourceId) ?? "live",
                     source.Identity is null ? "unknown" : source.Identity.Contains("/agent:", StringComparison.Ordinal) ? "subagents" : "tasks",
                     ParentSessionId: source.Identity is { } identity && identity.IndexOf("/agent:", StringComparison.Ordinal) is var agentStart && agentStart > 0
                         ? identity[..agentStart] : null, AvailableFields: item.AvailableFields));
-                lifetime.Add(bucket);
-
             }
         }
 
         var quality = skippedFiles > 0 || skippedLines > 0 || conflicts > 0
             ? DataQuality.Partial
             : usageEvents == 0 ? DataQuality.Unavailable : DataQuality.Detailed;
-        var lifetimePeriod = lifetime.ToPeriod(quality);
-        if (lifetimePeriod.UnratedTokens > 0)
-        {
-            diagnostics.Add($"Claude Code 有 {lifetimePeriod.UnratedTokens:N0} tokens 尚未配置点数费率");
-        }
-
-        var (account, primary, secondary, quotaDiagnostic, queryObservedAt) = await ReadQuotaSnapshotAsync(cancellationToken);
+        var (account, primary, secondary, quotaDiagnostic, queryObservedAt, quotaState) = await ReadQuotaSnapshotAsync(cancellationToken);
         diagnostics.Add($"Claude transcripts：已聚合 {parsedFiles} 个文件、{assistantMessages} 条 assistant 消息、{usageEvents} 条 usage");
         diagnostics.Add(quotaDiagnostic);
         if (rateLimitHits > 0)
@@ -93,6 +83,7 @@ public sealed partial class ClaudeCodeUsageReader(
         var projection = await UsageHistoryProjection.BuildAsync(AgentRuntime.ClaudeCode, attributed,
             applicationDataDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"),
             defaultWorkspace, quality, customRates, completeRateCatalog, retained, conflicts, cancellationToken);
+        UsageHistoryProjection.AddPricingDiagnostics(projection.Tokens.Lifetime, diagnostics);
         return new LocalUsageSnapshot(
             account,
             primary,
@@ -111,7 +102,8 @@ public sealed partial class ClaudeCodeUsageReader(
             diagnostics.Distinct().ToArray(),
             projection.History,
             projection.AnalysisData,
-            queryObservedAt);
+            queryObservedAt,
+            quotaState);
     }
 
     private static bool IsAssistantMessage(JsonElement root, out JsonElement message)
@@ -258,17 +250,21 @@ public sealed partial class ClaudeCodeUsageReader(
         }
     }
 
-    private async Task<(AccountSnapshot? Account, RateLimitWindow? Primary, RateLimitWindow? Secondary, string Diagnostic, DateTimeOffset? QueryObservedAt)>
+    private async Task<(AccountSnapshot? Account, RateLimitWindow? Primary, RateLimitWindow? Secondary,
+        string Diagnostic, DateTimeOffset? QueryObservedAt, ClaudeQuotaState State)>
         ReadQuotaSnapshotAsync(CancellationToken cancellationToken)
     {
         var now = Clock.GetUtcNow();
-        var queried = await new ClaudeDesktopToolUsageReader(claudeDesktopUsageTranscript).ReadAsync(now, cancellationToken);
-        var queryObservedAt = queried.ObservedAt <= now ? queried.ObservedAt : null;
-        if (queried.Success)
+        var queried = string.IsNullOrWhiteSpace(claudeDesktopUsageTranscript) ? null
+            : await new ClaudeDesktopToolUsageReader(claudeDesktopUsageTranscript).ReadAsync(now, cancellationToken);
+        var queryObservedAt = queried?.ObservedAt <= now ? queried.ObservedAt : null;
+        var queryStatus = queried?.Status ?? ClaudeTranscriptStatus.Unbound;
+        if (queried is { Success: true })
         {
             // An explicitly bound, fresh native result owns the entire measurement.
             // A successful empty result must not acquire old windows from another source.
-            return (null, queried.Primary, queried.Secondary, queried.Diagnostic, queryObservedAt);
+            return (null, queried.Primary, queried.Secondary, queried.Diagnostic, queryObservedAt,
+                new(ClaudeQuotaSource.DesktopQuery, queryStatus));
         }
         var statusline = await ReadStatuslineQuotaAsync(now, cancellationToken);
         var desktop = await new ClaudeDesktopQuotaReader(paths.ClaudeDesktopDataDirectory).ReadAsync(now, cancellationToken);
@@ -277,16 +273,17 @@ public sealed partial class ClaudeCodeUsageReader(
             // These sources do not share an authenticated account identity. Choose
             // one whole measurement, never fill a missing window or plan from the
             // other source (a missing 5h window can be intentional on some plans).
-            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried), queryObservedAt);
+            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried), queryObservedAt,
+                new(ClaudeQuotaSource.DesktopHistory, queryStatus));
         }
         var diagnostic = string.IsNullOrEmpty(desktop.Diagnostic)
             ? statusline.Diagnostic : statusline.Diagnostic + "；" + desktop.Diagnostic;
-        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried), queryObservedAt);
+        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried), queryObservedAt,
+            new(statusline.HasQuota ? ClaudeQuotaSource.StatusLine : ClaudeQuotaSource.None, queryStatus, desktop.Expired));
     }
 
-    private string WithQueryDiagnostic(string diagnostic, ClaudeDesktopToolUsageReadResult queried) =>
-        string.IsNullOrWhiteSpace(claudeDesktopUsageTranscript) || string.IsNullOrWhiteSpace(queried.Diagnostic)
-            ? diagnostic : queried.Diagnostic + "；" + diagnostic;
+    private static string WithQueryDiagnostic(string diagnostic, ClaudeDesktopToolUsageReadResult? queried) =>
+        queried is null ? diagnostic : queried.Diagnostic + "；" + diagnostic;
 
     private sealed record StatuslineQuota(AccountSnapshot? Account, RateLimitWindow? Primary,
         RateLimitWindow? Secondary, DateTimeOffset? MeasuredAt, string Diagnostic)
@@ -512,44 +509,4 @@ public sealed partial class ClaudeCodeUsageReader(
             empty.Tools, empty.Skills, empty.Sources, empty.Models, empty.Goals,
             empty.TaskLifecycle, empty.IndexStatus, empty.Diagnostics);
     }
-
-    private sealed record UsageBucket(DateOnly Date, string Model, TokenBreakdown Tokens);
-
-    private sealed class PeriodAccumulator(
-        IReadOnlyList<ModelCreditRate>? configuredRates,
-        bool completeRateCatalog)
-    {
-        private TokenBreakdown _total = TokenBreakdown.Zero;
-        private readonly Dictionary<(DateOnly Date, string Model), TokenBreakdown> _models =
-            new(UsageBucketKeyComparer.Instance);
-
-        public void Add(UsageBucket bucket)
-        {
-            _total = _total.Add(bucket.Tokens);
-            // Group on the normalized id so an alias and its dated snapshot — the same
-            // model at the same price — collapse into one row instead of splitting the
-            // per-model breakdown in two when a session spans a model release.
-            var key = (bucket.Date, UsageCredits.NormalizeModel(bucket.Model));
-            _models[key] = _models.GetValueOrDefault(key, TokenBreakdown.Zero).Add(bucket.Tokens);
-        }
-
-        public TokenPeriod ToPeriod(DataQuality quality)
-        {
-            var calculation = UsageCredits.Calculate(
-                _models.Select(pair => new DatedModelTokenUsage(
-                    pair.Key.Date,
-                    pair.Key.Model,
-                    pair.Value)),
-                configuredRates,
-                completeRateCatalog);
-            return new TokenPeriod(
-                _total.VisibleTotalTokens,
-                _total,
-                calculation.CreditsUsed,
-                calculation.UnratedTokens,
-                calculation.ByModel,
-                quality);
-        }
-    }
-
 }

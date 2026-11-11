@@ -709,6 +709,22 @@ describe('loadCombined', () => {
     expect(store.snapshot).not.toBeNull()
   })
 
+  it('discards an in-flight valuation when settings change and loads once with the latest settings', async () => {
+    const first = deferred<unknown>()
+    let reads = 0
+    routeRequests({ 'usage.getCombined': () => ++reads === 1 ? first.promise : combined })
+    const store = useDashboardStore()
+    await store.initialize()
+    const pending = store.loadCombined()
+    emit('settings.changed', appSettings({ claudeMonthlySubscriptionAmount: 100 }))
+    emit('settings.changed', appSettings({ claudeMonthlySubscriptionAmount: 110 }))
+    first.reject(new Error('stale read'))
+    await pending
+    expect(reads).toBe(2)
+    expect(store.combined).toEqual(combined)
+    expect(store.combinedError).toBeNull()
+  })
+
   it('reloads when the host reports a settings change', async () => {
     routeRequests({ 'usage.getCombined': combined, 'settings.get': appSettings({ checkForUpdates: false }) })
     const store = useDashboardStore()

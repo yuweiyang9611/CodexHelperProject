@@ -591,7 +591,8 @@ public sealed class IpcDispatcherTests
         private readonly string _rootDirectory;
         private readonly string _dataDirectory;
 
-        private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null)
+        private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null,
+            IDashboardService? replacement = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -608,7 +609,7 @@ public sealed class IpcDispatcherTests
                 _dataDirectory,
                 new NoOpStartupRegistration(),
                 hostEnvironment,
-                _ => dashboardService);
+                _ => replacement ?? dashboardService);
             Dispatcher = new IpcDispatcher(
                 Session,
                 hostEnvironment,
@@ -628,7 +629,8 @@ public sealed class IpcDispatcherTests
 
         public RecordingEventSink EventSink { get; }
 
-        public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null) => new(dashboardService, interaction);
+        public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null,
+            IDashboardService? replacement = null) => new(dashboardService, interaction, replacement);
 
         public void Dispose()
         {
@@ -655,7 +657,24 @@ public sealed class IpcDispatcherTests
         }
     }
 
-    private sealed class BlockingDashboardService : IDashboardService
+    [Fact]
+    public async Task CombinedReadUsesOneServiceWhenScopeChangesDuringSecondRead()
+    {
+        var original = new BlockingDashboardService(AgentRuntime.ClaudeCode);
+        using var context = TestContext.Create(original, replacement: new ImmediateDashboardService());
+        var pending = context.Session.LoadCombinedSnapshotsAsync();
+        await original.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            await context.Session.UpdateSettingsAsync(settings => settings with { ShowSubagents = true });
+        }
+        finally { original.Release(); }
+        var pair = await pending;
+        Assert.Contains(pair.Codex.Snapshot.Diagnostics, message => message.StartsWith("call-", StringComparison.Ordinal));
+        Assert.Contains(pair.ClaudeCode.Snapshot.Diagnostics, message => message.StartsWith("call-", StringComparison.Ordinal));
+    }
+
+    private sealed class BlockingDashboardService(AgentRuntime? blockedRuntime = null) : IDashboardService
     {
         private readonly TaskCompletionSource _started =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -672,6 +691,8 @@ public sealed class IpcDispatcherTests
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _callCount);
+            if (blockedRuntime is not null && runtime != blockedRuntime)
+                return DashboardSnapshot.Empty(runtime, "original");
             _started.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
             return DashboardSnapshot.Empty(runtime, "shared");

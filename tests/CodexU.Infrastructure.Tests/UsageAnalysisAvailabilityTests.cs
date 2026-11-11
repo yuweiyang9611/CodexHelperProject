@@ -34,6 +34,8 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         Assert.Equal(100, unknown.Tokens);
         Assert.Empty(unknown.AvailableBreakdownFields!);
         Assert.Null(unknown.CreditsUsed);
+        Assert.Equal(100, retained.Tokens.Lifetime.IncompleteBreakdownTokens);
+        Assert.Equal(0, retained.Tokens.Lifetime.CreditsUsed);
         Assert.NotNull(unknown.Rate);
         Assert.Empty(UsageAnalysisQuery.Execute(retained.AnalysisData, new()).MissingRates!);
 
@@ -46,6 +48,7 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         Assert.DoesNotContain("reasoningOutputTokens", entry.AvailableBreakdownFields!);
         Assert.DoesNotContain("cacheWrite5mTokens", entry.AvailableBreakdownFields!);
         Assert.Equal(0.01, entry.CreditsUsed!.Value, 8);
+        Assert.Equal(entry.CreditsUsed, backfilled.Tokens.Lifetime.CreditsUsed);
         Assert.Equal(0, backfilled.History!.Conflicts);
         File.Delete(file);
         Assert.Equal(entry.AvailableBreakdownFields, Assert.Single((await reader.ReadAsync()).AnalysisData!.Entries).AvailableBreakdownFields);
@@ -97,6 +100,82 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         Assert.Equal(complete, entry.AvailableBreakdownFields!.Contains("cacheWrite5mTokens"));
         Assert.Equal(complete, entry.CreditsUsed is not null);
         Assert.Empty(UsageAnalysisQuery.Execute(snapshot.AnalysisData, new(AgentRuntime.ClaudeCode)).MissingRates!);
+    }
+
+    [Theory]
+    [InlineData(AgentRuntime.ClaudeCode)]
+    [InlineData(AgentRuntime.Codex)]
+    public async Task MixedCoverageOnOneDay_ReconcilesOverviewProjectDetailAndExport(AgentRuntime runtime)
+    {
+        var paths = CodexPaths.Discover(_root) with { ClaudeDirectory = Path.Combine(_root, "claude"), ClaudeDesktopDataDirectory = null };
+        var timestamp = DateTimeOffset.Now;
+        var complete = new Dictionary<string, long>
+        {
+            ["input_tokens"] = 100,
+            ["output_tokens"] = 0,
+            [runtime == AgentRuntime.ClaudeCode ? "cache_read_input_tokens" : "cached_input_tokens"] = 0
+        };
+        if (runtime == AgentRuntime.ClaudeCode) complete["cache_creation_input_tokens"] = 0;
+        var missing = new Dictionary<string, long> { ["input_tokens"] = 40, ["output_tokens"] = 0 };
+        TokenSummary tokens;
+        IReadOnlyList<ProjectUsage> projects;
+        UsageAnalysisData analysis;
+        if (runtime == AgentRuntime.ClaudeCode)
+        {
+            var folder = Path.Combine(paths.ClaudeDirectory, "projects");
+            Directory.CreateDirectory(folder);
+            var lines = new[] { complete, missing }.Select(usage => JsonSerializer.Serialize(new
+            {
+                type = "assistant",
+                sessionId = "example",
+                timestamp,
+                cwd = _root,
+                message = new { model = "model-a", usage }
+            }));
+            await File.WriteAllLinesAsync(Path.Combine(folder, "session.jsonl"), lines);
+            var snapshot = await new ClaudeCodeUsageReader(paths, customRates: [Rate], applicationDataDirectory: Data).ReadAsync();
+            (tokens, projects, analysis) = (snapshot.Tokens, snapshot.Projects, snapshot.AnalysisData!);
+        }
+        else
+        {
+            Directory.CreateDirectory(Sessions);
+            var lines = new[]
+            {
+                JsonSerializer.Serialize(new { type = "session_meta", payload = new { id = "example", cwd = _root } }),
+                JsonSerializer.Serialize(new { type = "turn_context", payload = new { model = "model-a" } })
+            }.Concat(new[] { complete, missing }.Select(usage => JsonSerializer.Serialize(new
+            {
+                timestamp,
+                type = "event_msg",
+                payload = new { type = "token_count", info = new { last_token_usage = usage } }
+            })));
+            await File.WriteAllLinesAsync(Path.Combine(Sessions, "rollout-a.jsonl"), lines);
+            var snapshot = await new CodexSessionReader(paths, indexDirectory: Data, customRates: [Rate], historyEnabled: true).ReadAsync();
+            (tokens, projects, analysis) = (snapshot.Tokens, snapshot.Projects, snapshot.AnalysisData!);
+        }
+
+        var detail = UsageAnalysisQuery.Execute(analysis, new(runtime));
+        foreach (var period in new[] { tokens.Today, tokens.SevenDays, tokens.Month, tokens.Lifetime })
+        {
+            Assert.Equal(140, period.Tokens);
+            Assert.Equal(0.01, period.CreditsUsed, 8);
+            Assert.Equal(40, period.UnratedTokens);
+            Assert.Equal(40, period.IncompleteBreakdownTokens);
+            Assert.Equal(0, period.MissingRateTokens);
+            Assert.Equal(100, Assert.Single(period.CreditsByModel).Tokens.VisibleTotalTokens);
+        }
+        Assert.Equal(tokens.Lifetime.CreditsUsed, Assert.Single(projects).CreditsUsed);
+        Assert.Equal(tokens.Lifetime.CreditsUsed, detail.Totals.CreditsUsed);
+        Assert.Equal(tokens.Lifetime.UnratedTokens, detail.Totals.UnratedTokens);
+        Assert.Empty(detail.MissingRates!);
+        var destination = Path.Combine(_root, "report.json");
+        var exporter = new LocalDataManagementService(new AppSettingsStore(Data), new TodoStore(Data), Data);
+        Assert.True((await exporter.ExportUsageAnalysisAsync(detail, destination, "json")).Success);
+        using var json = JsonDocument.Parse(await File.ReadAllTextAsync(destination));
+        var exported = json.RootElement.GetProperty("totals");
+        Assert.Equal(140, exported.GetProperty("tokens").GetInt64());
+        Assert.Equal(40, exported.GetProperty("unratedTokens").GetInt64());
+        Assert.Equal(tokens.Lifetime.CreditsUsed, exported.GetProperty("creditsUsed").GetDouble());
     }
 
     [Fact]

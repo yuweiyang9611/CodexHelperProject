@@ -167,7 +167,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
         // Invalidated here and nowhere else: the host echoes a settings.update back as
         // this event, so also invalidating in saveSettings would fire two combined
         // reads for one save — four gated disk reads against one frontend timeout.
-        if (combined.value) void loadCombined(true)
+        if (isLoadingCombined.value) combinedGeneration++
+        else if (combined.value) void loadCombined(true)
       })
       host.on('statusStrip.stateChanged', (payload) => {
         if (!hasHostCapability(HOST_CAPABILITY.statusStripControl)) return
@@ -355,18 +356,23 @@ export const useDashboardStore = defineStore('dashboard', () => {
   async function loadCombined(force = false) {
     if (combined.value && !force) return
     if (isLoadingCombined.value) return
-    const generation = (combinedGeneration += 1)
     isLoadingCombined.value = true
     combinedError.value = null
     try {
-      const result = await host.request<CombinedSnapshots>('usage.getCombined')
-      if (generation !== combinedGeneration) return
-      combined.value = result
-    } catch (reason) {
-      if (generation !== combinedGeneration) return
-      combinedError.value = errorMessage(reason)
+      while (true) {
+        const revision = combinedGeneration
+        try {
+          const result = await host.request<CombinedSnapshots>('usage.getCombined')
+          if (revision !== combinedGeneration) continue
+          combined.value = result
+        } catch (reason) {
+          if (revision !== combinedGeneration) continue
+          combinedError.value = errorMessage(reason)
+        }
+        return
+      }
     } finally {
-      if (generation === combinedGeneration) isLoadingCombined.value = false
+      isLoadingCombined.value = false
     }
   }
 

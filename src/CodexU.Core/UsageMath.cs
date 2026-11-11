@@ -255,15 +255,19 @@ public static class UsageCredits
     public static CreditCalculation Calculate(
         IEnumerable<DatedModelTokenUsage> usages,
         IReadOnlyList<ModelCreditRate>? customRates = null,
-        bool completeRateCatalog = false)
+        bool completeRateCatalog = false) =>
+        CalculateAppliedRates(usages.Select(usage =>
+            (usage.Model, usage.Tokens, FindRate(usage.Model, usage.Date, customRates, completeRateCatalog))));
+
+    public static CreditCalculation CalculateAppliedRates(
+        IEnumerable<(string Model, TokenBreakdown Tokens, ModelCreditRate? Rate)> usages)
     {
         var ratedModels = new Dictionary<string, RatedModelAccumulator>(StringComparer.Ordinal);
         long unratedTokens = 0;
 
         foreach (var usage in usages)
         {
-            var rate = FindRate(usage.Model, usage.Date, customRates, completeRateCatalog);
-            if (rate is null)
+            if (usage.Rate is not { } rate)
             {
                 unratedTokens += usage.Tokens.VisibleTotalTokens;
                 continue;
@@ -398,16 +402,17 @@ public static class UsageCredits
         .OrderBy(rate => allowPrefix && IsBuiltInRate(rate))
         .ThenByDescending(rate => NormalizeRatePattern(rate.Model, rate.MatchMode).Length)
         .ThenByDescending(rate => rate.EffectiveFrom ?? DateOnly.MinValue)
-        .FirstOrDefault(rate =>
-        {
-            var rateModel = NormalizeRatePattern(rate.Model, rate.MatchMode);
-            return string.Equals(normalized, rateModel, StringComparison.Ordinal)
-                || allowPrefix
-                    && string.Equals(rate.MatchMode, "prefix", StringComparison.OrdinalIgnoreCase)
-                    && (string.Equals(unaliased, rateModel, StringComparison.Ordinal)
-                        || normalized.StartsWith(rateModel + "-", StringComparison.Ordinal)
-                        || unaliased.StartsWith(rateModel + "-", StringComparison.Ordinal));
-        });
+        .FirstOrDefault(rate => MatchesModel(normalized, unaliased, rate, allowPrefix));
+
+    internal static bool MatchesModel(string normalized, string unaliased, ModelCreditRate rate, bool allowPrefix)
+    {
+        var rateModel = NormalizeRatePattern(rate.Model, rate.MatchMode);
+        return string.Equals(normalized, rateModel, StringComparison.Ordinal)
+            || allowPrefix && string.Equals(rate.MatchMode, "prefix", StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(unaliased, rateModel, StringComparison.Ordinal)
+                    || normalized.StartsWith(rateModel + "-", StringComparison.Ordinal)
+                    || unaliased.StartsWith(rateModel + "-", StringComparison.Ordinal));
+    }
 
     public static RateCatalogDocument CreateCatalogDocument(
         IReadOnlyList<ModelCreditRate>? customRates = null,

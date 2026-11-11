@@ -23,6 +23,7 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
                 new(paths, customRates: price ?? rates, applicationDataDirectory: root, incrementalIndexEnabled: index);
             var first = await Reader().ReadAsync();
             var cached = await Reader().ReadAsync();
+            Assert.True(first.Tokens.Lifetime.CreditsUsed > 0);
             Assert.Equal(2, cached.IndexStatus.ReusedFiles);
             Assert.Equal(0, cached.IndexStatus.ParsedFiles);
             Assert.Equal(first.Tokens.Lifetime.Tokens, cached.Tokens.Lifetime.Tokens);
@@ -128,7 +129,9 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
                 new TokenBreakdown(100, 0, 0, 0, 100), 12, 0, DataQuality.Detailed)], "all");
             var projection = await UsageHistoryProjection.BuildAsync(AgentRuntime.ClaudeCode, [], data, null,
                 DataQuality.Detailed, null, false, 0, 0, default);
-            Assert.Equal(12, projection.Tokens.Lifetime.CreditsUsed);
+            Assert.Equal(0, projection.Tokens.Lifetime.CreditsUsed);
+            Assert.Equal(100, projection.Tokens.Lifetime.UnratedTokens);
+            Assert.Equal(12, Assert.Single(projection.AnalysisData.LegacyEstimates).CreditsUsed);
             Assert.Equal("legacy", projection.Daily.Last().Source);
             Assert.Equal(new UsageDistributionSlice("unknown", "unknown", 100), Assert.Single(projection.Daily.Last().Distribution!));
             var settings = new AppSettingsStore(data); var todos = new TodoStore(data);
@@ -338,7 +341,7 @@ public sealed class UsageHistoryIntegrationTests(Xunit.Abstractions.ITestOutputH
         type = "assistant",
         cwd,
         timestamp = DateTimeOffset.Now.ToString("O"),
-        message = new { model = "claude-test", usage = new { input_tokens = input, output_tokens = 0 } }
+        message = new { model = "claude-test", usage = new { input_tokens = input, output_tokens = 0, cache_read_input_tokens = 0, cache_creation_input_tokens = 0 } }
     });
     private static string Meta(string id, string cwd, string? fork = null) => JsonSerializer.Serialize(new { type = "session_meta", payload = new { id, cwd, forked_from_id = fork } });
     private static string CodexLine(int total) => JsonSerializer.Serialize(new

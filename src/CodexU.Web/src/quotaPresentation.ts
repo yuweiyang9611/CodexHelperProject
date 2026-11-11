@@ -14,6 +14,10 @@ export function isDesktopQueryQuota(quota?: RateLimitWindow | null): boolean {
   return quota?.source === 'claude-desktop-get-usage'
 }
 
+export function hasQuotaReset(quota: RateLimitWindow | null | undefined, now: number): boolean {
+  return Boolean(quota?.resetsAt && Date.parse(quota.resetsAt) <= now)
+}
+
 export function quotaQueryTime(value?: string | null): string {
   if (!value || !Number.isFinite(Date.parse(value))) return '读取时间不可用'
   return `读取于 ${quotaSampleTime(value)}`

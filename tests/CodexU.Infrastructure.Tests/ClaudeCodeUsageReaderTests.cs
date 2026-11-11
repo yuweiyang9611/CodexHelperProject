@@ -108,8 +108,9 @@ public sealed class ClaudeCodeUsageReaderTests
             Assert.Equal(20, result.Tokens.Lifetime.Breakdown.BillableCacheWrite5mTokens);
             Assert.Equal(0, result.Tokens.Lifetime.Breakdown.BillableCacheWrite1hTokens);
             Assert.Equal(100, result.Tokens.Lifetime.Breakdown.UncachedInputTokens);
-            // 100 uncached @100 + 30 cached @10 + 20 writes @100*1.25 + 50 output @200.
-            Assert.Equal(0.0228d, result.Tokens.Lifetime.CreditsUsed, precision: 6);
+            // The flat write total does not establish which TTL was billed.
+            Assert.Equal(0, result.Tokens.Lifetime.CreditsUsed);
+            Assert.Equal(200, result.Tokens.Lifetime.IncompleteBreakdownTokens);
             Assert.Equal(DataQuality.Partial, result.Tokens.Lifetime.Quality);
             Assert.Equal("Skill", Assert.Single(result.Tools).Name);
             Assert.Equal("frontend-design", Assert.Single(result.Skills).Name);

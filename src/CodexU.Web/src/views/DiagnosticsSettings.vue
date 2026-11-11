@@ -1,16 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import ClaudeTranscriptBinding from '../components/ClaudeTranscriptBinding.vue'
 import { currencyAmount } from '../format'
-import {
-  builtInModelNames as builtInModelList,
-  newestBuiltInRateFor,
-  nextUnoverriddenModel,
-  normalizeRatePattern,
-} from '../builtInRates'
+import { useRateEditor } from '../composables/useRateEditor'
 import { HOST_CAPABILITY } from '../hostCapabilities'
 import { useDashboardStore } from '../stores/dashboard'
-import type { DashboardSnapshot, ModelCreditRate } from '../types'
+import type { DashboardSnapshot } from '../types'
 
 const props = defineProps<{ snapshot: DashboardSnapshot }>()
 const store = useDashboardStore()
@@ -26,23 +21,15 @@ const activeManualHint = computed(() => {
   if (!autoForCurrentRuntime) return null
   return suggestedSubscriptionAmount.value != null
     ? `当前自动推算：${amountMoney(suggestedSubscriptionAmount.value)} · ${props.snapshot.account?.planType?.toUpperCase() ?? ''}`
-    : props.snapshot.runtime === 'claudeCode'
-      ? '未识别订阅档位；填写月费会切换为手动金额。自动估算或手动金额均不代表实际账单。'
-      : '当前套餐无法可靠推算，将使用此备用值'
+    : '未识别订阅档位；填写月费会切换为手动金额。自动估算或手动金额均不代表实际账单。'
 })
-const customRateVersions = computed(() => new Set(
-  store.settingsDraft?.customModelRates
-    .map((rate) => rate.catalogVersion || 'custom') ?? [],
-).size)
-const builtInRateIdentities = computed(() => new Set(
-  store.rateCatalog?.builtInRates.map(rateIdentity) ?? [],
-))
-const customOverrideCount = computed(() =>
-  store.settingsDraft?.customModelRates.filter((rate) =>
-    !builtInRateIdentities.value.has(rateIdentity(rate))).length ?? 0)
+const {
+  preview: ratePreview, validationMessage: rateValidationMessage, busy: ratePreviewBusy, blocksSave: rateBlocksSave,
+  rateEditorOpen, activeRow, applyBuiltInDefaults, addCustomRate, retry: retryPreview,
+} = useRateEditor(store)
 const configuredRateCount = computed(() => store.settingsDraft?.customModelRates.length ?? 0)
 const isPinnedRateCatalog = computed(() => store.settingsDraft?.isRateCatalogPinned ?? false)
-const rateEntryLimit = computed(() => isPinnedRateCatalog.value ? 1000 : 200)
+const builtInModelNames = computed(() => [...new Set(store.rateCatalog?.builtInRates.map(rate => rate.model))].sort())
 const settingsBusy = computed(() => store.isRunningLocalOperation || store.isUpdatingSettings)
 const supportsNativeNotifications = computed(() => store.hasHostCapability(HOST_CAPABILITY.nativeNotifications))
 const supportsStatusStrip = computed(() => store.hasHostCapability(HOST_CAPABILITY.statusStripControl))
@@ -61,36 +48,6 @@ const unavailableCapabilities = computed(() => [
   !supportsNativeNotifications.value ? '系统额度通知' : null,
   ...unavailableDesktopCapabilities.value,
 ].filter((item): item is string => item !== null))
-const rateValidationMessage = computed(() => {
-  const rateCount = isPinnedRateCatalog.value ? configuredRateCount.value : customOverrideCount.value
-  if (rateCount > rateEntryLimit.value) {
-    return isPinnedRateCatalog.value
-      ? '锁定的完整费率目录不能超过 1000 条。'
-      : '自定义费率不能超过 200 条；内置基线不计入该限制。'
-  }
-  const seen = new Set<string>()
-  for (const rate of store.settingsDraft?.customModelRates ?? []) {
-    const model = normalizeRatePattern(rate.model, rate.matchMode)
-    if (!model) return '每条自定义费率都必须填写模型名称。'
-    const values: unknown[] = [
-      rate.inputCreditsPerMillion,
-      rate.cachedInputCreditsPerMillion,
-      rate.outputCreditsPerMillion,
-    ]
-    if (values.some((value) => typeof value !== 'number'
-      || !Number.isFinite(value)
-      || value < 0
-      || value > 1_000_000)) {
-      return `模型 ${rate.model} 的三类费率必须是 0 到 1,000,000 之间的有效数值。`
-    }
-    const key = `${model}\u001f${rate.effectiveFrom || ''}`
-    if (seen.has(key)) return `模型 ${rate.model} 在同一生效日期存在重复费率。`
-    seen.add(key)
-  }
-  return null
-})
-const rateEditorOpen = ref(isPinnedRateCatalog.value || Boolean(rateValidationMessage.value))
-
 // A validation error may reveal the advanced editor, but resolving that error must
 // never collapse the fields out from under the user's pointer or keyboard focus.
 watch([isPinnedRateCatalog, rateValidationMessage], ([pinned, validation]) => {
@@ -103,63 +60,6 @@ function syncRateEditorState(event: Event) {
 
 function amountMoney(value?: number | null) {
   return currencyAmount(value, 'US$')
-}
-
-function rateIdentity(rate: ModelCreditRate) {
-  return [
-    normalizeRatePattern(rate.model, rate.matchMode),
-    rate.effectiveFrom || '',
-    rate.inputCreditsPerMillion,
-    rate.cachedInputCreditsPerMillion,
-    rate.outputCreditsPerMillion,
-    rate.catalogVersion || '',
-    rate.source || '',
-    rate.matchMode || 'exact',
-  ].join('\u001f')
-}
-
-const builtInModelNames = computed(() => builtInModelList(store.rateCatalog?.builtInRates))
-
-/**
- * Copies the current built-in rate for a model into the row being edited.
- *
- * A blank row is a bad starting point: the user has to already know that
- * claude-opus-5 is 125 / 12.5 / 625 to fill it in, and a wrong digit silently
- * misprices every future month. Starting from the current built-in figure makes
- * an override an edit rather than a recall exercise.
- */
-function applyBuiltInDefaults(rate: ModelCreditRate) {
-  const builtIn = newestBuiltInRateFor(store.rateCatalog?.builtInRates, rate.model)
-  if (!builtIn) return
-  rate.inputCreditsPerMillion = builtIn.inputCreditsPerMillion
-  rate.cachedInputCreditsPerMillion = builtIn.cachedInputCreditsPerMillion
-  rate.outputCreditsPerMillion = builtIn.outputCreditsPerMillion
-}
-
-function addCustomRate() {
-  if (!store.settingsDraft || isPinnedRateCatalog.value || configuredRateCount.value >= rateEntryLimit.value) return
-  const now = new Date()
-  const effectiveFrom = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('-')
-  store.settingsDraft.customModelRates ??= []
-  // Seeded with the first built-in model not already overridden, at its current
-  // built-in rate — so the row starts from a known figure the user edits,
-  // rather than from zeros that would price everything at nothing if saved.
-  const model = nextUnoverriddenModel(store.rateCatalog?.builtInRates, store.settingsDraft.customModelRates)
-  const builtIn = newestBuiltInRateFor(store.rateCatalog?.builtInRates, model)
-  store.settingsDraft.customModelRates.push({
-    model,
-    inputCreditsPerMillion: builtIn?.inputCreditsPerMillion ?? 0,
-    cachedInputCreditsPerMillion: builtIn?.cachedInputCreditsPerMillion ?? 0,
-    outputCreditsPerMillion: builtIn?.outputCreditsPerMillion ?? 0,
-    effectiveFrom,
-    source: '用户自定义',
-    catalogVersion: `custom-${effectiveFrom.replaceAll('-', '.')}`,
-    matchMode: 'exact',
-  })
 }
 
 function removeCustomRate(index: number) {
@@ -344,25 +244,25 @@ function removeCustomRate(index: number) {
       <details class="rate-editor" :open="rateEditorOpen" @toggle="syncRateEditorState">
         <summary class="rate-editor-summary">
           <span><strong>版本化模型点数费率</strong><small>高级设置 · 默认收起</small></span>
-          <em>{{ isPinnedRateCatalog ? `${configuredRateCount} 条锁定快照` : `${customOverrideCount} 条自定义 · ${customRateVersions} 个版本` }}</em>
+          <em>{{ isPinnedRateCatalog ? `${configuredRateCount} 条锁定快照` : `${ratePreview?.customOverrideCount ?? "…"} 条自定义 · ${ratePreview?.versionCount ?? "…"} 个版本` }}</em>
         </summary>
         <div class="rate-editor-content">
         <div class="rate-catalog-summary">
           <span><small>当前生效</small><strong>{{ isPinnedRateCatalog ? '锁定快照' : '内置 + 覆盖' }}</strong></span>
           <span><small>目录版本</small><strong>{{ isPinnedRateCatalog ? store.settingsDraft.pinnedRateCatalogVersion : (store.rateCatalog?.builtIn.catalogVersion ?? '--') }}</strong></span>
           <span><small>来源</small><strong>{{ isPinnedRateCatalog ? store.settingsDraft.pinnedRateCatalogSource : (store.rateCatalog?.builtIn.source ?? '--') }}</strong></span>
-          <span><small>费率总数</small><strong>{{ isPinnedRateCatalog ? configuredRateCount : (store.rateCatalog?.builtIn.rateCount ?? 0) + customOverrideCount }}</strong></span>
+          <span><small>费率总数</small><strong>{{ isPinnedRateCatalog ? configuredRateCount : (ratePreview ? (store.rateCatalog?.builtIn.rateCount ?? 0) + ratePreview.customOverrideCount : "…") }}</strong></span>
           <span v-if="isPinnedRateCatalog"><small>基线版本</small><strong>{{ store.settingsDraft.pinnedRateCatalogBaseVersion ?? '--' }}</strong></span>
         </div>
         <p v-if="isPinnedRateCatalog" class="setting-hint">当前按导入时的完整快照计算；快照未包含的模型不会回落到新版内置费率。为保留版本与来源证明，锁定快照不可直接编辑；恢复内置费率后才可添加自定义覆盖并重新跟随应用更新。</p>
         <div class="rate-actions">
-          <button type="button" :disabled="isPinnedRateCatalog || configuredRateCount >= rateEntryLimit || settingsBusy" @click="addCustomRate">添加费率版本</button>
+          <button type="button" :disabled="!ratePreview?.canAdd || ratePreviewBusy || settingsBusy" @click="addCustomRate">添加费率版本</button>
           <button type="button" :disabled="store.settingsDirty || settingsBusy" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('rates.export')">导出目录</button>
           <button type="button" :disabled="store.settingsDirty || settingsBusy" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('rates.import')">导入目录</button>
           <button class="warning" type="button" :disabled="store.settingsDirty || settingsBusy" title="请先保存或放弃当前设置更改" @click="store.runLocalOperation('rates.reset')">恢复内置费率</button>
         </div>
         <div class="rate-header"><span>模型名称/别名</span><span>生效日期</span><span>普通输入 / 1M</span><span>缓存输入 / 1M</span><span>输出 / 1M</span><span>版本与来源</span><span /></div>
-        <div v-for="(rate, index) in store.settingsDraft.customModelRates" :key="index" class="rate-row">
+        <div v-for="(rate, index) in store.settingsDraft.customModelRates" :key="index" class="rate-row" @focusin="activeRow = rate">
           <!-- Free text with suggestions, not a select: an override for a model the
                built-in catalog has never heard of is the main reason to add a row
                at all, so the list must not be a whitelist. Choosing a known model
@@ -379,14 +279,16 @@ function removeCustomRate(index: number) {
           </div>
           <button type="button" :disabled="isPinnedRateCatalog" aria-label="删除自定义费率" @click="removeCustomRate(index)">×</button>
         </div>
+        <p v-if="activeRow && ratePreview?.effectiveRate" class="setting-hint">草稿预览 · {{ activeRow.model }} 的适用费率（普通输入 / 缓存输入 / 输出，每百万 Token）为 {{ ratePreview.effectiveRate.inputCreditsPerMillion }} / {{ ratePreview.effectiveRate.cachedInputCreditsPerMillion }} / {{ ratePreview.effectiveRate.outputCreditsPerMillion }} 点。{{ ratePreview.effectiveRate.source }}</p>
         <datalist id="built-in-rate-models">
           <option v-for="name in builtInModelNames" :key="name" :value="name" />
         </datalist>
-        <p class="setting-hint">新增一行会带出该模型当前生效的内置费率作为起点；改写模型名可重新带出对应默认值。自定义费率会覆盖内置值，留空或填 0 表示该模型不计费。</p>
+        <p class="setting-hint">新增一行会带出当前生效的内置费率。改写模型名时按该行生效日期带出内置值，日期留空时按今天取值。填写 0 表示该项不计费。</p>
         <p class="setting-hint">官方费率按 API Standard／短上下文基础价折算等值。Haiku 5.5 的基础价适用于单次输入不超过 100K；日志汇总不足以判断逐请求长上下文、Batch/Flex/Fast/Ultrafast、区域处理或 OpenAI 缓存写入时长，因此不自动套用这些档位。显示金额不是 API 账单或订阅实际扣费。</p>
         <p class="setting-hint">计算会按用量发生日期选择当日已生效的最新版本；自定义费率优先。生效日期留空表示适用于全部历史。“精确模型”最安全；仅当同一费率明确覆盖整个模型家族时才选择“前缀家族”。未知模型仍保留在“未核算 Token”中。</p>
         <p v-if="store.settingsDirty" class="setting-hint">导入、导出或恢复目录前，请先保存或放弃当前页面的更改，避免草稿被覆盖或导出旧数据。</p>
         <p v-if="rateValidationMessage" class="setting-error" role="alert">{{ rateValidationMessage }}</p>
+        <button v-if="rateValidationMessage && !ratePreview" type="button" :disabled="ratePreviewBusy" @click="retryPreview">重试费率预览</button>
         </div>
       </details>
         </fieldset>
@@ -399,7 +301,7 @@ function removeCustomRate(index: number) {
         </p>
         <div class="settings-actions">
           <button class="discard-settings" :disabled="!store.settingsDirty || settingsBusy" @click="store.resetSettingsDraft()">放弃更改</button>
-          <button class="save-settings" :disabled="!store.settingsDirty || settingsBusy || Boolean(rateValidationMessage)" @click="store.saveSettings()">保存设置</button>
+          <button class="save-settings" :disabled="!store.settingsDirty || settingsBusy || rateBlocksSave" @click="store.saveSettings()">保存设置</button>
         </div>
       </div>
     </article>

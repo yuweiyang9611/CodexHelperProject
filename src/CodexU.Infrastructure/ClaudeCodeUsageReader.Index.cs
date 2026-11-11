@@ -23,14 +23,13 @@ public sealed partial class ClaudeCodeUsageReader
     }
     private Summary[] Summarize(ClaudeSource source) => UsageReadContext.For(applicationDataDirectory)
         .Get("claude-summaries", () => new Summaries()).Values.GetValue(source, value => DeduplicateUsage(value.Events)
-            .GroupBy(e => (e.Workspace, Date: DateOnly.FromDateTime(e.Timestamp.LocalDateTime), e.Branch, e.Model, e.Throttled))
+            .GroupBy(e => (e.Workspace, Date: DateOnly.FromDateTime(e.Timestamp.LocalDateTime), e.Branch, e.Model, e.Throttled,
+                e.AvailableFields, HasWrites: e.Tokens?.BillableCacheWriteTokens > 0))
             .Select(g => new Summary(g.First() with
             {
                 Tokens = g.All(e => e.Tokens is null) ? null : g.Aggregate(TokenBreakdown.Zero, (sum, e) => sum.Add(e.Tokens ?? TokenBreakdown.Zero)),
                 Tools = g.SelectMany(e => e.Tools).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
-                Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value)),
-                AvailableFields = g.Where(e => e.Tokens is { VisibleTotalTokens: > 0 })
-                    .Aggregate(UsageBreakdownFields.All, (fields, e) => fields & e.AvailableFields.GetValueOrDefault())
+                Skills = g.SelectMany(e => e.Skills).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(p => p.Key, p => p.Sum(v => v.Value))
             }, g.Count(), g.Count(e => e.Tokens is { VisibleTotalTokens: > 0 }))).ToArray());
     private static readonly JsonSerializerOptions IndexJson = new(JsonSerializerDefaults.Web);
 
