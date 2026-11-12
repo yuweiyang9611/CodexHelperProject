@@ -13,7 +13,6 @@ $electronWindowsHost = Get-Content -LiteralPath (Join-Path $projectRoot 'src\Cod
 $electronNativeNotifications = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Electron\src\nativeNotifications.ts') -Raw -Encoding utf8
 $sidecarHostRpc = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Sidecar\SidecarHostRpc.cs') -Raw -Encoding utf8
 $inventoryGenerator = Get-Content -LiteralPath (Join-Path $projectRoot 'tools\Generate-ThirdPartyInventory.ps1') -Raw -Encoding utf8
-$globalJson = Get-Content -LiteralPath (Join-Path $projectRoot 'global.json') -Raw -Encoding utf8 | ConvertFrom-Json
 [xml]$sidecarProject = Get-Content -LiteralPath (Join-Path $projectRoot 'src\CodexU.Sidecar\CodexU.Sidecar.csproj') -Raw -Encoding utf8
 
 function Assert-Contains {
@@ -192,11 +191,11 @@ foreach ($removedWebView2Gate in @(
         "Electron installer must not retain the WebView2 installation gate: '$removedWebView2Gate'."
 }
 
+# The .NET SDK is not pinned: the newest installed SDK builds the net10.0
+# projects. The runtime shipped inside the Sidecar stays pinned by the project
+# file below.
 # The Electron build chain is deliberately direct Packager 20: Forge 7 pins a
 # vulnerable extract-zip dependency and must not return unnoticed.
-if ([string]$globalJson.sdk.version -ne '10.0.400' -or [string]$globalJson.sdk.rollForward -ne 'disable') {
-    throw 'Release builds must use the exact reviewed .NET SDK 10.0.400.'
-}
 if ([string]$sidecarProject.Project.PropertyGroup.RuntimeFrameworkVersion -ne '10.0.11') {
     throw 'The self-contained Sidecar runtime must remain explicitly pinned to 10.0.11.'
 }

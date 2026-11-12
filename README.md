@@ -72,7 +72,7 @@ Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron
 ## 环境要求
 
 - Windows 10 22H2 或 Windows 11，推荐 Windows 11。
-- .NET SDK 10.0.400（由 `global.json` 精确锁定）。
+- .NET SDK 10 或更高版本（不锁定版本，使用本机已安装的最新 SDK）。
 - Node.js 22.23.2（Electron 构建与 CI/Release 使用同一精确版本）。
 - Electron 安装包不需要 WebView2 Evergreen Runtime；只有运行仓库中的旧 WPF 宿主时才需要。
 - 已安装并登录的 ChatGPT 桌面应用（含 Codex）或 Codex CLI；没有 Codex 数据时应用仍可显示空状态。
