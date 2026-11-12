@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.6** 接入 Claude Desktop 原生查询结果与真实重置时间；用户变更说明见 [0.6.6 发布说明](docs/release-0.6.6.md)，数据范围和验证记录见 [Claude Desktop 接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.7** 改进 Claude 月费与额度会话设置，并统一后端费用核算、项目排行和双运行时汇总；用户变更说明见 [0.6.7 发布说明](docs/release-0.6.7.md)，Claude 数据范围见 [接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
