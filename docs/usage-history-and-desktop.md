@@ -45,7 +45,7 @@ Codex 先合并 active/archive，再移除可验证的 fork 回放，最后过�
 
 ## 验证入口
 
-使用 .NET SDK 10 或更高版本（不锁定版本）、Node 22.23.2 和两套 npm lockfile：
+使用 .NET SDK 11 或更高版本（不锁定版本）、Node 22.23.2 和两套 npm lockfile：
 
 ```powershell
 ./tools/Verify-Environment.ps1

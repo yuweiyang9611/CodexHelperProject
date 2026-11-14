@@ -3,7 +3,7 @@
 [![CI](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/ci.yml)
 [![Release](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml/badge.svg)](https://github.com/yuweiyang9611/CodexHelperProject/actions/workflows/release.yml)
 
-codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 10 保留为独立 Sidecar 后端。已有 v0.5.0 不会被新链路覆盖。
+codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 保留为独立 Sidecar 后端（当前为 .NET 11）。已有 v0.5.0 不会被新链路覆盖。
 
 当前版本 **0.6.7** 改进 Claude 月费与额度会话设置，并统一后端费用核算、项目排行和双运行时汇总；用户变更说明见 [0.6.7 发布说明](docs/release-0.6.7.md)，Claude 数据范围见 [接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
@@ -72,7 +72,7 @@ Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron
 ## 环境要求
 
 - Windows 10 22H2 或 Windows 11，推荐 Windows 11。
-- .NET SDK 10 或更高版本（不锁定版本，使用本机已安装的最新 SDK）。
+- .NET SDK 11 或更高版本（不锁定版本，使用本机已安装的最新 SDK）。
 - Node.js 22.23.2（Electron 构建与 CI/Release 使用同一精确版本）。
 - Electron 安装包不需要 WebView2 Evergreen Runtime；只有运行仓库中的旧 WPF 宿主时才需要。
 - 已安装并登录的 ChatGPT 桌面应用（含 Codex）或 Codex CLI；没有 Codex 数据时应用仍可显示空状态。

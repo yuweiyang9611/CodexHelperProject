@@ -1151,7 +1151,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 ==============================================================================
 Components:
-- NuGet: Microsoft.Data.Sqlite.Core 10.0.14 [SPDX-MIT.txt]
+- NuGet: Microsoft.Data.Sqlite.Core 11.0.0 [SPDX-MIT.txt]
 
 MIT License
 

@@ -191,13 +191,14 @@ foreach ($removedWebView2Gate in @(
         "Electron installer must not retain the WebView2 installation gate: '$removedWebView2Gate'."
 }
 
-# The .NET SDK is not pinned: the newest installed SDK builds the net10.0
-# projects. The runtime shipped inside the Sidecar stays pinned by the project
-# file below.
+# The .NET SDK is not pinned: the newest installed SDK builds the net11.0
+# projects, and the self-contained Sidecar ships the .NET runtime that comes
+# with that SDK. The runtime is not pinned either; the third-party inventory
+# records the version taken from the published Sidecar.
 # The Electron build chain is deliberately direct Packager 20: Forge 7 pins a
 # vulnerable extract-zip dependency and must not return unnoticed.
-if ([string]$sidecarProject.Project.PropertyGroup.RuntimeFrameworkVersion -ne '10.0.11') {
-    throw 'The self-contained Sidecar runtime must remain explicitly pinned to 10.0.11.'
+if (@($sidecarProject.SelectNodes('//*[local-name()="RuntimeFrameworkVersion"]')).Count -ne 0) {
+    throw 'The self-contained Sidecar must not pin RuntimeFrameworkVersion; it ships the runtime that comes with the building SDK.'
 }
 if ([string]$electronManifest.devDependencies.'@electron/packager' -ne '20.3.0') {
     throw 'Electron Packager must stay exactly pinned to the reviewed 20.3.0 release.'

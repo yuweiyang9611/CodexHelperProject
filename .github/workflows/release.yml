@@ -207,10 +207,10 @@ jobs:
             throw "Release version mismatch after checkout: expected $env:EXPECTED_RELEASE_VERSION, got $actualVersion"
           }
 
-      - name: Set up .NET 10
+      - name: Set up .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
