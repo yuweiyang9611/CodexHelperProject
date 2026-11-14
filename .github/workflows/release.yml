@@ -207,10 +207,10 @@ jobs:
             throw "Release version mismatch after checkout: expected $env:EXPECTED_RELEASE_VERSION, got $actualVersion"
           }
 
-      - name: Set up .NET 10
+      - name: Set up .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -299,7 +299,9 @@ jobs:
         shell: powershell
         run: |
           ./tools/Generate-ThirdPartyInventory.ps1
-          git diff --exit-code -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt LICENSES/dotnet-runtime-MIT.txt LICENSES/dotnet-runtime-ThirdPartyNotices.txt
+          git diff --stat -- THIRD-PARTY-INVENTORY.md THIRD-PARTY-LICENSES.txt LICENSES/dotnet-runtime-MIT.txt LICENSES/dotnet-runtime-ThirdPartyNotices.txt
+          # Another patch of the recorded .NET runtime is accepted; any other difference fails.
+          ./tools/Test-ThirdPartyInventoryDrift.ps1
 
       - name: Package Electron Windows app
         working-directory: src/CodexU.Electron

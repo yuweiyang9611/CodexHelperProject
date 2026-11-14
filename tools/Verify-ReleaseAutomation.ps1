@@ -191,13 +191,15 @@ foreach ($removedWebView2Gate in @(
         "Electron installer must not retain the WebView2 installation gate: '$removedWebView2Gate'."
 }
 
-# The .NET SDK is not pinned: the newest installed SDK builds the net10.0
-# projects. The runtime shipped inside the Sidecar stays pinned by the project
-# file below.
+# The .NET SDK is not pinned: the newest installed SDK builds the net11.0
+# projects, and the self-contained Sidecar ships the .NET runtime that comes
+# with that SDK. The runtime is not pinned either; the third-party inventory
+# records the last published runtime patch, and CI accepts another patch of the
+# same major.minor through Test-ThirdPartyInventoryDrift.ps1.
 # The Electron build chain is deliberately direct Packager 20: Forge 7 pins a
 # vulnerable extract-zip dependency and must not return unnoticed.
-if ([string]$sidecarProject.Project.PropertyGroup.RuntimeFrameworkVersion -ne '10.0.11') {
-    throw 'The self-contained Sidecar runtime must remain explicitly pinned to 10.0.11.'
+if (@($sidecarProject.SelectNodes('//*[local-name()="RuntimeFrameworkVersion"]')).Count -ne 0) {
+    throw 'The self-contained Sidecar must not pin RuntimeFrameworkVersion; it ships the runtime that comes with the building SDK.'
 }
 if ([string]$electronManifest.devDependencies.'@electron/packager' -ne '20.3.0') {
     throw 'Electron Packager must stay exactly pinned to the reviewed 20.3.0 release.'
@@ -263,6 +265,11 @@ foreach ($workflow in @($ciWorkflow, $releaseWorkflow)) {
     ) 'CI and Release must derive legal files from the exact published Sidecar before packaging.'
     Assert-Contains $workflow 'LICENSES/dotnet-runtime-ThirdPartyNotices.txt' `
         'CI and Release must reject stale self-contained runtime notices.'
+    Assert-Ordered $workflow @(
+        './tools/Generate-ThirdPartyInventory.ps1',
+        './tools/Test-ThirdPartyInventoryDrift.ps1',
+        'npm run package'
+    ) 'CI and Release must reject regenerated legal files that differ beyond a .NET runtime patch before packaging.'
     Assert-Matches $workflow 'working-directory:\s*src/CodexU\.Electron\s+run:\s*npm run package' `
         'CI and Release must build the Electron Windows package.'
     Assert-Contains $workflow './tools/Test-PackagedElectron.ps1 -ApplicationDirectory src/CodexU.Electron/out/CodexU-win32-x64' `

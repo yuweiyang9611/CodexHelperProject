@@ -403,6 +403,9 @@ foreach ($row in ($rows | Sort-Object Ecosystem, Name, Version -Unique)) {
     $lines.Add("| $(Escape-MarkdownCell $row.Ecosystem) | $(Escape-MarkdownCell $row.Name) | $(Escape-MarkdownCell $row.Version) | $(Escape-MarkdownCell $row.License) | $(Escape-MarkdownCell $row.Source) |")
 }
 $lines.Add('')
+$runtimeMajorMinor = ($runtimeVersion.Split('.')[0..1]) -join '.'
+$lines.Add("The self-contained Sidecar ships the .NET $($runtimeMajorMinor).x runtime that comes with the SDK that publishes it; the project does not pin ``RuntimeFrameworkVersion``. The ``.NET runtime`` row is the patch last recorded from a published Sidecar. CI accepts another $runtimeMajorMinor patch, with that patch's runtime notices, without regenerating this file; any other difference fails.")
+$lines.Add('')
 $lines.Add('Complete package license and notice texts, including Electron''s MIT license, are distributed in `THIRD-PARTY-LICENSES.txt`. The packaged Electron application retains `LICENSES.chromium.html` at its root as the complete Chromium and bundled third-party notice set. Self-contained .NET runtime notices and separately retained upstream/build-tool licenses are distributed in `resources/LICENSES/`.')
 $lines.Add('')
 $lines.Add('`UNKNOWN - review required` is a release blocker; it must be resolved before distribution.')

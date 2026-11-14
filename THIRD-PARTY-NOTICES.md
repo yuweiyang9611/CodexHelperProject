@@ -25,7 +25,7 @@ This project also references the Windows feature set of:
 
 The corresponding MIT notice is retained at `LICENSES/liu-codexU-windows-MIT.txt` (source: https://github.com/liu1198767931-bit/codexU-windows/blob/f27427302390c408863c6b0c747f777bca9e3317/LICENSE).
 
-This repository reimplements the desktop application as an Electron/Chromium host with a Vue renderer and a self-contained .NET 10 Sidecar. The upstream project remains acknowledged as a product and behavior reference.
+This repository reimplements the desktop application as an Electron/Chromium host with a Vue renderer and a self-contained .NET 11 Sidecar. The upstream project remains acknowledged as a product and behavior reference.
 
 ## Runtime dependencies
 
