@@ -194,7 +194,8 @@ foreach ($removedWebView2Gate in @(
 # The .NET SDK is not pinned: the newest installed SDK builds the net11.0
 # projects, and the self-contained Sidecar ships the .NET runtime that comes
 # with that SDK. The runtime is not pinned either; the third-party inventory
-# records the version taken from the published Sidecar.
+# records the last published runtime patch, and CI accepts another patch of the
+# same major.minor through Test-ThirdPartyInventoryDrift.ps1.
 # The Electron build chain is deliberately direct Packager 20: Forge 7 pins a
 # vulnerable extract-zip dependency and must not return unnoticed.
 if (@($sidecarProject.SelectNodes('//*[local-name()="RuntimeFrameworkVersion"]')).Count -ne 0) {
@@ -264,6 +265,11 @@ foreach ($workflow in @($ciWorkflow, $releaseWorkflow)) {
     ) 'CI and Release must derive legal files from the exact published Sidecar before packaging.'
     Assert-Contains $workflow 'LICENSES/dotnet-runtime-ThirdPartyNotices.txt' `
         'CI and Release must reject stale self-contained runtime notices.'
+    Assert-Ordered $workflow @(
+        './tools/Generate-ThirdPartyInventory.ps1',
+        './tools/Test-ThirdPartyInventoryDrift.ps1',
+        'npm run package'
+    ) 'CI and Release must reject regenerated legal files that differ beyond a .NET runtime patch before packaging.'
     Assert-Matches $workflow 'working-directory:\s*src/CodexU\.Electron\s+run:\s*npm run package' `
         'CI and Release must build the Electron Windows package.'
     Assert-Contains $workflow './tools/Test-PackagedElectron.ps1 -ApplicationDirectory src/CodexU.Electron/out/CodexU-win32-x64' `

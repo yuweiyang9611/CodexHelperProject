@@ -112,10 +112,12 @@ jobs:
           $diffExit = $LASTEXITCODE
           if ($diffExit -eq 1) {
             git diff --stat -- $files
-            'mismatch=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            throw 'Generated inventory differs. Download the inventory patch from the workflow artifacts and review it with git apply --stat.'
-          }
-          if ($diffExit -ne 0) { throw "git diff failed with exit code $diffExit." }
+            # Another patch of the recorded .NET runtime is accepted; any other difference fails.
+            try { ./tools/Test-ThirdPartyInventoryDrift.ps1 } catch {
+              'mismatch=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+              throw "$($_.Exception.Message) Download the inventory patch from the workflow artifacts and review it with git apply --stat."
+            }
+          } elseif ($diffExit -ne 0) { throw "git diff failed with exit code $diffExit." }
 
       - name: Upload third-party inventory patch
         if: failure() && steps.inventory.outputs.mismatch == 'true'
