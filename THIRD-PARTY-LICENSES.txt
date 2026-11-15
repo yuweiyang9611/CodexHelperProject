@@ -59,16 +59,16 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- npm: @vue/compiler-core 3.5.44 [LICENSE]
-- npm: @vue/compiler-dom 3.5.44 [LICENSE]
-- npm: @vue/compiler-sfc 3.5.44 [LICENSE]
-- npm: @vue/compiler-ssr 3.5.44 [LICENSE]
-- npm: @vue/reactivity 3.5.44 [LICENSE]
-- npm: @vue/runtime-core 3.5.44 [LICENSE]
-- npm: @vue/runtime-dom 3.5.44 [LICENSE]
-- npm: @vue/server-renderer 3.5.44 [LICENSE]
-- npm: @vue/shared 3.5.44 [LICENSE]
-- npm: vue 3.5.44 [LICENSE]
+- npm: @vue/compiler-core 3.5.45 [LICENSE]
+- npm: @vue/compiler-dom 3.5.45 [LICENSE]
+- npm: @vue/compiler-sfc 3.5.45 [LICENSE]
+- npm: @vue/compiler-ssr 3.5.45 [LICENSE]
+- npm: @vue/reactivity 3.5.45 [LICENSE]
+- npm: @vue/runtime-core 3.5.45 [LICENSE]
+- npm: @vue/runtime-dom 3.5.45 [LICENSE]
+- npm: @vue/server-renderer 3.5.45 [LICENSE]
+- npm: @vue/shared 3.5.45 [LICENSE]
+- npm: vue 3.5.45 [LICENSE]
 
 The MIT License (MIT)
 
@@ -182,7 +182,7 @@ SOFTWARE.
 
 ==============================================================================
 Components:
-- Electron: electron 45.1.0 [LICENSE]
+- Electron: electron 45.2.3 [LICENSE]
 
 Copyright (c) Electron contributors
 Copyright (c) 2013-2020 GitHub Inc.
