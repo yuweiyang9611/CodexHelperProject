@@ -226,6 +226,9 @@ public partial class MainWindow
             case "settings.get":
                 return _settings;
 
+            case "claude.getAuthStatus":
+                return await new ClaudeCliAuthStatusReader().ReadAsync(_lifetimeCancellation.Token);
+
             case "settings.pickClaudeTranscript":
                 var sessionDialog = new OpenFileDialog
                 {

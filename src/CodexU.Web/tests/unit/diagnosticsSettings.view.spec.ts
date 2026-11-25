@@ -66,9 +66,13 @@ describe('desktop host capabilities', () => {
   it('only allows saving edited rates after the current draft was validated', async () => {
     let finish!: (response: unknown) => void
     const first = new Promise(resolve => { finish = resolve })
+    const originalRequest = host.request.bind(host)
+    let previews = 0
     const request = vi.spyOn(host, 'request')
-      .mockReturnValueOnce(first)
-      .mockResolvedValueOnce({ validationMessage: '日期冲突', canAdd: false })
+      .mockImplementation(<T>(method: string, payload?: object): Promise<T> =>
+        method === 'rates.previewDraft'
+          ? (++previews === 1 ? first : Promise.resolve({ validationMessage: '日期冲突', canAdd: false })) as Promise<T>
+          : originalRequest<T>(method, payload))
     try {
       const { container, store } = mountSettings([])
       store.settingsDraft!.customModelRates = [{

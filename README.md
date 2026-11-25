@@ -165,6 +165,8 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 
 从 0.6.6 起支持绑定 Desktop Code 会话中的原生 `get_usage` 工具结果，显示真实百分比、重置时间及读取时间。该方式只读取已有查询结果，新查询由绑定的 Desktop 会话触发；不在后台发送模型消息。配置与边界见 [原生查询结果接入](docs/claude-desktop-usage.md)。
 
+当前源码在「设置与诊断 → 数据源」新增 Claude CLI 登录状态。打开页面或点击「重新检查登录状态」可后台检测是否登录，并显示检测的 CLI 来源。登录和后台额度读取的前提见 [CLI 使用说明](docs/claude-cli-usage.md)。
+
 Claude Code transcript 只有 Token 计数，没有订阅配额；HTTP 429 只能说明当时被限流。
 
 **Claude Desktop 的 Code 页：**应用会只读发现 `%LOCALAPPDATA%/Claude-Data/claude_*/plan-usage-history.json`。已验证的 version 2 格式提供五小时／七天已用百分比和采样时间，不提供重置时间、当前登录证明或订阅月费。界面标注“采样”及时间，超过 30 分钟、多组织、未知格式或异常数据时停止使用。这里使用的是已观察到的本地缓存格式，不是 Anthropic 承诺稳定的公共接口。没有重置时间时不会用采样时间加五小时／七天推算，也不会从旧记录补齐缺失窗口。详细边界见 [接入说明](docs/claude-desktop-usage.md)。

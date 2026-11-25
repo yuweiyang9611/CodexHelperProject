@@ -46,6 +46,9 @@ export async function openTab(page: Page, id: TabId) {
   // The combined panel loads independently. Wait for its final height before
   // scrolling or capturing it; a short loading panel clamps the scroll position.
   if (id === 'combined') await expect(page.locator('.combined-columns')).toBeVisible()
+  if (id === 'diagnostics') {
+    await expect(page.getByRole('region', { name: 'Claude CLI 登录状态', exact: true })).toHaveAttribute('aria-busy', 'false')
+  }
   await settleUi(page)
 }
 

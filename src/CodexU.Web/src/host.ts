@@ -266,6 +266,9 @@ class HostBridge {
       return createDemoSnapshot(this.mockRuntime, this.mockSettings) as T
     }
     if (method === 'settings.get') return { ...this.mockSettings } as T
+    if (method === 'claude.getAuthStatus') return {
+      status: 'notInstalled', authMethod: 'none', source: 'none', checkedAt: demoNow().toISOString(),
+    } as T
     if (method === 'settings.pickClaudeTranscript') return (visualTestMode ? demoTranscript : null) as T
     if (method === 'settings.validateClaudeTranscript') {
       return (visualTestMode && (payload as { path?: string }).path === demoTranscript

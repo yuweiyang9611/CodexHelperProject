@@ -9,6 +9,22 @@ namespace CodexU.Sidecar.Tests;
 public sealed class IpcDispatcherTests
 {
     [Fact]
+    public async Task ClaudeAuthStatusIsReadWithoutChangingSettingsOrRefreshingUsage()
+    {
+        var expected = new ClaudeCliAuthStatus(ClaudeCliLoginStatus.LoggedIn,
+            ClaudeCliAuthMethod.ClaudeAi, ClaudeCliSource.Standalone, DateTimeOffset.UtcNow);
+        using var context = TestContext.Create(new ImmediateDashboardService(), readClaudeAuthStatus: _ => Task.FromResult(expected));
+        var saved = context.Session.CurrentSettings;
+
+        var actual = await context.Dispatcher.DispatchAsync(Request("claude.getAuthStatus"));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(saved, context.Session.CurrentSettings);
+        Assert.Empty(context.EventSink.EventsFor("usage.snapshotChanged"));
+        Assert.Empty(context.EventSink.EventsFor("settings.changed"));
+    }
+
+    [Fact]
     public async Task SettingsPatch_BindsDesktopUsageWithoutChangingManualMonthlyAmount()
     {
         using var context = TestContext.Create(new ImmediateDashboardService());
@@ -592,7 +608,8 @@ public sealed class IpcDispatcherTests
         private readonly string _dataDirectory;
 
         private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null,
-            IDashboardService? replacement = null)
+            IDashboardService? replacement = null,
+            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -616,7 +633,7 @@ public sealed class IpcDispatcherTests
                 EventSink,
                 interaction ?? new ConfirmingUserInteractionService(),
                 new NoOpWindowCommands(),
-                new UnsupportedExternalUriLauncher());
+                new UnsupportedExternalUriLauncher(), readClaudeAuthStatus: readClaudeAuthStatus);
         }
 
         public ApplicationSession Session { get; }
@@ -630,7 +647,9 @@ public sealed class IpcDispatcherTests
         public RecordingEventSink EventSink { get; }
 
         public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null,
-            IDashboardService? replacement = null) => new(dashboardService, interaction, replacement);
+            IDashboardService? replacement = null,
+            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null) =>
+            new(dashboardService, interaction, replacement, readClaudeAuthStatus);
 
         public void Dispose()
         {

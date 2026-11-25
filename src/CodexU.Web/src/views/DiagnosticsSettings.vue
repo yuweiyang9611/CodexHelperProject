@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import ClaudeTranscriptBinding from '../components/ClaudeTranscriptBinding.vue'
+import ClaudeCliAuthStatus from '../components/ClaudeCliAuthStatus.vue'
 import { currencyAmount } from '../format'
 import { useRateEditor } from '../composables/useRateEditor'
 import { HOST_CAPABILITY } from '../hostCapabilities'
@@ -163,6 +164,7 @@ function removeCustomRate(index: number) {
             <label class="settings-field-wide">Codex 可执行文件<input v-model="store.settingsDraft.codexExecutable" placeholder="自动发现 ChatGPT/Codex CLI，也可手动指定 codex.exe" /></label>
             <label class="settings-field-wide">默认工作范围<input v-model="store.settingsDraft.defaultWorkspace" placeholder="例如 D:\Workspace" /></label>
           </div>
+          <ClaudeCliAuthStatus />
           <ClaudeTranscriptBinding v-model="store.settingsDraft.claudeDesktopUsageTranscript" :disabled="settingsBusy" />
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.incrementalIndexEnabled" type="checkbox" />启用增量索引</label>

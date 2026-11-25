@@ -1,4 +1,10 @@
 export type AgentRuntime = 'codex' | 'claudeCode'
+export interface ClaudeCliAuthStatus {
+  status: 'loggedIn' | 'loggedOut' | 'notInstalled' | 'unavailable'
+  authMethod: 'none' | 'claudeAi' | 'oauthToken' | 'apiKey' | 'apiKeyHelper' | 'thirdParty' | 'unknown'
+  source: 'none' | 'standalone' | 'path' | 'desktopEmbedded'
+  checkedAt: string
+}
 export type DataQuality = 'detailed' | 'partial' | 'approximate' | 'unavailable'
 export interface UsageAmount { knownAmount?: number | null; isLowerBound: boolean }
 export interface UsageAnalysisRequest {

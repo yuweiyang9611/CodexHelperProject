@@ -57,6 +57,7 @@ public sealed class IpcDispatcher : IDisposable
     private readonly IWindowCommands _windowCommands;
     private readonly IExternalUriLauncher _externalUriLauncher;
     private readonly IStatusStripCommands? _statusStripCommands;
+    private readonly Func<CancellationToken, Task<ClaudeCliAuthStatus>> _readClaudeAuthStatus;
     private bool _disposed;
 
     public IpcDispatcher(
@@ -66,7 +67,8 @@ public sealed class IpcDispatcher : IDisposable
         IUserInteractionService userInteraction,
         IWindowCommands windowCommands,
         IExternalUriLauncher externalUriLauncher,
-        IStatusStripCommands? statusStripCommands = null)
+        IStatusStripCommands? statusStripCommands = null,
+        Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(hostEnvironment);
@@ -81,6 +83,7 @@ public sealed class IpcDispatcher : IDisposable
         _userInteraction = userInteraction;
         _windowCommands = windowCommands;
         _externalUriLauncher = externalUriLauncher;
+        _readClaudeAuthStatus = readClaudeAuthStatus ?? new ClaudeCliAuthStatusReader().ReadAsync;
         _statusStripCommands = statusStripCommands;
 
         _session.SnapshotChanged += OnSnapshotChanged;
@@ -141,6 +144,9 @@ public sealed class IpcDispatcher : IDisposable
 
             case "settings.get":
                 return _session.CurrentSettings;
+
+            case "claude.getAuthStatus":
+                return await _readClaudeAuthStatus(_session.LifetimeToken);
 
             case "settings.pickClaudeTranscript":
                 return await _userInteraction.PickOpenFileAsync(
