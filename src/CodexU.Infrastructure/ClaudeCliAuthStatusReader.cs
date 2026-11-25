@@ -49,8 +49,11 @@ public sealed class ClaudeCliAuthStatusReader
             return Parse(command, source, _clock.GetUtcNow());
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is OperationCanceledException or IOException or UnauthorizedAccessException
-            or Win32Exception or ArgumentException or InvalidOperationException or NotSupportedException or System.Security.SecurityException)
+        // InvalidDataException derives from SystemException rather than IOException; the
+        // discovery and output bounds throw it and must surface as an unavailable check.
+        catch (Exception exception) when (exception is OperationCanceledException or IOException or InvalidDataException
+            or UnauthorizedAccessException or Win32Exception or ArgumentException or InvalidOperationException
+            or NotSupportedException or System.Security.SecurityException)
         {
             return Result(ClaudeCliLoginStatus.Unavailable, ClaudeCliAuthMethod.Unknown, source);
         }

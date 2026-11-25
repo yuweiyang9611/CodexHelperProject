@@ -99,6 +99,49 @@ public sealed class ClaudeCliAuthStatusReaderTests
         await Assert.ThrowsAsync<InvalidDataException>(() => ClaudeCliAuthStatusReader.ReadBoundedAsync(stream, 4096, default));
     }
 
+    [Fact]
+    public async Task OutputOverflowIsUnavailableAndKeepsTheDetectedSource()
+    {
+        var reader = new ClaudeCliAuthStatusReader(() => new("fixture", ClaudeCliSource.DesktopEmbedded),
+            async (_, token) =>
+            {
+                await using var stream = new MemoryStream(new byte[65 * 1024]);
+                await ClaudeCliAuthStatusReader.ReadBoundedAsync(stream, 64 * 1024, token);
+                // Reached only if the bound stops throwing; the logged-in result then fails the test.
+                return new ClaudeCliAuthCommandResult(0, """{"loggedIn":true,"authMethod":"claude.ai"}""");
+            }, new FixedClock(), TimeSpan.FromSeconds(1));
+
+        var status = await reader.ReadAsync();
+
+        Assert.Equal(ClaudeCliLoginStatus.Unavailable, status.Status);
+        Assert.Equal(ClaudeCliAuthMethod.Unknown, status.AuthMethod);
+        Assert.Equal(ClaudeCliSource.DesktopEmbedded, status.Source);
+        Assert.Equal(Now, status.CheckedAt);
+    }
+
+    [Fact]
+    public async Task DiscoveryLimitIsUnavailableWithoutRunningAnyExecutable()
+    {
+        using var fixture = new Fixture();
+        for (var index = 0; index < 17; index++)
+            Directory.CreateDirectory(Path.Combine(fixture.Local, "Claude-Data", $"claude_{index:D2}"));
+        Assert.Throws<InvalidDataException>(() => ClaudeCliAuthStatusReader.Discover(fixture.Root, fixture.Local, null));
+        var executed = false;
+        var reader = new ClaudeCliAuthStatusReader(() => ClaudeCliAuthStatusReader.Discover(fixture.Root, fixture.Local, null),
+            (_, _) =>
+            {
+                executed = true;
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, """{"loggedIn":true,"authMethod":"claude.ai"}"""));
+            }, new FixedClock(), TimeSpan.FromSeconds(1));
+
+        var status = await reader.ReadAsync();
+
+        Assert.False(executed);
+        Assert.Equal(ClaudeCliLoginStatus.Unavailable, status.Status);
+        Assert.Equal(ClaudeCliAuthMethod.Unknown, status.AuthMethod);
+        Assert.Equal(ClaudeCliSource.None, status.Source);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
