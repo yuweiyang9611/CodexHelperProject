@@ -11,13 +11,18 @@ namespace CodexU.Infrastructure;
 public sealed class AntigravityQuotaReader
 {
     private static readonly Version MinimumVersion = new(1, 1, 11);
-    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(18);
+    private static readonly TimeSpan VersionTimeout = TimeSpan.FromSeconds(18);
+    private static readonly TimeSpan UsageTimeout = TimeSpan.FromSeconds(18);
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan[] CooldownSchedule =
+        [TimeSpan.FromMinutes(30), TimeSpan.FromHours(2), TimeSpan.FromHours(6), TimeSpan.FromHours(24)];
     private const int MaximumOutputBytes = 64 * 1024;
     private const int MaximumGroups = 32;
     private const int MaximumBucketsPerGroup = 16;
 
-    private const int GuardVersion = 1;
+    private const int GuardVersion = 2;
+    private const int MaximumGuardEntries = 8;
+    private const int MaximumVersionLength = 64;
     private static readonly ConcurrentDictionary<string, AntigravityQuotaReader> ByDataDirectory =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -28,9 +33,9 @@ public sealed class AntigravityQuotaReader
     private readonly SemaphoreSlim _gate = new(1, 1);
     private AntigravityQuotaSnapshot? _lastResult;
     private long _lastCompleted;
-    // The CLI version that once answered /usage with a model turn. Accessed only under _gate.
-    // It is saved, so a restart cannot spend quota on the same version again.
-    private string? _modelInvokingVersion;
+    // Oldest first, so a full guard can retain the most recent entries. Accessed only under _gate.
+    private readonly List<string> _blockedVersions = [];
+    private readonly List<VersionCooldown> _cooldowns = [];
     private bool _guardLoaded;
 
     internal AntigravityQuotaReader(
@@ -83,48 +88,84 @@ public sealed class AntigravityQuotaReader
 
     private async Task<AntigravityQuotaSnapshot> QueryAsync(CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(QueryTimeout);
+        string? usageVersion = null;
+        VersionCooldown? cooldown = null;
         try
         {
             var executable = _discover();
             if (executable is null) return Empty(AntigravityQuotaStatus.NotInstalled);
 
             var workingDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "codexU-antigravity-cli")).FullName;
-            var version = await _run(StartInfo(executable, workingDirectory, ["--version"]), deadline.Token);
+            var version = await RunWithTimeoutAsync(StartInfo(executable, workingDirectory, ["--version"]),
+                VersionTimeout, cancellationToken);
             if (version.ExitCode != 0) return Empty(AntigravityQuotaStatus.Unavailable);
 
             // Older versions may run unsupported slash commands as model prompts.
             var versionText = version.Output.Trim();
-            if (!Version.TryParse(versionText, out var parsedVersion) || parsedVersion < MinimumVersion)
+            if (versionText.Length > MaximumVersionLength || !Version.TryParse(versionText, out var parsedVersion)
+                || parsedVersion < MinimumVersion)
                 return Empty(AntigravityQuotaStatus.UnsupportedVersion);
-            // A version that already turned /usage into a model turn would do it again on
-            // every refresh, each time spending quota. Only a different CLI version retries.
-            if (string.Equals(_modelInvokingVersion, versionText, StringComparison.Ordinal))
+            if (_blockedVersions.Contains(versionText))
                 return Empty(AntigravityQuotaStatus.ModelInvoked);
+            cooldown = _cooldowns.Find(entry => entry.CliVersion == versionText);
+            if (cooldown is not null && cooldown.RetryAt > _clock.GetUtcNow())
+                return Empty(AntigravityQuotaStatus.Unavailable);
 
             var info = StartInfo(executable, workingDirectory,
                 ["-p", "/usage", "--output-format", "json", "--print-timeout", "12s"]);
-            var result = Parse(await _run(info, deadline.Token), _clock.GetUtcNow());
-            var invoking = result.Status == AntigravityQuotaStatus.ModelInvoked ? versionText : null;
-            if (!string.Equals(invoking, _modelInvokingVersion, StringComparison.Ordinal))
+            cancellationToken.ThrowIfCancellationRequested();
+            usageVersion = versionText;
+            // Give print mode its full timeout plus cleanup time, even after a slow version check.
+            var output = await RunWithTimeoutAsync(info, UsageTimeout, cancellationToken);
+            var result = Parse(output, _clock.GetUtcNow(), out var verifiedZeroTurns);
+            if (result.Status == AntigravityQuotaStatus.ModelInvoked)
             {
-                _modelInvokingVersion = invoking;
+                AddGuardEntry(_blockedVersions, versionText);
+                if (cooldown is not null) _cooldowns.Remove(cooldown);
+                SaveGuard();
+            }
+            else if (!verifiedZeroTurns)
+            {
+                RecordInconclusive(versionText, cooldown);
+            }
+            else if (cooldown is not null)
+            {
+                _cooldowns.Remove(cooldown);
                 SaveGuard();
             }
             return result;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
             or Win32Exception or InvalidOperationException or NotSupportedException or ArgumentException
             or OperationCanceledException or System.Security.SecurityException)
         {
+            if (usageVersion is not null) RecordInconclusive(usageVersion, cooldown);
+            if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested) throw;
             // Keep local executable paths and CLI diagnostics out of the renderer.
             return Empty(AntigravityQuotaStatus.Unavailable);
         }
+    }
+
+    private async Task<ClaudeCliAuthCommandResult> RunWithTimeoutAsync(
+        ProcessStartInfo info, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var deadline = new CancellationTokenSource(timeout, _clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        return await _run(info, linked.Token);
+    }
+
+    private void RecordInconclusive(string version, VersionCooldown? previous)
+    {
+        var failures = Math.Min((previous?.FailureCount ?? 0) + 1, CooldownSchedule.Length);
+        if (previous is not null) _cooldowns.Remove(previous);
+        AddGuardEntry(_cooldowns, new VersionCooldown(version, failures, _clock.GetUtcNow() + CooldownSchedule[failures - 1]));
+        SaveGuard();
+    }
+
+    private static void AddGuardEntry<T>(List<T> entries, T entry)
+    {
+        if (entries.Count == MaximumGuardEntries) entries.RemoveAt(0);
+        entries.Add(entry);
     }
 
     internal static string? Discover(string localApplicationData, string? searchPath)
@@ -162,8 +203,13 @@ public sealed class AntigravityQuotaReader
         return info;
     }
 
-    internal static AntigravityQuotaSnapshot Parse(ClaudeCliAuthCommandResult result, DateTimeOffset observedAt)
+    internal static AntigravityQuotaSnapshot Parse(ClaudeCliAuthCommandResult result, DateTimeOffset observedAt) =>
+        Parse(result, observedAt, out _);
+
+    private static AntigravityQuotaSnapshot Parse(
+        ClaudeCliAuthCommandResult result, DateTimeOffset observedAt, out bool verifiedZeroTurns)
     {
+        verifiedZeroTurns = false;
         if (Encoding.UTF8.GetByteCount(result.Output) > MaximumOutputBytes)
             return Empty(AntigravityQuotaStatus.Unavailable);
 
@@ -175,10 +221,12 @@ public sealed class AntigravityQuotaReader
                 AllowDuplicateProperties = false
             });
             var root = json.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return Empty(AntigravityQuotaStatus.Unavailable);
             // Checked before the exit code: a /usage that fell through to a model turn
             // ends with status ERROR and a non-zero exit, yet has already spent quota.
             if (InvokedModel(root)) return Empty(AntigravityQuotaStatus.ModelInvoked);
-            if (result.ExitCode != 0 || Text(root, "status") != "SUCCESS" || Number(root, "num_turns", 0) != 0
+            verifiedZeroTurns = Number(root, "num_turns", 0) == 0;
+            if (!verifiedZeroTurns || result.ExitCode != 0 || Text(root, "status") != "SUCCESS"
                 || !Object(root, "command", out var command) || Text(command, "name") != "usage"
                 || !Object(command, "data", out var data) || !Array(data, "groups", MaximumGroups, out var groups))
                 return Empty(AntigravityQuotaStatus.Unavailable);
@@ -238,7 +286,14 @@ public sealed class AntigravityQuotaReader
 
     private static AntigravityQuotaSnapshot Empty(AntigravityQuotaStatus status) => new(status, []);
 
-    private sealed record QuotaGuard(int Version, string? ModelInvokingCliVersion);
+    private sealed record QuotaGuard(int Version, string[] BlockedCliVersions, VersionCooldown[] Cooldowns);
+
+    private sealed record LegacyQuotaGuard(string? ModelInvokingCliVersion);
+
+    private sealed record VersionCooldown(string CliVersion, int FailureCount, DateTimeOffset RetryAt);
+
+    private static bool IsGuardVersion(string? version) =>
+        version is { Length: <= MaximumVersionLength } && Version.TryParse(version, out _);
 
     /// <summary>
     /// Returns false when a guard file exists but cannot be read right now (for example
@@ -251,13 +306,29 @@ public sealed class AntigravityQuotaReader
         try
         {
             var file = new FileInfo(_guardFile!);
-            if (file.Exists && file.Length <= 4096)
+            if (file.Length <= 4096)
             {
-                var guard = JsonSerializer.Deserialize<QuotaGuard>(File.ReadAllText(file.FullName), GuardJson);
-                // Only a well-formed version string is trusted; anything else costs one query.
-                if (guard is { Version: GuardVersion, ModelInvokingCliVersion: { Length: <= 64 } saved }
-                    && Version.TryParse(saved, out _))
-                    _modelInvokingVersion = saved;
+                var json = File.ReadAllText(file.FullName);
+                var guard = JsonSerializer.Deserialize<QuotaGuard>(json, GuardJson);
+                if (guard is { Version: GuardVersion })
+                {
+                    _blockedVersions.AddRange((guard.BlockedCliVersions ?? []).Where(IsGuardVersion)
+                        .Distinct(StringComparer.Ordinal).TakeLast(MaximumGuardEntries));
+                    var latestRetry = _clock.GetUtcNow() + CooldownSchedule[^1];
+                    _cooldowns.AddRange((guard.Cooldowns ?? [])
+                        .Where(entry => entry is not null && IsGuardVersion(entry.CliVersion)
+                            && entry.FailureCount >= 1 && entry.FailureCount <= CooldownSchedule.Length
+                            && !_blockedVersions.Contains(entry.CliVersion))
+                        .DistinctBy(entry => entry.CliVersion, StringComparer.Ordinal).TakeLast(MaximumGuardEntries)
+                        .Select(entry => entry.RetryAt > latestRetry ? entry with { RetryAt = latestRetry } : entry));
+                }
+                else if (guard is { Version: 1 }
+                    && JsonSerializer.Deserialize<LegacyQuotaGuard>(json, GuardJson) is { ModelInvokingCliVersion: { } saved }
+                    && IsGuardVersion(saved))
+                {
+                    _blockedVersions.Add(saved);
+                    SaveGuard();
+                }
             }
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException
@@ -281,7 +352,8 @@ public sealed class AntigravityQuotaReader
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_guardFile)!);
-            File.WriteAllText(temporary, JsonSerializer.Serialize(new QuotaGuard(GuardVersion, _modelInvokingVersion), GuardJson));
+            var guard = new QuotaGuard(GuardVersion, [.. _blockedVersions], [.. _cooldowns]);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(guard, GuardJson));
             File.Move(temporary, _guardFile, overwrite: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
@@ -302,7 +374,6 @@ public sealed class AntigravityQuotaReader
     /// </summary>
     private static bool InvokedModel(JsonElement root)
     {
-        if (root.ValueKind != JsonValueKind.Object) return false;
         if (root.TryGetProperty("num_turns", out var turns) && turns.ValueKind == JsonValueKind.Number
             && turns.TryGetDouble(out var count) && count > 0) return true;
         if (!Object(root, "usage", out var usage)) return false;

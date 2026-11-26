@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { host } from '../host'
 import { preferredRuntime, writePreference } from '../preferences'
 import { HOST_CAPABILITY, type HostCapabilityName } from '../hostCapabilities'
@@ -10,6 +10,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isLoading = ref(true)
   const isRefreshing = ref(false)
   const error = ref<string | null>(null)
+  // Whether `error` came from reading Codex or Claude usage. The Antigravity view hides
+  // those (they do not describe its page) but must still show failed saves and updates.
+  // Every write to `error` resets it; only setUsageError marks one.
+  const errorFromUsage = ref(false)
+  let writingUsageError = false
+  watch(error, () => { errorFromUsage.value = writingUsageError }, { flush: 'sync' })
+  function setUsageError(message: string) {
+    writingUsageError = true
+    try { error.value = message } finally { writingUsageError = false }
+  }
   const settings = ref<AppSettings | null>(null)
   const settingsDraft = ref<AppSettings | null>(null)
 
@@ -158,7 +168,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       host.on('usage.refreshFailed', (payload) => {
         if (pendingRuntime !== null) return
         snapshotOperationGeneration += 1
-        error.value = (payload as { message?: string })?.message ?? '刷新失败'
+        setUsageError((payload as { message?: string })?.message ?? '刷新失败')
         isRefreshing.value = false
       })
       host.on('settings.changed', (payload) => {
@@ -444,7 +454,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const refreshed = await host.request<DashboardSnapshot>('usage.refresh')
       if (isLatestSnapshotOperation(generation)) snapshot.value = refreshed
     } catch (reason) {
-      if (isLatestSnapshotOperation(generation)) error.value = errorMessage(reason)
+      if (isLatestSnapshotOperation(generation)) setUsageError(errorMessage(reason))
     } finally {
       if (isLatestSnapshotOperation(generation)) isRefreshing.value = false
     }
@@ -463,7 +473,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         writePreference('runtime', selected.runtime)
       }
     } catch (reason) {
-      if (isLatestSnapshotOperation(generation)) error.value = errorMessage(reason)
+      if (isLatestSnapshotOperation(generation)) setUsageError(errorMessage(reason))
     } finally {
       if (isLatestSnapshotOperation(generation)) {
         pendingRuntime = null
@@ -477,7 +487,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     desktopState,
     snapshot, settings, settingsDraft, settingsDirty, updateStatus, rateCatalog, isCheckingUpdates, isRunningLocalOperation, isUpdatingSettings, operationStatus, statusStripState, isControllingStatusStrip, appVersion,
     hostPlatform, hostIsPackaged, hostCapabilities, hasHostCapability,
-    isLoading, isRefreshing, error, runtime, compactMode,
+    isLoading, isRefreshing, error, errorFromUsage, runtime, compactMode,
     combined, isLoadingCombined, combinedError, loadCombined,
     initialize, refresh, selectRuntime, saveSettings, resetSettingsDraft, toggleCompact, previewStatusStrip, recoverStatusStrip, refreshStatusStripState,
     checkForUpdates, openReleasePage, runLocalOperation,

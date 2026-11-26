@@ -48,6 +48,25 @@ public sealed class IpcDispatcherTests
     }
 
     [Theory]
+    [InlineData(ClaudeCliAuthMethod.ClaudeAi, 1)]
+    [InlineData(ClaudeCliAuthMethod.OauthToken, 1)]
+    [InlineData(ClaudeCliAuthMethod.ApiKey, 0)]
+    [InlineData(ClaudeCliAuthMethod.ApiKeyHelper, 0)]
+    [InlineData(ClaudeCliAuthMethod.ThirdParty, 0)]
+    [InlineData(ClaudeCliAuthMethod.Unknown, 0)]
+    public async Task OnlyASubscriptionLoginResumesTheQuotaQuery(ClaudeCliAuthMethod method, int expectedResumes)
+    {
+        var status = new ClaudeCliAuthStatus(ClaudeCliLoginStatus.LoggedIn, method, ClaudeCliSource.Standalone,
+            DateTimeOffset.UtcNow);
+        var resumes = 0;
+        using var context = TestContext.Create(new ImmediateDashboardService(),
+            readClaudeAuthStatus: _ => Task.FromResult(status), claudeCliLoggedIn: () => resumes++);
+
+        Assert.Same(status, await context.Dispatcher.DispatchAsync(Request("claude.getAuthStatus")));
+        Assert.Equal(expectedResumes, resumes);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ClaudeCliQuotaStatusDescribesTheCurrentSettingWithoutSavingOrRefreshing(bool enabled)

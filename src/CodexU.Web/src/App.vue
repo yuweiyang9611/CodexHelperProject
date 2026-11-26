@@ -65,6 +65,12 @@ async function selectProvider(provider: AgentRuntime | 'antigravity') {
   await store.selectRuntime(provider)
 }
 
+// Compact mode hides the tab section, so settings would otherwise open out of sight.
+async function openSettings() {
+  if (store.compactMode) await store.toggleCompact()
+  activeTab.value = 'diagnostics'
+}
+
 function refreshProvider() {
   if (isAntigravity.value) {
     void refreshAntigravity(true)
@@ -123,10 +129,10 @@ onMounted(async () => {
         :refreshing="isAntigravity ? antigravityLoading : store.isRefreshing"
         @select-provider="selectProvider"
         @refresh="refreshProvider"
-        @open-settings="activeTab = 'diagnostics'"
+        @open-settings="openSettings"
       />
 
-      <div v-if="store.error && !isAntigravity" class="notice error-notice" role="alert" aria-live="assertive" aria-atomic="true">{{ store.error }}</div>
+      <div v-if="store.error && !(isAntigravity && store.errorFromUsage)" class="notice error-notice" role="alert" aria-live="assertive" aria-atomic="true">{{ store.error }}</div>
       <div v-if="store.updateStatus?.isUpdateAvailable" class="notice update-notice">
         <span>{{ store.updateState?.phase === 'ready' ? `v${store.updateState.version} 已下载，可重启更新` : store.updateStatus.status }}</span>
         <button v-if="store.updateState?.phase === 'ready'" type="button" :disabled="store.isInstallingUpdate || store.isRunningLocalOperation || store.isUpdatingSettings" @click="store.installUpdate()">重启并更新</button>

@@ -160,7 +160,15 @@ public sealed class IpcDispatcher : IDisposable
 
             case "claude.getAuthStatus":
                 var authStatus = await _readClaudeAuthStatus(_session.LifetimeToken);
-                if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) _claudeCliLoggedIn();
+                // Only a subscription login can have plan windows. API keys and third-party
+                // providers also report a login, but querying them ends in "no subscription"
+                // again, and this check runs every time the settings page opens.
+                if (authStatus is
+                    {
+                        Status: ClaudeCliLoginStatus.LoggedIn,
+                        AuthMethod: ClaudeCliAuthMethod.ClaudeAi or ClaudeCliAuthMethod.OauthToken
+                    })
+                    _claudeCliLoggedIn();
                 return authStatus;
 
             case "settings.pickClaudeTranscript":

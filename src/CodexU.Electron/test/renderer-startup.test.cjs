@@ -23,6 +23,7 @@ function startupFixture(load) {
       isDestroyed: () => this.isDestroyed(), setWindowOpenHandler() {},
     });
     isDestroyed() { return this.destroyed === true; }
+    isVisible() { return this.visible === true; }
     destroy() { this.destroyed = true; this.emit('closed'); }
     show() { this.visible = true; }
     loadURL() { return load(this, ++navigations); }
@@ -31,8 +32,9 @@ function startupFixture(load) {
     BrowserWindow: Window, screen, nativeTheme: {},
     app: { enableSandbox() {}, requestSingleInstanceLock: () => false, exit() {}, getPath: () => __dirname },
     protocol: { registerSchemesAsPrivileged() {} },
-    dialog: { showMessageBox: (_window, options) => {
-      prompts.push(options);
+    dialog: { showMessageBox: (...args) => {
+      // Called as (options) or (owner, options).
+      prompts.push({ owner: args.length > 1 ? args[0] : undefined, ...args.at(-1) });
       return new Promise(() => {});
     } },
   };
@@ -89,6 +91,8 @@ test('repeated startup navigation failures exhaust the normal renderer retry bud
   assert.equal(fixture.timers.length, 0);
   assert.equal(fixture.prompts.length, 1);
   assert.match(fixture.prompts[0].message, /界面进程/u);
+  // The window never showed, so the dialog must not be owned by it.
+  assert.equal(fixture.prompts[0].owner, undefined);
 });
 
 test('the first retry performs a fresh load when the crashed startup navigation is still settling', async () => {

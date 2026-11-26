@@ -183,6 +183,202 @@ public sealed class ClaudeCliQuotaCollectorTests
     }
 
     [Fact]
+    public async Task AFailedFirstReadAfterSigningInAgainNeverShowsTheSignedOutAccountsWindows()
+    {
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        var collector = Collector(clock, (_, id, _) => ++calls switch
+        {
+            1 => Task.FromResult(Response(id, Limits(Window("session", 30, Now.AddHours(4))))),
+            2 => Task.FromResult(NotSignedIn(id)),
+            _ => throw new IOException("timed out")
+        });
+        await collector.ReadAsync();
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        Assert.Equal(ClaudeCliQuotaStatus.NotAvailable, (await collector.ReadAsync()).Status);
+
+        // Another account signs in; its first read fails while the earlier one is still recent.
+        collector.RetrySoon();
+        var failed = await collector.ReadAsync();
+
+        Assert.Equal(3, calls);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, failed.Status);
+        Assert.Null(failed.Primary);
+        Assert.Null(failed.Secondary);
+        Assert.Equal(Now, collector.Describe(true).LastSuccessAt);
+    }
+
+    [Fact]
+    public async Task ARestartAfterSigningOutKeepsTheSuccessTimeButNotTheWindows()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query = (_, id, _) => ++calls switch
+        {
+            1 => Task.FromResult(Response(id, Limits(Window("session", 30, Now.AddHours(4))))),
+            2 => Task.FromResult(NotSignedIn(id)),
+            _ => throw new IOException("timed out")
+        };
+        var first = Persistent(fixture, clock, query);
+        await first.ReadAsync();
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        await first.ReadAsync();
+        Assert.DoesNotContain("usedPercent", await File.ReadAllTextAsync(fixture.StateFile), StringComparison.Ordinal);
+
+        var restarted = Persistent(fixture, clock, query);
+        Assert.Equal(Now, restarted.Describe(true).LastSuccessAt);
+        restarted.RetrySoon();
+        var failed = await restarted.ReadAsync();
+
+        Assert.Equal(3, calls);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, failed.Status);
+        Assert.Null(failed.Primary);
+    }
+
+    [Fact]
+    public async Task AnOlderSavedFileWithWindowsAfterSigningOutDoesNotRestoreThem()
+    {
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StateFile)!);
+        var readAt = Now.AddMinutes(-6);
+        await File.WriteAllTextAsync(fixture.StateFile, $$"""
+            {"version":1,"nextAttemptAt":"{{Now.AddMinutes(50):O}}","failures":0,"lastStatus":3,
+             "lastSuccess":{"observedAt":"{{readAt:O}}","primary":{"usedPercent":30,"resetsAt":"{{Now.AddHours(4):O}}"},"secondary":null},
+             "lastAttemptAt":"{{Now.AddMinutes(-1):O}}"}
+            """);
+        var calls = 0;
+        var collector = Persistent(fixture, new MutableClock(Now), (_, _, _) => { calls++; throw new IOException("timed out"); });
+
+        Assert.Equal(readAt, collector.Describe(true).LastSuccessAt);
+        collector.RetrySoon();
+        var failed = await collector.ReadAsync();
+
+        Assert.Equal(1, calls);
+        Assert.Null(failed.Primary);
+    }
+
+    [Fact]
+    public async Task ALockedSavedScheduleIsNeitherBypassedNorOverwritten()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StateFile)!);
+        var backoffEnds = Now.AddMinutes(25);
+        var saved = $$"""{"version":1,"nextAttemptAt":"{{backoffEnds:O}}","failures":4,"lastStatus":5,"lastSuccess":null}""";
+        await File.WriteAllTextAsync(fixture.StateFile, saved);
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        var collector = Persistent(fixture, clock, (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 12, Now.AddHours(1)))));
+        });
+
+        using (new FileStream(fixture.StateFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.Equal(ClaudeCliQuotaStatus.Unavailable, (await collector.ReadAsync()).Status);
+            Assert.Null(collector.Describe(true).NextAttemptAt);
+        }
+
+        Assert.Equal(0, calls);
+        Assert.Equal(saved, await File.ReadAllTextAsync(fixture.StateFile));
+        // Readable again: the saved backoff applies.
+        await collector.ReadAsync();
+        Assert.Equal(0, calls);
+        Assert.Equal(backoffEnds, collector.Describe(true).NextAttemptAt);
+        clock.Advance(TimeSpan.FromMinutes(25));
+        Assert.Equal(12, (await collector.ReadAsync()).Primary?.UsedPercent);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task ALoginDetectedWhileTheScheduleIsLockedAppliesOnceItIsRead()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StateFile)!);
+        await File.WriteAllTextAsync(fixture.StateFile,
+            $$"""{"version":1,"nextAttemptAt":"{{Now.AddMinutes(50):O}}","failures":0,"lastStatus":3,"lastSuccess":null}""");
+        var calls = 0;
+        var collector = Persistent(fixture, new MutableClock(Now), (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 12, Now.AddHours(1)))));
+        });
+
+        using (new FileStream(fixture.StateFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) collector.RetrySoon();
+
+        Assert.Equal(12, (await collector.ReadAsync()).Primary?.UsedPercent);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task AnAppThatExitsMidQueryStillWaitsTheIntervalAfterRestarting()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query = async (_, id, _) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                started.TrySetResult();
+                await release.Task;
+            }
+            return Response(id, Limits(Window("session", 12, Now.AddHours(1))));
+        };
+        var crashed = Persistent(fixture, clock, query).ReadAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The first query ever is still running when the app restarts.
+        var restarted = Persistent(fixture, clock, query);
+        Assert.Equal(new ClaudeCliQuotaSchedule(true, null, null, null, Now + ClaudeCliQuotaCollector.MinimumInterval),
+            restarted.Describe(true));
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, (await restarted.ReadAsync()).Status);
+        Assert.Equal(1, calls);
+
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        Assert.Equal(12, (await restarted.ReadAsync()).Primary?.UsedPercent);
+        Assert.Equal(2, calls);
+        release.SetResult();
+        await crashed;
+    }
+
+    [Fact]
+    public async Task AnUnexpectedExceptionEndsTheAttemptWithABackoffAndNoDetails()
+    {
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        var collector = Collector(clock, (_, id, _) => ++calls == 1
+            ? throw new KeyNotFoundException(@"C:\Users\private-path")
+            : Task.FromResult(Response(id, Limits(Window("session", 12, Now.AddHours(1))))));
+
+        var failed = await collector.ReadAsync();
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, failed.Status);
+        Assert.DoesNotContain("private-path", failed.Diagnostic, StringComparison.Ordinal);
+        Assert.Equal(Now + ClaudeCliQuotaCollector.FailureBackoff[0], collector.Describe(true).NextAttemptAt);
+
+        await collector.ReadAsync();
+        Assert.Equal(1, calls);
+        clock.Advance(ClaudeCliQuotaCollector.FailureBackoff[0]);
+        Assert.Equal(12, (await collector.ReadAsync()).Primary?.UsedPercent);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task AnExceptionFromDiscoveryAlsoEndsTheAttempt()
+    {
+        var collector = new ClaudeCliQuotaCollector(() => throw new FormatException("private-path"),
+            (_, _, _) => throw new InvalidOperationException("must not execute"), new MutableClock(Now), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, (await collector.ReadAsync()).Status);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, (await collector.ReadAsync()).Status);
+    }
+
+    [Fact]
     public async Task ADetectedLoginDoesNotClearAFailureBackoffThatMayBeTheEndpointsRateLimit()
     {
         var clock = new MutableClock(Now);

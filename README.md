@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 保留为独立 Sidecar 后端（当前为 .NET 11）。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.11** 将 Antigravity 纳入三运行时，改进后台额度查询和价值估算，更新模型费率，并提升启动稳定性。参见 [0.6.11 发布说明](docs/release-0.6.11.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.12** 加强 Antigravity 与 Claude CLI 后台额度查询的防护和限流，并修复 Antigravity 模式下的错误提示与紧凑模式设置入口。参见 [0.6.12 发布说明](docs/release-0.6.12.md)、[0.6.11 发布说明](docs/release-0.6.11.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 

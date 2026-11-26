@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using CodexU.Core;
 using CodexU.Infrastructure;
@@ -206,37 +208,272 @@ public sealed class AntigravityQuotaReaderTests
         Assert.Equal(2, quotaCalls);
     }
 
-    [Fact]
-    public async Task ARestartRemembersTheVersionThatRanAModelTurn()
+    [Theory]
+    [InlineData(AntigravityQuotaStatus.Ready)]
+    [InlineData(AntigravityQuotaStatus.NoQuota)]
+    [InlineData(AntigravityQuotaStatus.Unavailable)]
+    [InlineData(AntigravityQuotaStatus.ModelInvoked)]
+    public async Task ABlockedVersionSurvivesQueryingAnotherVersionAcrossRestarts(AntigravityQuotaStatus secondStatus)
     {
-        var root = Path.Combine(Path.GetTempPath(), "codexu-agy-guard-" + Guid.NewGuid().ToString("N"));
-        var guard = Path.Combine(root, "antigravity", "quota-guard.json");
-        try
+        using var guard = new TemporaryGuard();
+        var usageCalls = 0;
+        var version = "1.5.18";
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken _)
         {
-            var usageCalls = 0;
-            var version = "1.5.18";
-            Func<System.Diagnostics.ProcessStartInfo, CancellationToken, Task<ClaudeCliAuthCommandResult>> run = (info, _) =>
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, version));
+            return Task.FromResult(UsageResult(++usageCalls == 1 ? AntigravityQuotaStatus.ModelInvoked : secondStatus));
+        }
+
+        Task<AntigravityQuotaSnapshot> ReadAfterRestart() =>
+            new AntigravityQuotaReader(() => "agy.exe", Run, new ManualClock(), guard.FilePath).ReadAsync();
+
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await ReadAfterRestart()).Status);
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await ReadAfterRestart()).Status);
+        Assert.Equal(1, usageCalls);
+
+        version = "1.5.19";
+        Assert.Equal(secondStatus, (await ReadAfterRestart()).Status);
+        version = "1.5.18";
+
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await ReadAfterRestart()).Status);
+        Assert.Equal(2, usageCalls);
+    }
+
+    [Fact]
+    public async Task AVersionOneGuardIsMigratedAndStillBlocksTheSavedVersion()
+    {
+        using var guard = new TemporaryGuard();
+        Directory.CreateDirectory(Path.GetDirectoryName(guard.FilePath)!);
+        await File.WriteAllTextAsync(guard.FilePath, """{"version":1,"modelInvokingCliVersion":"1.5.18"}""");
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken _)
+        {
+            Assert.Equal(["--version"], info.ArgumentList);
+            return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+        }
+
+        Task<AntigravityQuotaSnapshot> ReadAfterRestart() =>
+            new AntigravityQuotaReader(() => "agy.exe", Run, new ManualClock(), guard.FilePath).ReadAsync();
+
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await ReadAfterRestart()).Status);
+        using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(guard.FilePath));
+        Assert.Equal(2, saved.RootElement.GetProperty("version").GetInt32());
+        Assert.Equal("1.5.18", Assert.Single(saved.RootElement.GetProperty("blockedCliVersions").EnumerateArray()).GetString());
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await ReadAfterRestart()).Status);
+    }
+
+    [Theory]
+    [InlineData(AntigravityQuotaStatus.Ready)]
+    [InlineData(AntigravityQuotaStatus.NoQuota)]
+    [InlineData(AntigravityQuotaStatus.Unavailable)]
+    public async Task CooldownSurvivesRestartsEscalatesToTheCapAndClearsOnZeroTurns(AntigravityQuotaStatus verifiedStatus)
+    {
+        using var guard = new TemporaryGuard();
+        var clock = new ManualClock();
+        var usageCalls = 0;
+        var verified = false;
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken _)
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+            usageCalls++;
+            if (!verified) throw new InvalidDataException("CLI output exceeded its size limit.");
+            return Task.FromResult(UsageResult(verifiedStatus));
+        }
+
+        Task<AntigravityQuotaSnapshot> ReadAfterRestart() =>
+            new AntigravityQuotaReader(() => "agy.exe", Run, clock, guard.FilePath).ReadAsync();
+
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+        Assert.Equal(1, usageCalls);
+
+        TimeSpan[] waits = [TimeSpan.FromMinutes(30), TimeSpan.FromHours(2), TimeSpan.FromHours(6),
+            TimeSpan.FromHours(24), TimeSpan.FromHours(24)];
+        for (var index = 0; index < waits.Length; index++)
+        {
+            clock.Advance(waits[index] - TimeSpan.FromMinutes(1));
+            Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+            Assert.Equal(index + 1, usageCalls);
+
+            clock.Advance(TimeSpan.FromMinutes(1));
+            verified = index == waits.Length - 1;
+            Assert.Equal(verified ? verifiedStatus : AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+            Assert.Equal(index + 2, usageCalls);
+        }
+
+        // Another failure after a verified response starts at the first cooldown again.
+        verified = false;
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+        clock.Advance(TimeSpan.FromMinutes(30));
+        verified = true;
+        Assert.Equal(verifiedStatus, (await ReadAfterRestart()).Status);
+        Assert.Equal(waits.Length + 3, usageCalls);
+    }
+
+    [Theory]
+    [InlineData(0, "not json")]
+    [InlineData(0, "[]")]
+    [InlineData(0, """{"num_turns":1,"num_turns":0}""")]
+    [InlineData(1, """{"status":"ERROR"}""")]
+    [InlineData(0, """{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[]}}}""")]
+    [InlineData(0, """{"num_turns":"0"}""")]
+    public async Task OutputWithoutVerifiedZeroTurnsStartsACooldown(int exitCode, string output)
+    {
+        using var guard = new TemporaryGuard();
+        var clock = new ManualClock();
+        var usageCalls = 0;
+        var reader = new AntigravityQuotaReader(() => "agy.exe", (info, _) =>
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+            usageCalls++;
+            return Task.FromResult(new ClaudeCliAuthCommandResult(exitCode, output));
+        }, clock, guard.FilePath);
+
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        Assert.Equal(1, usageCalls);
+        Assert.True(File.Exists(guard.FilePath));
+    }
+
+    [Fact]
+    public async Task CooldownIsPerVersionAndAClockRollbackCapsTheWait()
+    {
+        using var guard = new TemporaryGuard();
+        var futureClock = new ManualClock();
+        futureClock.Advance(TimeSpan.FromDays(7));
+        var version = "1.5.18";
+        var usageCalls = 0;
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken _)
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, version));
+            if (++usageCalls == 1) throw new DecoderFallbackException("Invalid UTF-8.");
+            return Task.FromResult(UsageResult(AntigravityQuotaStatus.NoQuota));
+        }
+
+        Assert.Equal(AntigravityQuotaStatus.Unavailable,
+            (await new AntigravityQuotaReader(() => "agy.exe", Run, futureClock, guard.FilePath).ReadAsync()).Status);
+        var clock = new ManualClock();
+        var reader = new AntigravityQuotaReader(() => "agy.exe", Run, clock, guard.FilePath);
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        Assert.Equal(1, usageCalls);
+
+        version = "1.5.19";
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(AntigravityQuotaStatus.NoQuota, (await reader.ReadAsync()).Status);
+
+        version = "1.5.18";
+        clock.Advance(TimeSpan.FromHours(23) + TimeSpan.FromMinutes(58));
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        Assert.Equal(2, usageCalls);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(AntigravityQuotaStatus.NoQuota, (await reader.ReadAsync()).Status);
+        Assert.Equal(3, usageCalls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EachGuardListRetainsTheEightMostRecentVersions(bool modelInvoked)
+    {
+        using var guard = new TemporaryGuard();
+        var clock = new ManualClock();
+        var status = modelInvoked ? AntigravityQuotaStatus.ModelInvoked : AntigravityQuotaStatus.Unavailable;
+        var version = "1.5.11";
+        var usageCalls = 0;
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken _)
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, version));
+            usageCalls++;
+            return Task.FromResult(modelInvoked ? UsageResult(status) : new ClaudeCliAuthCommandResult(1, ""));
+        }
+
+        Task<AntigravityQuotaSnapshot> ReadAfterRestart() =>
+            new AntigravityQuotaReader(() => "agy.exe", Run, clock, guard.FilePath).ReadAsync();
+
+        for (var patch = 11; patch <= 19; patch++)
+        {
+            version = $"1.5.{patch}";
+            Assert.Equal(status, (await ReadAfterRestart()).Status);
+        }
+
+        version = "1.5.12";
+        Assert.Equal(status, (await ReadAfterRestart()).Status);
+        Assert.Equal(9, usageCalls);
+        version = "1.5.11";
+        Assert.Equal(status, (await ReadAfterRestart()).Status);
+        Assert.Equal(10, usageCalls);
+    }
+
+    [Fact]
+    public async Task VersionCheckFailuresDoNotStartACooldown()
+    {
+        using var guard = new TemporaryGuard();
+        var clock = new ManualClock();
+        var versionCalls = 0;
+        var usageCalls = 0;
+        var reader = new AntigravityQuotaReader(() => "agy.exe", (info, token) =>
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
             {
-                if (info.ArgumentList.SequenceEqual(["--version"]))
-                    return Task.FromResult(new ClaudeCliAuthCommandResult(0, version));
-                usageCalls++;
-                return Task.FromResult(new ClaudeCliAuthCommandResult(3, """{"status":"ERROR","num_turns":1}"""));
-            };
-            Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync()).Status);
-            Assert.Contains("1.5.18", await File.ReadAllTextAsync(guard), StringComparison.Ordinal);
+                if (++versionCalls == 1) return Task.FromResult(new ClaudeCliAuthCommandResult(1, "1.5.18"));
+                if (versionCalls == 2)
+                {
+                    clock.Advance(TimeSpan.FromSeconds(18));
+                    token.ThrowIfCancellationRequested();
+                }
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+            }
+            usageCalls++;
+            return Task.FromResult(UsageResult(AntigravityQuotaStatus.NoQuota));
+        }, clock, guard.FilePath);
 
-            // A new process (fresh reader, same guard file) does not run /usage again.
-            Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync()).Status);
-            Assert.Equal(1, usageCalls);
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+        Assert.Equal(0, usageCalls);
+        Assert.False(File.Exists(guard.FilePath));
 
-            version = "1.5.19";
-            await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync();
-            Assert.Equal(2, usageCalls);
-        }
-        finally
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(AntigravityQuotaStatus.NoQuota, (await reader.ReadAsync()).Status);
+        Assert.Equal(1, usageCalls);
+        Assert.False(File.Exists(guard.FilePath));
+    }
+
+    [Fact]
+    public async Task UsageHasAnIndependentDeadlineAndItsExpiryStartsACooldown()
+    {
+        using var guard = new TemporaryGuard();
+        var clock = new ManualClock();
+        var usageCalls = 0;
+        Task<ClaudeCliAuthCommandResult> Run(ProcessStartInfo info, CancellationToken token)
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+            {
+                clock.Advance(TimeSpan.FromSeconds(17));
+                Assert.False(token.IsCancellationRequested);
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+            }
+
+            usageCalls++;
+            clock.Advance(TimeSpan.FromSeconds(17));
+            Assert.False(token.IsCancellationRequested);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.True(token.IsCancellationRequested);
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(UsageResult(AntigravityQuotaStatus.NoQuota));
         }
+
+        Task<AntigravityQuotaSnapshot> ReadAfterRestart() =>
+            new AntigravityQuotaReader(() => "agy.exe", Run, clock, guard.FilePath).ReadAsync();
+
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+        Assert.Equal(AntigravityQuotaStatus.Unavailable, (await ReadAfterRestart()).Status);
+        Assert.Equal(1, usageCalls);
     }
 
     [Fact]
@@ -303,12 +540,66 @@ public sealed class AntigravityQuotaReaderTests
     private static string Envelope(string groups, string status = "SUCCESS", string command = "usage", int turns = 0) =>
         $$"""{"status":"{{status}}","num_turns":{{turns}},"command":{"name":"{{command}}","data":{"groups":{{groups}} } } }""";
 
+    private static ClaudeCliAuthCommandResult UsageResult(AntigravityQuotaStatus status) => status switch
+    {
+        AntigravityQuotaStatus.Ready => new(0, Envelope("""[{"name":"Gemini","buckets":[{"window":"5h","remaining_fraction":1}]}]""")),
+        AntigravityQuotaStatus.NoQuota => new(0, Envelope("[]")),
+        AntigravityQuotaStatus.Unavailable => new(1, """{"status":"ERROR","num_turns":0}"""),
+        AntigravityQuotaStatus.ModelInvoked => new(3, """{"status":"ERROR","num_turns":1}"""),
+        _ => throw new ArgumentOutOfRangeException(nameof(status))
+    };
+
+    private sealed class TemporaryGuard : IDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), "codexu-agy-guard-" + Guid.NewGuid().ToString("N"));
+        public string FilePath => Path.Combine(_root, "antigravity", "quota-guard.json");
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        }
+    }
+
     private sealed class ManualClock : TimeProvider
     {
+        private readonly List<DeadlineTimer> _timers = [];
         private TimeSpan _elapsed;
         public override DateTimeOffset GetUtcNow() => Now + _elapsed;
         public override long GetTimestamp() => _elapsed.Ticks;
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public void Advance(TimeSpan elapsed) => _elapsed += elapsed;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Assert.Equal(Timeout.InfiniteTimeSpan, period);
+            var timer = new DeadlineTimer(_elapsed + dueTime, callback, state);
+            _timers.Add(timer);
+            return timer;
+        }
+
+        public void Advance(TimeSpan elapsed)
+        {
+            _elapsed += elapsed;
+            foreach (var timer in _timers) timer.Tick(_elapsed);
+        }
+
+        private sealed class DeadlineTimer(TimeSpan dueAt, TimerCallback callback, object? state) : ITimer
+        {
+            private bool _active = true;
+
+            public void Tick(TimeSpan elapsed)
+            {
+                if (!_active || elapsed < dueAt) return;
+                _active = false;
+                callback(state);
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+            public void Dispose() => _active = false;
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }

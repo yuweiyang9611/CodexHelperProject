@@ -1442,7 +1442,9 @@ async function presentRecoveryFailure(
       noLink: true,
       signal: controller.signal,
     };
-    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    // A window that never showed (startup recovery failed before ready-to-show) would
+    // make the dialog owned by an invisible window: no taskbar button, possibly hidden.
+    const owner = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() ? mainWindow : undefined;
     activeRecoveryDialog = { key, controller };
     let response = -1;
     try {

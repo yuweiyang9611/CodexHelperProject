@@ -50,11 +50,15 @@ public sealed class ClaudeCliQuotaCollector
     private readonly Lock _gate = new();
     private Task<ClaudeCliQuotaReading>? _inFlight;
     private ClaudeCliQuotaReading? _lastAttempt;
+    // The last successful reading while it may still describe the CLI's account. A
+    // missing CLI or a login without plan windows drops it; _lastSuccessAt stays.
     private ClaudeCliQuotaReading? _lastSuccess;
+    private DateTimeOffset? _lastSuccessAt;
     private DateTimeOffset _nextAttemptAt = DateTimeOffset.MinValue;
     private int _failures;
     private DateTimeOffset? _lastAttemptAt;
     private bool _stateLoaded;
+    private bool _retrySoonPending;
 
     internal ClaudeCliQuotaCollector(Func<ClaudeCliExecutable?> discover,
         Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query, TimeProvider clock, TimeSpan timeout,
@@ -96,11 +100,22 @@ public sealed class ClaudeCliQuotaCollector
         Task<ClaudeCliQuotaReading>? attempt;
         lock (_gate)
         {
-            EnsureStateLoaded();
-            // The attempt runs on the thread pool so it can never re-enter this lock
-            // on the caller's thread, and with its own deadline so one cancelled
-            // refresh does not abort a query another refresh is waiting for.
-            if (_inFlight is null && _clock.GetUtcNow() >= _nextAttemptAt) _inFlight = Task.Run(AttemptAsync);
+            var now = _clock.GetUtcNow();
+            // A saved schedule that cannot be read yet (for example a scanner holding
+            // the file at startup) may hold a rate-limit backoff: query nothing until
+            // it has been read.
+            if (!EnsureStateLoaded()) return Current(now);
+            if (_inFlight is null && now >= _nextAttemptAt)
+            {
+                // Saved before the CLI starts, so an app that exits mid-query still
+                // waits the interval after restarting; completion replaces it.
+                _nextAttemptAt = now + MinimumInterval;
+                SaveState();
+                // The attempt runs on the thread pool so it can never re-enter this lock
+                // on the caller's thread, and with its own deadline so one cancelled
+                // refresh does not abort a query another refresh is waiting for.
+                _inFlight = Task.Run(AttemptAsync);
+            }
             attempt = _inFlight;
         }
         if (attempt is not null) await attempt.WaitAsync(cancellationToken);
@@ -117,12 +132,22 @@ public sealed class ClaudeCliQuotaCollector
     {
         lock (_gate)
         {
-            EnsureStateLoaded();
-            if (_lastAttempt?.Status is not (ClaudeCliQuotaStatus.NotAvailable or ClaudeCliQuotaStatus.NotInstalled)) return;
-            _failures = 0;
-            _nextAttemptAt = DateTimeOffset.MinValue;
-            SaveState();
+            // Applied once the saved schedule can be read, so the wait it holds is known.
+            if (!EnsureStateLoaded())
+            {
+                _retrySoonPending = true;
+                return;
+            }
+            ClearNotAvailableWait();
         }
+    }
+
+    private void ClearNotAvailableWait()
+    {
+        if (_lastAttempt?.Status is not (ClaudeCliQuotaStatus.NotAvailable or ClaudeCliQuotaStatus.NotInstalled)) return;
+        _failures = 0;
+        _nextAttemptAt = DateTimeOffset.MinValue;
+        SaveState();
     }
 
     /// <summary>Describes the schedule for display; never starts a query.</summary>
@@ -131,7 +156,7 @@ public sealed class ClaudeCliQuotaCollector
         lock (_gate)
         {
             EnsureStateLoaded();
-            return new(enabled, _lastAttempt?.Status, _lastAttemptAt, _lastSuccess?.ObservedAt,
+            return new(enabled, _lastAttempt?.Status, _lastAttemptAt, _lastSuccessAt,
                 _nextAttemptAt > _clock.GetUtcNow() ? _nextAttemptAt : null);
         }
     }
@@ -191,98 +216,142 @@ public sealed class ClaudeCliQuotaCollector
         {
             reading = ClaudeCliQuotaParser.Unavailable(null, "查询超时");
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
-            or Win32Exception or InvalidOperationException or NotSupportedException or ArgumentException
-            or JsonException or System.Security.SecurityException)
+        catch (Exception)
         {
-            // Never surface the exception text: it can carry local paths.
+            // Expected (I/O, process start, malformed output) or not, the attempt ends
+            // here: an escaping exception would leave a faulted task in flight that every
+            // later refresh rethrows. Never surface its text: it can carry local paths.
             reading = ClaudeCliQuotaParser.Unavailable(null, "无法完成查询");
         }
 
-        lock (_gate)
-        {
-            var completedAt = _clock.GetUtcNow();
-            _lastAttempt = reading;
-            _lastAttemptAt = completedAt;
-            if (reading.Success)
-            {
-                _lastSuccess = reading;
-                _failures = 0;
-                _nextAttemptAt = completedAt + MinimumInterval;
-            }
-            else if (reading.Status == ClaudeCliQuotaStatus.NotInstalled)
-            {
-                // Discovery is only a few file checks; recheck at the normal pace.
-                _nextAttemptAt = completedAt + MinimumInterval;
-            }
-            else if (reading.Status == ClaudeCliQuotaStatus.NotAvailable)
-            {
-                // Most Desktop users have an embedded CLI they never signed in to.
-                // That state is stable, so do not start the CLI for it every few
-                // minutes; a detected login clears the wait (see RetrySoon).
-                _failures = 0;
-                _nextAttemptAt = completedAt + NotAvailableRetry;
-            }
-            else
-            {
-                _failures++;
-                _nextAttemptAt = completedAt + FailureBackoff[Math.Min(_failures, FailureBackoff.Length) - 1];
-            }
-            _inFlight = null;
-            SaveState();
-        }
+        lock (_gate) Complete(reading);
         return reading;
+    }
+
+    private void Complete(ClaudeCliQuotaReading reading)
+    {
+        _inFlight = null;
+        var completedAt = _clock.GetUtcNow();
+        _lastAttempt = reading;
+        _lastAttemptAt = completedAt;
+        if (reading.Success)
+        {
+            _lastSuccess = reading;
+            _lastSuccessAt = reading.ObservedAt ?? completedAt;
+            _failures = 0;
+            _nextAttemptAt = completedAt + MinimumInterval;
+        }
+        else if (reading.Status == ClaudeCliQuotaStatus.NotInstalled)
+        {
+            // Whatever CLI is installed next may be signed in to another account.
+            _lastSuccess = null;
+            // Discovery is only a few file checks; recheck at the normal pace.
+            _nextAttemptAt = completedAt + MinimumInterval;
+        }
+        else if (reading.Status == ClaudeCliQuotaStatus.NotAvailable)
+        {
+            // The earlier reading described a login that is gone; the next login may
+            // be another account, so its windows must never stand in for that one's.
+            _lastSuccess = null;
+            // Most Desktop users have an embedded CLI they never signed in to.
+            // That state is stable, so do not start the CLI for it every few
+            // minutes; a detected login clears the wait (see RetrySoon).
+            _failures = 0;
+            _nextAttemptAt = completedAt + NotAvailableRetry;
+        }
+        else
+        {
+            _failures++;
+            _nextAttemptAt = completedAt + FailureBackoff[Math.Min(_failures, FailureBackoff.Length) - 1];
+        }
+        SaveState();
     }
 
     private sealed record PersistedWindow(double UsedPercent, DateTimeOffset? ResetsAt);
 
     private sealed record PersistedReading(DateTimeOffset ObservedAt, PersistedWindow? Primary, PersistedWindow? Secondary);
 
+    // LastStatus is null when only the deadline set before the first attempt ever was
+    // saved. LastSuccessAt was added later; older files take it from LastSuccess.
     private sealed record PersistedState(int Version, DateTimeOffset NextAttemptAt, int Failures,
-        ClaudeCliQuotaStatus LastStatus, PersistedReading? LastSuccess, DateTimeOffset? LastAttemptAt = null);
+        ClaudeCliQuotaStatus? LastStatus, PersistedReading? LastSuccess, DateTimeOffset? LastAttemptAt = null,
+        DateTimeOffset? LastSuccessAt = null);
 
     /// <summary>
     /// Restores the schedule a previous process saved. Only the next attempt time,
-    /// the failure count, the last status and the last successful percentages and
-    /// reset times are kept — no account, plan or CLI output. An unreadable file is
-    /// ignored; a wait beyond the longest schedule (a clock moved backwards) is capped.
+    /// the failure count, the last status, the last success time and the last
+    /// successful percentages and reset times are kept — no account, plan or CLI
+    /// output. A missing or unusable file means an empty schedule; a wait beyond the
+    /// longest schedule (a clock moved backwards) is capped. A file that exists but
+    /// cannot be read right now may hold a backoff, so false is returned, nothing is
+    /// assumed, and the next call tries again.
     /// </summary>
-    private void EnsureStateLoaded()
+    private bool EnsureStateLoaded()
     {
-        if (_stateLoaded) return;
-        _stateLoaded = true;
+        if (_stateLoaded) return true;
+        PersistedState? state = null;
         try
         {
-            var file = new FileInfo(_stateFile!);
-            if (!file.Exists || file.Length > MaximumStateBytes) return;
-            var state = JsonSerializer.Deserialize<PersistedState>(File.ReadAllText(file.FullName), StateJson);
-            if (state is not { Version: StateVersion } || state.Failures is < 0 or > 1000
-                || !Enum.IsDefined(state.LastStatus) || state.LastStatus == ClaudeCliQuotaStatus.Disabled) return;
-            var now = _clock.GetUtcNow();
-            var longestWait = new[] { MinimumInterval, NotAvailableRetry, FailureBackoff[^1] }.Max();
-            _nextAttemptAt = state.NextAttemptAt > now + longestWait ? now + longestWait : state.NextAttemptAt;
-            _failures = state.Failures;
-            _lastAttemptAt = state.LastAttemptAt is { } attemptedAt && attemptedAt <= now ? attemptedAt : null;
-            // A reading from the future (the clock moved backwards) would look recent forever.
-            _lastSuccess = state.LastSuccess is { } saved && saved.ObservedAt <= now ? Restore(saved) : null;
-            var success = state.LastStatus is ClaudeCliQuotaStatus.Fresh or ClaudeCliQuotaStatus.NoWindows;
-            // A success whose reading was not restored still keeps the saved wait above,
-            // so a damaged file never lifts the rate-limit throttle.
-            _lastAttempt = success && _lastSuccess is not null
-                ? _lastSuccess
-                : new(success ? ClaudeCliQuotaStatus.Unavailable : state.LastStatus, null, null, null, state.LastStatus switch
-                {
-                    ClaudeCliQuotaStatus.NotInstalled => "Claude CLI 后台额度：未找到 Claude Code CLI",
-                    ClaudeCliQuotaStatus.NotAvailable => "Claude CLI 后台额度：当前 CLI 登录没有可用的订阅额度（未登录、API 密钥或第三方服务）",
-                    _ when success => "Claude CLI 后台额度：上次结果无法恢复，稍后自动重试",
-                    _ => "Claude CLI 后台额度：上次查询失败，稍后自动重试"
-                });
+            // Opened directly: FileInfo.Exists reports an inaccessible file as missing.
+            using var stream = new FileStream(_stateFile!, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length <= MaximumStateBytes)
+            {
+                using var reader = new StreamReader(stream);
+                state = JsonSerializer.Deserialize<PersistedState>(reader.ReadToEnd(), StateJson);
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException
-            or NotSupportedException or ArgumentException or System.Security.SecurityException)
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException
+            or PathTooLongException or JsonException or NotSupportedException or ArgumentException)
         {
-            // A damaged schedule only costs one extra query.
+            // Missing or unusable: an empty schedule, which costs one extra query.
         }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException)
+        {
+            return false;
+        }
+        _stateLoaded = true;
+        if (state is not null) ApplySaved(state);
+        if (_retrySoonPending)
+        {
+            _retrySoonPending = false;
+            ClearNotAvailableWait();
+        }
+        return true;
+    }
+
+    private void ApplySaved(PersistedState state)
+    {
+        if (state is not { Version: StateVersion } || state.Failures is < 0 or > 1000
+            || state.LastStatus is { } status && (!Enum.IsDefined(status) || status == ClaudeCliQuotaStatus.Disabled)) return;
+        var now = _clock.GetUtcNow();
+        var longestWait = new[] { MinimumInterval, NotAvailableRetry, FailureBackoff[^1] }.Max();
+        _nextAttemptAt = state.NextAttemptAt > now + longestWait ? now + longestWait : state.NextAttemptAt;
+        _failures = state.Failures;
+        _lastAttemptAt = state.LastAttemptAt is { } attemptedAt && attemptedAt <= now ? attemptedAt : null;
+        // A time from the future (the clock moved backwards) would look recent forever.
+        _lastSuccessAt = (state.LastSuccessAt ?? state.LastSuccess?.ObservedAt) is { } succeededAt && succeededAt <= now
+            ? succeededAt
+            : null;
+        // Only the deadline before the first attempt was saved: there is no result yet.
+        if (state.LastStatus is not { } lastStatus) return;
+        // As after a live attempt, a missing CLI or a login without plan windows means
+        // the saved reading no longer describes the CLI's account; files written before
+        // that rule may still carry it.
+        var reusable = lastStatus is not (ClaudeCliQuotaStatus.NotAvailable or ClaudeCliQuotaStatus.NotInstalled);
+        _lastSuccess = reusable && state.LastSuccess is { } saved && saved.ObservedAt <= now ? Restore(saved) : null;
+        var success = lastStatus is ClaudeCliQuotaStatus.Fresh or ClaudeCliQuotaStatus.NoWindows;
+        // A success whose reading was not restored still keeps the saved wait above,
+        // so a damaged file never lifts the rate-limit throttle.
+        _lastAttempt = success && _lastSuccess is not null
+            ? _lastSuccess
+            : new(success ? ClaudeCliQuotaStatus.Unavailable : lastStatus, null, null, null, lastStatus switch
+            {
+                ClaudeCliQuotaStatus.NotInstalled => "Claude CLI 后台额度：未找到 Claude Code CLI",
+                ClaudeCliQuotaStatus.NotAvailable => "Claude CLI 后台额度：当前 CLI 登录没有可用的订阅额度（未登录、API 密钥或第三方服务）",
+                _ when success => "Claude CLI 后台额度：上次结果无法恢复，稍后自动重试",
+                _ => "Claude CLI 后台额度：上次查询失败，稍后自动重试"
+            });
     }
 
     private static ClaudeCliQuotaReading? Restore(PersistedReading saved)
@@ -300,7 +369,7 @@ public sealed class ClaudeCliQuotaCollector
 
     private void SaveState()
     {
-        if (_stateFile is null || _lastAttempt is null) return;
+        if (_stateFile is null) return;
         var temporary = $"{_stateFile}.{Guid.NewGuid():N}.tmp";
         try
         {
@@ -309,7 +378,8 @@ public sealed class ClaudeCliQuotaCollector
             var success = _lastSuccess is { ObservedAt: { } observedAt }
                 ? new PersistedReading(observedAt, Window(_lastSuccess.Primary), Window(_lastSuccess.Secondary))
                 : null;
-            var state = new PersistedState(StateVersion, _nextAttemptAt, _failures, _lastAttempt.Status, success, _lastAttemptAt);
+            var state = new PersistedState(StateVersion, _nextAttemptAt, _failures, _lastAttempt?.Status, success,
+                _lastAttemptAt, _lastSuccessAt);
             Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
             File.WriteAllText(temporary, JsonSerializer.Serialize(state, StateJson));
             File.Move(temporary, _stateFile, overwrite: true);

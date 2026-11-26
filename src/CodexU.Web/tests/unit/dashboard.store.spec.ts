@@ -766,3 +766,26 @@ describe('loadCombined', () => {
     expect(store.snapshot?.runtime).toBe('claudeCode')
   })
 })
+
+describe('error source', () => {
+  it('marks only usage read failures, so the Antigravity view can still show failed actions', async () => {
+    routeRequests({
+      'usage.refresh': () => Promise.reject(new Error('读取超时')),
+      'window.toggleCompact': () => Promise.reject(new Error('无法切换')),
+    })
+    const store = useDashboardStore()
+    await store.initialize()
+    expect(store.errorFromUsage).toBe(false)
+
+    await store.refresh()
+    expect(store.error).toContain('读取超时')
+    expect(store.errorFromUsage).toBe(true)
+
+    await store.toggleCompact()
+    expect(store.error).toContain('无法切换')
+    expect(store.errorFromUsage).toBe(false)
+
+    emit('usage.refreshFailed', { message: '后台刷新失败' })
+    expect(store.errorFromUsage).toBe(true)
+  })
+})

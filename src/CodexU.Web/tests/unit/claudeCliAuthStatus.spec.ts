@@ -20,7 +20,10 @@ const result = (overrides: Partial<AuthResult> = {}): AuthResult => ({
   status: 'loggedOut', authMethod: 'none', source: 'desktopEmbedded', checkedAt: '2026-11-25T10:30:00Z', ...overrides,
 })
 
+// A fixed local midday, so "today" in the expectations never crosses midnight mid-run.
+const testNow = new Date(2026, 10, 25, 12, 0)
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'], now: testNow })
   request.mockReset()
   handlers.clear()
 })
@@ -91,7 +94,7 @@ describe('Claude CLI auth status', () => {
   })
 
   const today = (hours: number, minutes: number) => {
-    const date = new Date()
+    const date = new Date(testNow)
     date.setHours(hours, minutes, 0, 0)
     return date.toISOString()
   }
@@ -113,7 +116,7 @@ describe('Claude CLI auth status', () => {
   })
 
   it('dates a saved time from another day', async () => {
-    const yesterday = new Date()
+    const yesterday = new Date(testNow)
     yesterday.setDate(yesterday.getDate() - 1)
     yesterday.setHours(10, 30, 0, 0)
     request.mockResolvedValueOnce(result()).mockResolvedValueOnce(
