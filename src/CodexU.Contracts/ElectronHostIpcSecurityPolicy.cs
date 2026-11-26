@@ -5,7 +5,7 @@ namespace CodexU.Contracts;
 /// <summary>
 /// IPC methods reserved for the trusted Electron main process. These methods
 /// are deliberately separate from <see cref="IpcSecurityPolicy"/>, whose
-/// allow-list is exposed to renderer and WPF requests.
+/// allow-list is exposed to renderer requests.
 /// </summary>
 public static class ElectronHostIpcSecurityPolicy
 {

@@ -53,6 +53,7 @@ public sealed class ClaudeCliQuotaCollector
     private ClaudeCliQuotaReading? _lastSuccess;
     private DateTimeOffset _nextAttemptAt = DateTimeOffset.MinValue;
     private int _failures;
+    private DateTimeOffset? _lastAttemptAt;
     private bool _stateLoaded;
 
     internal ClaudeCliQuotaCollector(Func<ClaudeCliExecutable?> discover,
@@ -124,6 +125,17 @@ public sealed class ClaudeCliQuotaCollector
         }
     }
 
+    /// <summary>Describes the schedule for display; never starts a query.</summary>
+    public ClaudeCliQuotaSchedule Describe(bool enabled)
+    {
+        lock (_gate)
+        {
+            EnsureStateLoaded();
+            return new(enabled, _lastAttempt?.Status, _lastAttemptAt, _lastSuccess?.ObservedAt,
+                _nextAttemptAt > _clock.GetUtcNow() ? _nextAttemptAt : null);
+        }
+    }
+
     private ClaudeCliQuotaReading Current(DateTimeOffset now)
     {
         var attempt = _lastAttempt ?? ClaudeCliQuotaParser.Unavailable(null, "尚未完成查询");
@@ -133,7 +145,7 @@ public sealed class ClaudeCliQuotaCollector
         // A missing CLI or a login without plan windows means that reading no longer
         // describes the CLI's account, so it is not reused.
         if (attempt.Status == ClaudeCliQuotaStatus.Unavailable && _lastSuccess is { ObservedAt: { } readAt } success
-            && now - readAt <= MaximumAge)
+            && readAt <= now && now - readAt <= MaximumAge)
         {
             var kept = WithoutExpiredWindows(success, now);
             return kept with { Diagnostic = $"{attempt.Diagnostic}；继续使用 {readAt:O} 读取的结果" };
@@ -191,6 +203,7 @@ public sealed class ClaudeCliQuotaCollector
         {
             var completedAt = _clock.GetUtcNow();
             _lastAttempt = reading;
+            _lastAttemptAt = completedAt;
             if (reading.Success)
             {
                 _lastSuccess = reading;
@@ -226,7 +239,7 @@ public sealed class ClaudeCliQuotaCollector
     private sealed record PersistedReading(DateTimeOffset ObservedAt, PersistedWindow? Primary, PersistedWindow? Secondary);
 
     private sealed record PersistedState(int Version, DateTimeOffset NextAttemptAt, int Failures,
-        ClaudeCliQuotaStatus LastStatus, PersistedReading? LastSuccess);
+        ClaudeCliQuotaStatus LastStatus, PersistedReading? LastSuccess, DateTimeOffset? LastAttemptAt = null);
 
     /// <summary>
     /// Restores the schedule a previous process saved. Only the next attempt time,
@@ -249,13 +262,19 @@ public sealed class ClaudeCliQuotaCollector
             var longestWait = new[] { MinimumInterval, NotAvailableRetry, FailureBackoff[^1] }.Max();
             _nextAttemptAt = state.NextAttemptAt > now + longestWait ? now + longestWait : state.NextAttemptAt;
             _failures = state.Failures;
-            _lastSuccess = state.LastSuccess is { } saved ? Restore(saved) : null;
-            _lastAttempt = state.LastStatus is ClaudeCliQuotaStatus.Fresh or ClaudeCliQuotaStatus.NoWindows
+            _lastAttemptAt = state.LastAttemptAt is { } attemptedAt && attemptedAt <= now ? attemptedAt : null;
+            // A reading from the future (the clock moved backwards) would look recent forever.
+            _lastSuccess = state.LastSuccess is { } saved && saved.ObservedAt <= now ? Restore(saved) : null;
+            var success = state.LastStatus is ClaudeCliQuotaStatus.Fresh or ClaudeCliQuotaStatus.NoWindows;
+            // A success whose reading was not restored still keeps the saved wait above,
+            // so a damaged file never lifts the rate-limit throttle.
+            _lastAttempt = success && _lastSuccess is not null
                 ? _lastSuccess
-                : new(state.LastStatus, null, null, null, state.LastStatus switch
+                : new(success ? ClaudeCliQuotaStatus.Unavailable : state.LastStatus, null, null, null, state.LastStatus switch
                 {
                     ClaudeCliQuotaStatus.NotInstalled => "Claude CLI 后台额度：未找到 Claude Code CLI",
                     ClaudeCliQuotaStatus.NotAvailable => "Claude CLI 后台额度：当前 CLI 登录没有可用的订阅额度（未登录、API 密钥或第三方服务）",
+                    _ when success => "Claude CLI 后台额度：上次结果无法恢复，稍后自动重试",
                     _ => "Claude CLI 后台额度：上次查询失败，稍后自动重试"
                 });
         }
@@ -282,6 +301,7 @@ public sealed class ClaudeCliQuotaCollector
     private void SaveState()
     {
         if (_stateFile is null || _lastAttempt is null) return;
+        var temporary = $"{_stateFile}.{Guid.NewGuid():N}.tmp";
         try
         {
             static PersistedWindow? Window(RateLimitWindow? window) =>
@@ -289,9 +309,8 @@ public sealed class ClaudeCliQuotaCollector
             var success = _lastSuccess is { ObservedAt: { } observedAt }
                 ? new PersistedReading(observedAt, Window(_lastSuccess.Primary), Window(_lastSuccess.Secondary))
                 : null;
-            var state = new PersistedState(StateVersion, _nextAttemptAt, _failures, _lastAttempt.Status, success);
+            var state = new PersistedState(StateVersion, _nextAttemptAt, _failures, _lastAttempt.Status, success, _lastAttemptAt);
             Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
-            var temporary = _stateFile + ".tmp";
             File.WriteAllText(temporary, JsonSerializer.Serialize(state, StateJson));
             File.Move(temporary, _stateFile, overwrite: true);
         }
@@ -299,6 +318,8 @@ public sealed class ClaudeCliQuotaCollector
             or NotSupportedException or ArgumentException or System.Security.SecurityException)
         {
             // Best effort: the in-memory schedule still applies to this process.
+            try { File.Delete(temporary); }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
         }
     }
 

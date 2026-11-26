@@ -89,6 +89,9 @@ public sealed class ApplicationSession : IDisposable
 
     public event Action<ProjectionWarning>? ProjectionFailed;
 
+    /// <summary>The full path of this session's application data directory.</summary>
+    public string ApplicationDataDirectory => _usageDataDirectory;
+
     public AppSettings CurrentSettings => _settings;
 
     public AgentRuntime CurrentRuntime => _runtimeSelection.Current;

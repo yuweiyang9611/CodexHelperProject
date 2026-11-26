@@ -9,7 +9,7 @@ namespace CodexU.Application;
 
 /// <summary>
 /// Implements the complete IPC method surface. Native UI actions are delegated to
-/// host ports so this dispatcher can be shared by WPF, Avalonia, and tests.
+/// host ports so this dispatcher is shared by the Electron Sidecar and tests.
 /// </summary>
 public sealed class IpcDispatcher : IDisposable
 {
@@ -61,6 +61,7 @@ public sealed class IpcDispatcher : IDisposable
     private readonly Func<CancellationToken, Task<ClaudeCliAuthStatus>> _readClaudeAuthStatus;
     private readonly Action _claudeCliLoggedIn;
     private readonly Func<CancellationToken, Task<AntigravityQuotaSnapshot>> _readAntigravityQuota;
+    private readonly Func<bool, ClaudeCliQuotaSchedule> _describeClaudeCliQuota;
     private bool _disposed;
 
     public IpcDispatcher(
@@ -73,7 +74,8 @@ public sealed class IpcDispatcher : IDisposable
         IStatusStripCommands? statusStripCommands = null,
         Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
         Action? claudeCliLoggedIn = null,
-        Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null)
+        Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null,
+        Func<bool, ClaudeCliQuotaSchedule>? describeClaudeCliQuota = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(hostEnvironment);
@@ -91,7 +93,10 @@ public sealed class IpcDispatcher : IDisposable
         _readClaudeAuthStatus = readClaudeAuthStatus ?? new ClaudeCliAuthStatusReader().ReadAsync;
         // A login confirmed in settings ends the background quota query's long wait.
         _claudeCliLoggedIn = claudeCliLoggedIn ?? ClaudeCliQuotaCollector.RetrySoonAfterLogin;
-        _readAntigravityQuota = readAntigravityQuota ?? AntigravityQuotaReader.Shared.ReadAsync;
+        _readAntigravityQuota = readAntigravityQuota
+            ?? AntigravityQuotaReader.ForDataDirectory(session.ApplicationDataDirectory).ReadAsync;
+        _describeClaudeCliQuota = describeClaudeCliQuota
+            ?? ClaudeCliQuotaCollector.ForDataDirectory(session.ApplicationDataDirectory).Describe;
         _statusStripCommands = statusStripCommands;
 
         _session.SnapshotChanged += OnSnapshotChanged;
@@ -163,6 +168,10 @@ public sealed class IpcDispatcher : IDisposable
                     new HostFileDialogRequest("选择 Claude Desktop 额度会话文件", "", ".jsonl",
                         [new HostFileType("Desktop 会话", ["*.jsonl"])], CheckFileExists: true),
                     _session.LifetimeToken);
+
+            case "claude.getCliQuotaStatus":
+                // Read-only: describing the schedule never starts the CLI.
+                return _describeClaudeCliQuota(_session.CurrentSettings.ClaudeCliQuotaEnabled);
 
             case "antigravity.getQuota":
                 return await _readAntigravityQuota(_session.LifetimeToken);

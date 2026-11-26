@@ -1,8 +1,7 @@
 # CodexU Electron host
 
 This directory is the Windows-first Electron shell for the existing Vue renderer and
-the self-contained .NET backend. It deliberately has no project reference to the WPF
-or Avalonia hosts.
+the self-contained .NET backend, and the only native host in the repository.
 
 ## Runtime layout
 
@@ -191,9 +190,10 @@ The quit barrier, update-install ordering and maintenance acknowledgements are o
 its state; it does not independently toggle competing quit flags. Both Sidecar shutdown
 failure and installer rejection finish the barrier with a nonzero exit.
 
-The WPF host remains a v0.5.0 compatibility reference and a solution build target. New
-Electron window features belong here; shared data, query and export behavior belongs in
-Application/Core/Infrastructure and remains available to both hosts.
+The former WPF host (last released as v0.5.0) has been removed from the repository; the
+installer still recognizes and upgrades a v0.5.0 installation in place. New window
+features belong here; shared data, query and export behavior belongs in
+Application/Core/Infrastructure.
 
 ## Automated checks
 

@@ -206,6 +206,100 @@ public sealed class AntigravityQuotaReaderTests
         Assert.Equal(2, quotaCalls);
     }
 
+    [Fact]
+    public async Task ARestartRemembersTheVersionThatRanAModelTurn()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "codexu-agy-guard-" + Guid.NewGuid().ToString("N"));
+        var guard = Path.Combine(root, "antigravity", "quota-guard.json");
+        try
+        {
+            var usageCalls = 0;
+            var version = "1.5.18";
+            Func<System.Diagnostics.ProcessStartInfo, CancellationToken, Task<ClaudeCliAuthCommandResult>> run = (info, _) =>
+            {
+                if (info.ArgumentList.SequenceEqual(["--version"]))
+                    return Task.FromResult(new ClaudeCliAuthCommandResult(0, version));
+                usageCalls++;
+                return Task.FromResult(new ClaudeCliAuthCommandResult(3, """{"status":"ERROR","num_turns":1}"""));
+            };
+            Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync()).Status);
+            Assert.Contains("1.5.18", await File.ReadAllTextAsync(guard), StringComparison.Ordinal);
+
+            // A new process (fresh reader, same guard file) does not run /usage again.
+            Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync()).Status);
+            Assert.Equal(1, usageCalls);
+
+            version = "1.5.19";
+            await new AntigravityQuotaReader(() => "agy.exe", run, new ManualClock(), guard).ReadAsync();
+            Assert.Equal(2, usageCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ALockedGuardFileSkipsTheQueryUntilItCanBeRead()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "codexu-agy-guard-" + Guid.NewGuid().ToString("N"));
+        var guard = Path.Combine(root, "antigravity", "quota-guard.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(guard)!);
+            await File.WriteAllTextAsync(guard, """{"version":1,"modelInvokingCliVersion":"1.5.18"}""");
+            var usageCalls = 0;
+            var reader = new AntigravityQuotaReader(() => "agy.exe", (info, _) =>
+            {
+                if (info.ArgumentList.SequenceEqual(["--version"]))
+                    return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+                usageCalls++;
+                return Task.FromResult(new ClaudeCliAuthCommandResult(3, """{"status":"ERROR","num_turns":1}"""));
+            }, new ManualClock(), guard);
+
+            // Another program holds the file: the blocked version must not run.
+            using (new FileStream(guard, FileMode.Open, FileAccess.Read, FileShare.None))
+                Assert.Equal(AntigravityQuotaStatus.Unavailable, (await reader.ReadAsync()).Status);
+
+            Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await reader.ReadAsync()).Status);
+            Assert.Equal(0, usageCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("""{"version":1,"modelInvokingCliVersion":"not a version"}""")]
+    [InlineData("""{"version":9,"modelInvokingCliVersion":"1.5.18"}""")]
+    public async Task AnUnusableGuardFileIsIgnored(string saved)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "codexu-agy-guard-" + Guid.NewGuid().ToString("N"));
+        var guard = Path.Combine(root, "antigravity", "quota-guard.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(guard)!);
+            await File.WriteAllTextAsync(guard, saved);
+            var usageCalls = 0;
+            var reader = new AntigravityQuotaReader(() => "agy.exe", (info, _) =>
+            {
+                if (info.ArgumentList.SequenceEqual(["--version"]))
+                    return Task.FromResult(new ClaudeCliAuthCommandResult(0, "1.5.18"));
+                usageCalls++;
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, Envelope("""[{"name":"Gemini","buckets":[{"window":"5h","remaining_fraction":1}]}]""")));
+            }, new ManualClock(), guard);
+
+            Assert.Equal(AntigravityQuotaStatus.Ready, (await reader.ReadAsync()).Status);
+            Assert.Equal(1, usageCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string Envelope(string groups, string status = "SUCCESS", string command = "usage", int turns = 0) =>
         $$"""{"status":"{{status}}","num_turns":{{turns}},"command":{"name":"{{command}}","data":{"groups":{{groups}} } } }""";
 

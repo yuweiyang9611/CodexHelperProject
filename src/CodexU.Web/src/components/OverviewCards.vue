@@ -24,6 +24,16 @@ const amountAvailable = computed(() => monthlyValue.value?.knownAmount != null)
 const lowerBound = computed(() => amountAvailable.value && monthlyValue.value?.isLowerBound ? '≥ ' : '')
 const monthlyLabel = computed(() => monthlyValue.value?.subscriptionSource === 'manual' ? '手动'
   : monthlyValue.value?.subscriptionSource === 'auto' ? '自动' : '未知')
+const missingRates = computed(() => {
+  const models = props.snapshot.tokens.month.missingRateByModel ?? []
+  const limit = 3
+  const remaining = models.slice(limit)
+  return {
+    top: models.slice(0, limit),
+    remainingCount: remaining.length,
+    remainingTokens: remaining.reduce((sum, model) => sum + model.tokens, 0),
+  }
+})
 
 const tokenMetrics = computed(() => [
   { label: '今日', value: props.snapshot.tokens.today.tokens, quality: props.snapshot.tokens.today.quality },
@@ -170,7 +180,7 @@ function splitPercentage(value?: number | null): string {
           <div>
             <span>本月本机原始 {{ compactNumber(snapshot.tokens.month.tokens) }} Token</span>
             <small v-if="monthlyValue?.coveragePercent != null">已核算 {{ monthlyValue.coveragePercent.toFixed(1) }}% · {{ monthlyValue?.models?.length ?? 0 }} 个模型</small>
-            <small v-if="snapshot.tokens.month.unratedTokens">未核算 {{ compactNumber(snapshot.tokens.month.unratedTokens) }} Token<span v-if="snapshot.tokens.month.missingRateTokens"> · 缺费率 {{ compactNumber(snapshot.tokens.month.missingRateTokens) }}</span><span v-if="snapshot.tokens.month.incompleteBreakdownTokens"> · 缺计价分项 {{ compactNumber(snapshot.tokens.month.incompleteBreakdownTokens) }}</span></small>
+            <small v-if="snapshot.tokens.month.unratedTokens">未核算 {{ compactNumber(snapshot.tokens.month.unratedTokens) }} Token<span v-if="snapshot.tokens.month.incompleteBreakdownTokens"> · 缺计价分项 {{ compactNumber(snapshot.tokens.month.incompleteBreakdownTokens) }}</span></small>
           </div>
           <div>
             <span v-if="monthlyValue?.projectedAmount != null">预计本月 {{ amountMoney(monthlyValue.projectedAmount, true) }}</span>
@@ -179,6 +189,18 @@ function splitPercentage(value?: number | null): string {
             <strong v-else>暂无法判断是否回本</strong>
           </div>
         </div>
+        <section v-if="snapshot.tokens.month.missingRateTokens" class="missing-rates" aria-label="本月缺费率">
+          <strong>本月缺费率 {{ compactNumber(snapshot.tokens.month.missingRateTokens) }} Token</strong>
+          <dl v-if="missingRates.top.length">
+            <div v-for="entry in missingRates.top" :key="entry.model">
+              <dt>{{ entry.model }}</dt><dd :title="entry.tokens.toLocaleString('zh-CN')">{{ compactNumber(entry.tokens) }}</dd>
+            </div>
+            <div v-if="missingRates.remainingCount">
+              <dt>其余 {{ missingRates.remainingCount }} 个模型</dt><dd :title="missingRates.remainingTokens.toLocaleString('zh-CN')">{{ compactNumber(missingRates.remainingTokens) }}</dd>
+            </div>
+          </dl>
+          <p>可在「设置与诊断 → 价格与费率」添加自定义价格。</p>
+        </section>
       </div>
     </article>
   </section>
@@ -195,6 +217,12 @@ function splitPercentage(value?: number | null): string {
 .value-toggle .ui-icon.expanded { transform: rotate(180deg); }
 .value-card.value-collapsed { min-height: 145px !important; }
 .value-card.value-collapsed .value-main { margin-top: 19px; }
+.missing-rates { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--stroke-subtle); color: var(--text-secondary); font-size: 12px; }
+.missing-rates dl { display: grid; gap: 3px; margin: 6px 0; }
+.missing-rates dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.missing-rates dt { overflow-wrap: anywhere; }
+.missing-rates dd { margin: 0; font-variant-numeric: tabular-nums; }
+.missing-rates p { margin: 4px 0 0; color: var(--text-tertiary); }
 .split-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
 .split-heading strong { flex: none; color: var(--text-secondary); font-size: 10px; }
 .split-heading span { color: var(--text-tertiary); font-size: 9px; text-align: right; }

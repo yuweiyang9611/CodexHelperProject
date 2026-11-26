@@ -5,6 +5,15 @@ export interface ClaudeCliAuthStatus {
   source: 'none' | 'standalone' | 'path' | 'desktopEmbedded'
   checkedAt: string
 }
+/** The background CLI quota query's last outcome and next permitted run. */
+export interface ClaudeCliQuotaSchedule {
+  enabled: boolean
+  lastStatus?: 'fresh' | 'noWindows' | 'notAvailable' | 'notInstalled' | 'unavailable' | 'disabled' | null
+  lastAttemptAt?: string | null
+  lastSuccessAt?: string | null
+  /** Null when the next refresh may query at once. */
+  nextAttemptAt?: string | null
+}
 export interface AntigravityQuotaBucket {
   label: string
   remainingPercent?: number | null
@@ -188,6 +197,7 @@ export interface TokenPeriod {
   creditsUsed: number
   unratedTokens: number
   missingRateTokens?: number
+  missingRateByModel?: { model: string; tokens: number }[] | null
   incompleteBreakdownTokens?: number
   creditsByModel: ModelCreditUsage[]
   quality: DataQuality
@@ -511,14 +521,4 @@ export interface DashboardSnapshot {
   taskLifecycle: TaskLifecycleStats
   indexStatus: IndexStatus
   diagnostics: string[]
-}
-
-export interface IpcEnvelope {
-  version: number
-  id?: string
-  type: 'request' | 'response' | 'event'
-  method?: string
-  ok?: boolean
-  payload?: unknown
-  error?: { code: string; message: string }
 }

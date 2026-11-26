@@ -124,10 +124,16 @@ describe('desktop host capabilities', () => {
   it('selects and checks a draft transcript before saving; cancel preserves the selection and result', async () => {
     const { container, store } = mountSettings([])
     const path = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
+    const selections = [path, null]
+    const originalRequest = host.request.bind(host)
     const request = vi.spyOn(host, 'request')
-      .mockResolvedValueOnce(path)
-      .mockResolvedValueOnce({ status: 'tooLarge', message: '文件超过 32 MiB，请换用新的专用会话。' })
-      .mockResolvedValueOnce(null)
+      .mockImplementation(async <T>(method: string, payload?: object): Promise<T> => {
+        if (method === 'settings.pickClaudeTranscript') return selections.shift() as T
+        if (method === 'settings.validateClaudeTranscript') {
+          return { status: 'tooLarge', message: '文件超过 32 MiB，请换用新的专用会话。' } as T
+        }
+        return originalRequest<T>(method, payload)
+      })
     expect(button(container, '验证绑定').disabled).toBe(true)
     button(container, '选择文件').click()
     await vi.waitFor(() => expect(button(container, '验证绑定').disabled).toBe(false))
@@ -135,12 +141,15 @@ describe('desktop host capabilities', () => {
     button(container, '验证绑定').click()
     const feedback = container.querySelector('.binding-feedback')
     await vi.waitFor(() => expect(feedback?.textContent).toContain('新的专用会话'))
-    expect(request.mock.calls[1]).toEqual(['settings.validateClaudeTranscript', { path }])
     button(container, '选择文件').click()
     await vi.waitFor(() => expect(button(container, '选择文件').disabled).toBe(false))
     expect(store.settingsDraft?.claudeDesktopUsageTranscript).toBe(path)
     expect(feedback?.textContent).toContain('新的专用会话')
     expect(store.settings?.claudeDesktopUsageTranscript).toBeFalsy()
+    expect(request.mock.calls.filter(([method]) =>
+      method === 'settings.pickClaudeTranscript' || method === 'settings.validateClaudeTranscript')).toEqual([
+      ['settings.pickClaudeTranscript'], ['settings.validateClaudeTranscript', { path }], ['settings.pickClaudeTranscript'],
+    ])
     request.mockRestore()
   })
 

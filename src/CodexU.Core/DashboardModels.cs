@@ -183,7 +183,10 @@ public sealed record TokenPeriod(
     DataQuality Quality,
     long MissingRateTokens = 0,
     long IncompleteBreakdownTokens = 0,
-    UsageAmount? Valuation = null);
+    UsageAmount? Valuation = null,
+    IReadOnlyList<MissingRateModelUsage>? MissingRateByModel = null);
+
+public sealed record MissingRateModelUsage(string Model, long Tokens);
 
 public sealed record TokenSummary(
     TokenPeriod Today,

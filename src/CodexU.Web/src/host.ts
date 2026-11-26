@@ -1,4 +1,4 @@
-import type { AgentRuntime, AntigravityQuotaSnapshot, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
+import type { AgentRuntime, AntigravityQuotaSnapshot, AppSettings, DashboardSnapshot, StatusStripControlState, UsageAnalysisRequest } from './types'
 import { createDemoAnalysis } from './demoAnalysis'
 import { demoRateCatalog, demoRatePreview } from './demoRateEditor'
 import { demoCombined } from './demoCombined'
@@ -14,12 +14,6 @@ interface ElectronHostBridge {
 declare global {
   interface Window {
     codexU?: ElectronHostBridge
-    chrome?: {
-      webview?: {
-        postMessage(message: unknown): void
-        addEventListener(type: 'message', listener: (event: MessageEvent) => void): void
-      }
-    }
   }
 }
 
@@ -32,19 +26,6 @@ const desktopQuotaFixture = visualTestMode && demoParameters.get('claudeDesktopQ
 const desktopQueryFixture = visualTestMode && demoParameters.get('claudeDesktopQuery') === '1'
 const demoTranscript = 'D:\\Fixture\\11111111-2222-4333-8444-555555555555.jsonl'
 const fixedDemoNow = new Date(desktopQuotaFixture || desktopQueryFixture ? '2026-11-01T18:40:00+09:00' : '2026-07-14T12:00:00+09:00')
-const interactiveHostMethods = new Set([
-  'settings.pickClaudeTranscript',
-  'rates.export',
-  'rates.import',
-  'rates.reset',
-  'data.exportAggregates',
-  'data.backup',
-  'data.restore',
-  'data.clearHistory',
-  'diagnostics.export',
-  'diagnostics.rebuildIndex',
-])
-
 function demoNow(): Date {
   return visualTestMode ? new Date(fixedDemoNow) : new Date()
 }
@@ -86,12 +67,6 @@ class HostBridge {
     displayName: '主显示器 · DISPLAY1',
     message: '状态条当前已关闭。',
   }
-
-  private readonly pending = new Map<string, {
-    resolve: (value: unknown) => void
-    reject: (reason: Error) => void
-    timeout?: number
-  }>()
 
   private readonly listeners = new Map<string, Set<EventHandler>>()
   private unsubscribeElectronEvents?: () => void
@@ -146,70 +121,18 @@ class HostBridge {
       }
       if (visualTestMode) this.mockSettings.checkForUpdates = false
     }
-
-    // Electron owns its IPC channel through the context-isolated preload API.
-    // When both bridges exist during migration, never bind the legacy channel or
-    // one host event could be delivered twice.
-    if (window.codexU) return
-
-    window.chrome?.webview?.addEventListener('message', (event) => {
-      if (!event.data || typeof event.data !== 'object') return
-      const envelope = event.data as IpcEnvelope
-      if (envelope.version !== 1) return
-      if (envelope.type === 'response' && envelope.id) {
-        const request = this.pending.get(envelope.id)
-        if (!request) return
-        if (request.timeout !== undefined) window.clearTimeout(request.timeout)
-        this.pending.delete(envelope.id)
-        if (envelope.ok) request.resolve(envelope.payload)
-        else request.reject(new Error(envelope.error?.message ?? 'Host request failed'))
-        return
-      }
-
-      if (envelope.type === 'event' && envelope.method) {
-        this.dispatchEvent(envelope.method, envelope.payload)
-      }
-    })
   }
 
+  // Electron is the only native host: its context-isolated preload exposes
+  // window.codexU. Without it this is the browser demo, served by the mock.
   get isNative(): boolean {
-    return Boolean(window.codexU || window.chrome?.webview)
+    return Boolean(window.codexU)
   }
 
   request<T>(method: string, payload: object = {}): Promise<T> {
     const electron = window.codexU
     if (electron) return electron.request(method, payload) as Promise<T>
-
-    const webview = window.chrome?.webview
-    if (!webview) return this.mockRequest<T>(method, payload)
-
-    const id = crypto.randomUUID()
-    return new Promise<T>((resolve, reject) => {
-      // usage.getCombined reads both runtimes behind one gate, each with the host's
-      // own 90s budget, and the gate may already be held by an auto-refresh — so the
-      // real worst case is three consecutive 90s reads, not two.
-      const timeoutMilliseconds = method === 'usage.getCombined'
-        ? 300_000
-        : method.startsWith('usage.') || method === 'runtime.select' ? 120_000 : 30_000
-      const timeout = interactiveHostMethods.has(method)
-        ? undefined
-        : window.setTimeout(() => {
-          this.pending.delete(id)
-          reject(new Error(`Host request timed out: ${method}`))
-        }, timeoutMilliseconds)
-      this.pending.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
-        timeout,
-      })
-      try {
-        webview.postMessage({ version: 1, id, type: 'request', method, payload })
-      } catch (reason) {
-        if (timeout !== undefined) window.clearTimeout(timeout)
-        this.pending.delete(id)
-        reject(reason instanceof Error ? reason : new Error(String(reason)))
-      }
-    })
+    return this.mockRequest<T>(method, payload)
   }
 
   on(method: string, handler: EventHandler): () => void {
@@ -269,6 +192,10 @@ class HostBridge {
     if (method === 'settings.get') return { ...this.mockSettings } as T
     if (method === 'claude.getAuthStatus') return {
       status: 'notInstalled', authMethod: 'none', source: 'none', checkedAt: demoNow().toISOString(),
+    } as T
+    if (method === 'claude.getCliQuotaStatus') return {
+      enabled: this.mockSettings.claudeCliQuotaEnabled !== false, lastStatus: 'notInstalled',
+      lastAttemptAt: demoNow().toISOString(), lastSuccessAt: null, nextAttemptAt: null,
     } as T
     if (method === 'antigravity.getQuota') return {
       status: 'ready',
@@ -594,7 +521,7 @@ function demoUsage(runtime: AgentRuntime): DashboardSnapshot {
     tokens: {
       today: period(scale(3_840_210)),
       sevenDays: period(scale(18_460_830)),
-      month: period(scale(52_830_140)),
+      month: { ...period(scale(52_830_140)), missingRateTokens: 0, missingRateByModel: [] },
       lifetime: period(scale(482_670_930)),
     },
     tasks: [

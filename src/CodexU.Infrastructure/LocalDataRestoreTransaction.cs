@@ -15,8 +15,8 @@ public sealed class LocalDataRestoreRollbackException(
 
 /// <summary>
 /// A restore remains provisional until the host has rebuilt its dependent state.
-/// The on-disk journal is intentionally owned by Infrastructure so both the WPF
-/// host and the Electron sidecar get identical crash recovery semantics.
+/// The on-disk journal is intentionally owned by Infrastructure so the Electron
+/// sidecar and any future host get identical crash recovery semantics.
 /// </summary>
 public sealed class LocalDataRestoreTransaction : IAsyncDisposable
 {

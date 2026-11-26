@@ -61,7 +61,9 @@ export async function openTab(page: Page, id: TabId) {
     await expect(combined.getByRole('heading', { name: 'Gemini Pro', exact: true })).toBeVisible()
   }
   if (id === 'diagnostics') {
-    await expect(page.getByRole('region', { name: 'Claude CLI 登录状态', exact: true })).toHaveAttribute('aria-busy', 'false')
+    const cliStatus = page.getByRole('region', { name: 'Claude CLI 登录状态', exact: true })
+    await expect(cliStatus).toHaveAttribute('aria-busy', 'false')
+    await expect(cliStatus.locator('.cli-quota-schedule')).toBeVisible()
   }
   await settleUi(page)
 }

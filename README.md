@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 保留为独立 Sidecar 后端（当前为 .NET 11）。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.10** 新增 Antigravity 订阅额度页，可查看各模型组的剩余额度和重置时间。参见 [0.6.10 发布说明](docs/release-0.6.10.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.11** 将 Antigravity 纳入三运行时，改进后台额度查询和价值估算，更新模型费率，并提升启动稳定性。参见 [0.6.11 发布说明](docs/release-0.6.11.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
@@ -17,8 +17,8 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 
 - Electron 主进程负责窗口、生命周期和原生权限；沙箱 preload 只暴露固定 IPC 白名单，Vue 不获得 Node.js 权限。
 - .NET 自包含 Sidecar 复用 Application/Core/Infrastructure，通过私有 stdin/stdout 长度前缀 JSON 协议与 Electron 通信，不监听网络端口。
-- 仓库继续保留旧 WPF/WebView2 宿主作为 v0.5.0 兼容与功能对照基线，但它不再是下一版本的公开发布产物。
-- Vue 3 + TypeScript 仪表盘：v0.6.3 恢复 v0.6.0 的界面与功能，包括顶部额度、Token 和金额概览，以及用量趋势、项目排行、Skill 使用、双运行时、设置与诊断五个页面；保留 v0.6.2 的模型补充与修复。
+- 旧 WPF/WebView2 宿主已从仓库移除（最后一次发布为 v0.5.0）；安装包仍能识别并原位升级已安装的 v0.5.0。
+- Vue 3 + TypeScript 仪表盘：v0.6.3 恢复 v0.6.0 的界面与功能，包括顶部额度、Token 和金额概览，以及用量趋势、项目排行、Skill 使用、双运行时（v0.6.11 起为三运行时）、设置与诊断五个页面；保留 v0.6.2 的模型补充与修复。
 - 界面随窗口整体缩放，支持 90%–140% 可配置缩放（默认 110%），窗口最小尺寸会按当前显示器工作区和 DPI 自动约束。
 - 额度双路径：自动发现独立 Codex CLI 或 ChatGPT 桌面应用的可运行 `codex.exe`，优先调用 `codex app-server`；无法启动时，从最新 rollout `rate_limits` 恢复 5 小时/7 天额度、重置时间和套餐。
 - `%USERPROFILE%\.codex\state_5.sqlite`：只读线程、任务和项目统计。
@@ -26,7 +26,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - session 增量索引：复用未变化文件，并从已记录字节偏移续读增长中的 rollout。
 - 用量趋势恢复近 7 日走势、Token 构成、模型与功能分布、活跃日历和任务生命周期统计；不提供生命周期的运行时明确显示不可用。
 - 保留后端全部历史查询、日期／模型／项目组合筛选、会话去重分组和分页缓存能力；主界面使用 v0.6.0 原有页面与统计范围。
-- 项目排行和 Skill 使用恢复独立页面，双运行时页面并列展示 Codex 与 Claude Code；诊断保留数据来源、索引和日志健康信息。
+- 项目排行和 Skill 使用恢复独立页面，三运行时页面并列展示 Codex、Claude Code 与 Antigravity；诊断保留数据来源、索引和日志健康信息。
 - 设置管理本机数据源、刷新、通知、价格／历史费率、可选订阅月费对比、托盘与额度悬浮条、更新、备份恢复、索引重建和历史清理。
 - Claude Code 本地适配器：聚合 `%USERPROFILE%\.claude\projects` transcript 的 token、模型、工具和 Skill，读取本地任务。transcript 中的 HTTP 429 记录会作为近 7 天的限流次数单独提示，它只表明当时已用满，不能据此推算余量。
 - 用量历史留存：Codex 与 Claude 的规范化贡献保存到 `%LOCALAPPDATA%\codexU\history\usage-ledger-v2.sqlite`，保留全部已读取日期、会话身份、工作区、每日模型及 Token 分项。源日志删除、读失败或截断时保留上次有效贡献；无法确认的改写保留旧版本并标记冲突。账本不保存对话正文、工具参数或凭据。
@@ -40,7 +40,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 - 深色/浅色玻璃/跟随系统主题，以及紧凑/展开双模式。
 - Electron 已支持托盘驻留、关闭隐藏、可配置全局快捷键、可校验回滚的开机启动、单实例、自动刷新、紧凑布局、原生主题、Windows 原生额度通知，以及按显示器工作区/DPI 恢复的窗口位置。
 - Electron 顶部悬浮条恢复完整信息：额度可切换已用／剩余，今日 Token 可选显示，近 7 天、累计 Token 和金额继续可见；支持折叠、刷新、拖动、锁定、预览与找回。恢复可选桌面副本及其主题、透明度与位置设置，桌面副本默认关闭。
-- 每日 GitHub Release 更新检查。Windows 安装版默认在后台下载、校验 SHA-256，并在正常退出时静默安装；可点击“重启并更新”立即安装并重新打开。设置中可关闭自动下载与安装、选择是否接收预发布版本。关闭到托盘不会安装；ZIP 便携版和旧 WPF 宿主仍通过发布页手动更新。
+- 每日 GitHub Release 更新检查。Windows 安装版默认在后台下载、校验 SHA-256，并在正常退出时静默安装；可点击“重启并更新”立即安装并重新打开。设置中可关闭自动下载与安装、选择是否接收预发布版本。关闭到托盘不会安装；ZIP 便携版仍通过发布页手动更新。
 - 聚合 JSON/CSV 导出、带 SHA-256 清单的本地备份恢复、脱敏诊断包和非破坏式索引重建。主动清理历史需原生确认：只删除留存账本，不删除原始日志或设置；仍存在的原始日志将在刷新时重新计入。
 - 设置页导出当前工具全部历史，原有 CSV 列与 JSON schema 2 保持兼容；保留省略完整项目路径等隐私修复。后端筛选导出接口及 JSON schema 3 继续可用。
 - 每用户 Inno Setup 安装包：开始菜单、卸载项和可选桌面快捷方式；开机启动由应用内设置统一管理，Release 可按仓库密钥配置进行 Authenticode 签名。
@@ -55,7 +55,7 @@ codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的�
 
 查询复用、筛选导出与退出协调的后续改进见 [2026-09-27 完善记录](docs/improvements-2026-09-27.md)；原生多屏与 Explorer 场景的待验状态见 [Windows 验收矩阵](docs/windows-acceptance.md)。
 
-Electron 职责边界为：`Electron main → sandbox preload → Vue renderer → .NET Sidecar → Application/Core/Infrastructure`。Electron 自带 Chromium，不依赖系统 WebView2；旧 WPF 宿主仅作为兼容与功能对照基线保留。
+Electron 职责边界为：`Electron main → sandbox preload → Vue renderer → .NET Sidecar → Application/Core/Infrastructure`。Electron 自带 Chromium，不依赖系统 WebView2。
 
 ### Electron 迁移状态
 
@@ -74,7 +74,7 @@ Windows 正式发布链已经改为 Electron：直接使用已修复的 Electron
 - Windows 10 22H2 或 Windows 11，推荐 Windows 11。
 - .NET SDK 11 或更高版本（不锁定版本，使用本机已安装的最新 SDK）。
 - Node.js 22.23.2（Electron 构建与 CI/Release 使用同一精确版本）。
-- Electron 安装包不需要 WebView2 Evergreen Runtime；只有运行仓库中的旧 WPF 宿主时才需要。
+- Electron 安装包不需要 WebView2 Evergreen Runtime。
 - 已安装并登录的 ChatGPT 桌面应用（含 Codex）或 Codex CLI；没有 Codex 数据时应用仍可显示空状态。
 
 ## 构建
@@ -126,9 +126,9 @@ cd ..\..
 
 `out\CodexU-win32-x64` 是完整便携目录，不能只复制其中的 `CodexU.exe`。正常开发启动使用 `npm.cmd start`。Release 会从同一目录制作 `CodexU-X.Y.Z-win-x64.zip` 和每用户 Inno Setup 安装包；安装包默认写入 `%LOCALAPPDATA%\Programs\codexU`，不要求管理员权限，也不检查 WebView2。更完整的进程布局、协议和打包约束见 [Electron host README](src/CodexU.Electron/README.md)。
 
-### 前端和旧 WPF 宿主
+### 前端
 
-前端独立开发使用 `cd src\CodexU.Web; npm.cmd run dev`，浏览器模式使用可重复的演示数据。需要对照 v0.5.0 行为时，可运行 `dotnet run --project src\CodexU.App\CodexU.App.csproj`；该旧宿主仍需要 WebView2，但不再进入下一版本 Release 产物。
+前端独立开发使用 `cd src\CodexU.Web; npm.cmd run dev`，浏览器模式使用可重复的演示数据。应用图标位于仓库根目录 `assets\`，可用 `tools\Generate-AppIcon.ps1` 重新生成。
 
 ## 测试
 
@@ -206,7 +206,7 @@ Google 按模型组提供独立额度窗口。页面以 CLI 返回的分组和�
 - 不上传本机 usage、线程、路径或账户数据。
 - 为生成统计，应用会在本机解析必要字段；不保存、不展示、不上传 prompt、回复正文、工具参数、工具输出、附件正文或 auth token。
 - 前端没有任意文件、SQL、Shell 或进程权限。
-- Electron preload IPC 采用明确方法白名单；Electron 到 .NET Sidecar 的消息使用有大小上限的长度前缀协议。仓库保留的旧 WPF/WebView2 IPC 同样采用白名单。
+- Electron preload IPC 采用明确方法白名单；Electron 到 .NET Sidecar 的消息使用有大小上限的长度前缀协议。
 
 ## 许可
 

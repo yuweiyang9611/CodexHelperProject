@@ -19,7 +19,6 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Unable to read Electron package-lock.json with Node.js.'
 }
 $electronLockVersions = $electronLockVersionJson | ConvertFrom-Json
-[xml]$appManifest = Get-Content (Join-Path $projectRoot 'src\CodexU.App\app.manifest') -Raw
 
 $productVersionMatch = [Regex]::Match(
     $productVersion,
@@ -68,11 +67,6 @@ if ([string]::IsNullOrWhiteSpace([string]$electronLockVersions.rootVersion)) {
 if ($electronLockVersions.lockVersion -ne $productVersion -or
     $electronLockVersions.rootVersion -ne $productVersion) {
     throw "Version mismatch: .NET=$productVersion, Electron lock=$($electronLockVersions.lockVersion)"
-}
-
-$manifestVersion = [string]$appManifest.assembly.assemblyIdentity.version
-if ($manifestVersion -ne $assemblyVersion) {
-    throw "Version mismatch: AssemblyVersion=$assemblyVersion, app manifest=$manifestVersion"
 }
 
 Write-Host "Version consistency verified: product=$productVersion, assembly=$assemblyVersion, file=$fileVersion"

@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\src\CodexU.App\Assets')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\assets')
 )
 
 Add-Type -AssemblyName System.Drawing

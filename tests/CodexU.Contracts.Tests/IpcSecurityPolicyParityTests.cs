@@ -4,20 +4,16 @@ using CodexU.Contracts;
 namespace CodexU.Contracts.Tests;
 
 /// <summary>
-/// During the Electron migration the IPC surface is declared in three places:
-/// the allow-list in <see cref="IpcSecurityPolicy"/>, the shared application
-/// dispatcher, and the still-shipping WPF dispatcher. Adding a method to only
-/// some of them is silent — an
-/// allow-listed method with no case throws NotSupportedException at runtime, and
-/// a case with no allow-list entry is unreachable. These tests make it loud.
+/// The IPC surface is declared in two places: the allow-lists in
+/// <see cref="IpcSecurityPolicy"/> / <see cref="ElectronHostIpcSecurityPolicy"/> and
+/// the shared application dispatcher. Adding a method to only one of them is
+/// silent — an allow-listed method with no case throws NotSupportedException at
+/// runtime, and a case with no allow-list entry is unreachable. These tests make it loud.
 /// </summary>
 public sealed class IpcSecurityPolicyParityTests
 {
     private const string ApplicationDispatchRelativePath =
         "src/CodexU.Application/IpcDispatcher.cs";
-
-    private const string WpfDispatchRelativePath =
-        "src/CodexU.App/MainWindow.Ipc.cs";
 
     [Fact]
     public void DispatchSwitchHandlesExactlyTheAllowedMethods()
@@ -26,18 +22,15 @@ public sealed class IpcSecurityPolicyParityTests
         var electronHostMethods = ElectronHostIpcSecurityPolicy.AllowedMethodNames
             .ToHashSet(StringComparer.Ordinal);
 
-        AssertDispatchMethods(WpfDispatchRelativePath, rendererMethods);
         AssertDispatchMethods(
             ApplicationDispatchRelativePath,
             rendererMethods.Concat(electronHostMethods).ToHashSet(StringComparer.Ordinal));
     }
 
     [Fact]
-    public void WpfDispatcherCannotReachElectronHostOnlyMethods()
+    public void RendererCannotReachElectronHostOnlyMethods()
     {
-        var dispatched = ReadDispatchedMethods(WpfDispatchRelativePath);
-
-        Assert.Empty(dispatched.Intersect(ElectronHostIpcSecurityPolicy.AllowedMethodNames));
+        Assert.Empty(IpcSecurityPolicy.AllowedMethodNames.Intersect(ElectronHostIpcSecurityPolicy.AllowedMethodNames));
         Assert.False(IpcSecurityPolicy.IsAllowedMethod("settings.reconcileStartupRegistration"));
         Assert.True(ElectronHostIpcSecurityPolicy.IsAllowedMethod(
             "settings.reconcileStartupRegistration"));

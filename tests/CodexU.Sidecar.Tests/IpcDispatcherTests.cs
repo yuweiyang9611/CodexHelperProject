@@ -47,6 +47,33 @@ public sealed class IpcDispatcherTests
         Assert.Empty(context.EventSink.EventsFor("settings.changed"));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClaudeCliQuotaStatusDescribesTheCurrentSettingWithoutSavingOrRefreshing(bool enabled)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var expected = new ClaudeCliQuotaSchedule(enabled, ClaudeCliQuotaStatus.Fresh, now, now, now.AddMinutes(5));
+        var dashboard = new ImmediateDashboardService();
+        var described = new List<bool>();
+        using var context = TestContext.Create(dashboard, describeClaudeCliQuota: currentEnabled =>
+        {
+            described.Add(currentEnabled);
+            return expected;
+        });
+        var saved = await context.Session.UpdateSettingsAsync(settings => settings with { ClaudeCliQuotaEnabled = enabled });
+        var settingsEvents = context.EventSink.EventsFor("settings.changed").Count;
+
+        var actual = await context.Dispatcher.DispatchAsync(Request("claude.getCliQuotaStatus"));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(enabled, Assert.Single(described));
+        Assert.Same(saved, context.Session.CurrentSettings);
+        Assert.Equal(settingsEvents, context.EventSink.EventsFor("settings.changed").Count);
+        Assert.Equal(0, dashboard.CallCount);
+        Assert.Empty(context.EventSink.EventsFor("usage.snapshotChanged"));
+    }
+
     [Fact]
     public async Task SettingsPatch_BindsDesktopUsageWithoutChangingManualMonthlyAmount()
     {
@@ -653,7 +680,8 @@ public sealed class IpcDispatcherTests
             IDashboardService? replacement = null,
             Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
             Action? claudeCliLoggedIn = null,
-            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null)
+            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null,
+            Func<bool, ClaudeCliQuotaSchedule>? describeClaudeCliQuota = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -680,7 +708,8 @@ public sealed class IpcDispatcherTests
                 new UnsupportedExternalUriLauncher(), readClaudeAuthStatus: readClaudeAuthStatus,
                 // Never touch the process-wide collector from tests.
                 claudeCliLoggedIn: claudeCliLoggedIn ?? (() => { }),
-                readAntigravityQuota: readAntigravityQuota);
+                readAntigravityQuota: readAntigravityQuota,
+                describeClaudeCliQuota: describeClaudeCliQuota);
         }
 
         public ApplicationSession Session { get; }
@@ -697,8 +726,9 @@ public sealed class IpcDispatcherTests
             IDashboardService? replacement = null,
             Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
             Action? claudeCliLoggedIn = null,
-            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null) =>
-            new(dashboardService, interaction, replacement, readClaudeAuthStatus, claudeCliLoggedIn, readAntigravityQuota);
+            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null,
+            Func<bool, ClaudeCliQuotaSchedule>? describeClaudeCliQuota = null) =>
+            new(dashboardService, interaction, replacement, readClaudeAuthStatus, claudeCliLoggedIn, readAntigravityQuota, describeClaudeCliQuota);
 
         public void Dispose()
         {

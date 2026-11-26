@@ -176,6 +176,7 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
             Assert.Equal(0, period.MissingRateTokens);
             Assert.Equal(100, Assert.Single(period.CreditsByModel).Tokens.VisibleTotalTokens);
         }
+        Assert.Empty(tokens.Month.MissingRateByModel!);
         var project = Assert.Single(projects);
         Assert.Equal(tokens.Lifetime.CreditsUsed, project.CreditsUsed);
         Assert.Equal(detail.Totals.UnratedTokens, project.UnratedTokens);
@@ -248,6 +249,31 @@ public sealed class UsageAnalysisAvailabilityTests : IDisposable
         Assert.Equal("model-b", missing.Model);
         Assert.Equal(Day, missing.Date);
         Assert.Equal(10, missing.Tokens);
+    }
+
+    [Fact]
+    public void MonthMissingRates_GroupKnownUnpricedModelsAcrossSessionsWithinMonthToDate()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var first = new DateOnly(today.Year, today.Month, 1);
+        AttributedUsage Row(string session, DateOnly date, string model, long tokens) =>
+            new(session, _root, date, model, new(tokens, 0, 0, 0, tokens), 1);
+        var projection = UsageHistoryProjection.Build([
+            Row("a", first, "model-z", 80),
+            Row("b", today, "MODEL-Z", 40),
+            Row("c", today, "model-b", 90),
+            Row("d", today, "model-a", 75),
+            Row("e", today, "claude-unknown", 50),
+            Row("f", today, "legacy-unattributed", 25),
+            Row("g", first.AddDays(-1), "model-b", 300),
+            Row("h", today.AddDays(1), "model-z", 400)
+        ], [], null, DataQuality.Detailed, [Rate], true, 0, 0);
+
+        var month = projection.Tokens.Month;
+        Assert.Equal(210, month.MissingRateTokens);
+        Assert.Equal(75, month.IncompleteBreakdownTokens);
+        Assert.Equal([new MissingRateModelUsage("model-z", 120), new MissingRateModelUsage("model-b", 90)],
+            month.MissingRateByModel);
     }
 
     private static string CodexLog(string id, string project, int tokens) => string.Join('\n',

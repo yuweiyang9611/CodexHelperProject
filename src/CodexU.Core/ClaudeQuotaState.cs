@@ -14,6 +14,18 @@ public enum ClaudeQuotaAction { None, Query, Rebind }
 /// </summary>
 public enum ClaudeCliQuotaStatus { Disabled, Fresh, NoWindows, NotAvailable, NotInstalled, Unavailable }
 
+/// <summary>
+/// What the background CLI query last did and when it may run next, for display.
+/// LastStatus is null before the first attempt; NextAttemptAt is null when the next
+/// refresh may query at once.
+/// </summary>
+public sealed record ClaudeCliQuotaSchedule(
+    bool Enabled,
+    ClaudeCliQuotaStatus? LastStatus,
+    DateTimeOffset? LastAttemptAt,
+    DateTimeOffset? LastSuccessAt,
+    DateTimeOffset? NextAttemptAt);
+
 public sealed record ClaudeQuotaState(
     ClaudeQuotaSource Source,
     ClaudeTranscriptStatus QueryStatus,

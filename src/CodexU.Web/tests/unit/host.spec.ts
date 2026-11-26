@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AppSettings, IpcEnvelope, RateCatalogSnapshot } from '../../src/types'
+import type { AppSettings, RateCatalogSnapshot } from '../../src/types'
 import { builtInModelNames, newestBuiltInRateFor } from '../../src/demoRateEditor'
 
 type ElectronEventListener = (method: string, payload: unknown) => void
-type WebViewMessageListener = (event: MessageEvent) => void
 
 function defineWindowProperty(name: 'codexU' | 'chrome', value: unknown): void {
   Object.defineProperty(window, name, {
@@ -41,23 +40,12 @@ describe('HostBridge transport selection', () => {
     })
     defineWindowProperty('codexU', { request: electronRequest, onEvent })
 
-    const webViewPostMessage = vi.fn()
-    const webViewAddEventListener = vi.fn()
-    defineWindowProperty('chrome', {
-      webview: {
-        postMessage: webViewPostMessage,
-        addEventListener: webViewAddEventListener,
-      },
-    })
-
     const { host } = await import('../../src/host')
     const result = await host.request<{ appVersion: string; platform: string }>('app.initialize', { ready: true })
 
     expect(host.isNative).toBe(true)
     expect(result).toEqual({ appVersion: '1.2.3', platform: 'win32' })
     expect(electronRequest).toHaveBeenCalledWith('app.initialize', { ready: true })
-    expect(webViewPostMessage).not.toHaveBeenCalled()
-    expect(webViewAddEventListener).not.toHaveBeenCalled()
 
     const usageHandler = vi.fn()
     const settingsHandler = vi.fn()
@@ -79,38 +67,10 @@ describe('HostBridge transport selection', () => {
     expect(unsubscribeElectronEvents).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to the WebView2 envelope protocol when Electron is unavailable', async () => {
-    let receiveWebViewMessage: WebViewMessageListener | undefined
-    const postMessage = vi.fn()
-    const addEventListener = vi.fn((type: 'message', listener: WebViewMessageListener) => {
-      expect(type).toBe('message')
-      receiveWebViewMessage = listener
-    })
-    defineWindowProperty('chrome', { webview: { postMessage, addEventListener } })
-
-    const { host } = await import('../../src/host')
-    const response = host.request<{ theme: string }>('settings.get')
-    const request = postMessage.mock.calls[0]?.[0] as IpcEnvelope
-
-    expect(host.isNative).toBe(true)
-    expect(request).toMatchObject({ version: 1, type: 'request', method: 'settings.get', payload: {} })
-    expect(request.id).toEqual(expect.any(String))
-
-    receiveWebViewMessage?.(new MessageEvent('message', {
-      data: {
-        version: 1,
-        id: request.id,
-        type: 'response',
-        ok: true,
-        payload: { theme: 'dark' },
-      } satisfies IpcEnvelope,
-    }))
-
-    await expect(response).resolves.toEqual({ theme: 'dark' })
-  })
-
-  it('keeps the browser mock when neither native bridge exists', async () => {
+  it('uses the browser mock without Electron, even if a legacy WebView2 object is present', async () => {
     vi.useFakeTimers()
+    const postMessage = vi.fn()
+    defineWindowProperty('chrome', { webview: { postMessage, addEventListener: vi.fn() } })
     const { host } = await import('../../src/host')
 
     const settingsRequest = host.request<AppSettings>('settings.get')
@@ -118,6 +78,7 @@ describe('HostBridge transport selection', () => {
 
     expect(host.isNative).toBe(false)
     await expect(settingsRequest).resolves.toMatchObject({ theme: 'dark', globalHotKey: 'Ctrl+U' })
+    expect(postMessage).not.toHaveBeenCalled()
   })
 
   it('offers September 22 models with dated official rates in the rate editor', async () => {

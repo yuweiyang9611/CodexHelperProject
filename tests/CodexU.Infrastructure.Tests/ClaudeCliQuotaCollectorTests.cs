@@ -198,6 +198,36 @@ public sealed class ClaudeCliQuotaCollectorTests
     }
 
     [Fact]
+    public async Task DescribeReportsTheLastAttemptAndSuccessAndRestoresTheirTimesAfterRestart()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Task<string> Query(ClaudeCliExecutable executable, string id, CancellationToken token) =>
+            ++calls == 1
+                ? Task.FromResult(Response(id, Limits(Window("session", 47, Now.AddHours(3)))))
+                : throw new IOException("rate limited");
+        var collector = Persistent(fixture, clock, Query);
+
+        Assert.Equal(new ClaudeCliQuotaSchedule(true, null, null, null, null), collector.Describe(true));
+        Assert.Equal(0, calls);
+
+        await collector.ReadAsync();
+        var retryAt = Now + ClaudeCliQuotaCollector.MinimumInterval;
+        Assert.Equal(new ClaudeCliQuotaSchedule(true, ClaudeCliQuotaStatus.Fresh, Now, Now, retryAt), collector.Describe(true));
+
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        await collector.ReadAsync();
+        var failed = new ClaudeCliQuotaSchedule(true, ClaudeCliQuotaStatus.Unavailable, retryAt, Now,
+            retryAt + ClaudeCliQuotaCollector.FailureBackoff[0]);
+        Assert.Equal(failed, collector.Describe(true));
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(failed, Persistent(fixture, clock, Query).Describe(true));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task ARestartedAppKeepsTheIntervalAndReusesTheSavedReading()
     {
         using var fixture = new Fixture();
@@ -223,6 +253,30 @@ public sealed class ClaudeCliQuotaCollectorTests
         clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
         await Persistent(fixture, clock, query).ReadAsync();
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task AReadingFromAfterABackwardsClockIsNotRestoredButTheThrottleIs()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query = (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 47, Now.AddHours(3)))));
+        };
+        await Persistent(fixture, clock, query).ReadAsync();
+
+        clock.Advance(TimeSpan.FromHours(-2));
+        var restarted = Persistent(fixture, clock, query);
+        var schedule = restarted.Describe(true);
+
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, schedule.LastStatus);
+        Assert.Null(schedule.LastSuccessAt);
+        Assert.NotNull(schedule.NextAttemptAt);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, (await restarted.ReadAsync()).Status);
+        Assert.Equal(1, calls);
     }
 
     [Fact]

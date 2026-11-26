@@ -167,6 +167,40 @@ describe('OverviewCards local token activity', () => {
       .toEqual(['≥ US$80.00', '≥ US$0.00', '≥ US$0.00', '≥ US$5.00'])
   })
 
+  it('lists the three largest monthly missing-rate models and combines the remaining tokens', async () => {
+    const data = snapshot()
+    data.tokens.month = tokenPeriod({
+      unratedTokens: 2500, missingRateTokens: 2030, incompleteBreakdownTokens: 470,
+      missingRateByModel: [
+        { model: 'model-a', tokens: 1000 }, { model: 'model-b', tokens: 500 },
+        { model: 'model-c', tokens: 300 }, { model: 'model-d', tokens: 200 }, { model: 'model-e', tokens: 30 },
+      ],
+    })
+    const card = mountOverview(data)
+    card.querySelector<HTMLElement>('.value-toggle')!.click()
+    await nextTick()
+
+    const section = card.querySelector('.missing-rates')!
+    expect(section.querySelector('strong')?.textContent).toContain('本月缺费率 2.03K Token')
+    expect([...section.querySelectorAll('dt')].map(el => el.textContent))
+      .toEqual(['model-a', 'model-b', 'model-c', '其余 2 个模型'])
+    expect([...section.querySelectorAll('dd')].map(el => el.textContent)).toEqual(['1.00K', '500', '300', '230'])
+    expect([...section.querySelectorAll('dd')].map(el => el.title)).toEqual(['1,000', '500', '300', '230'])
+    expect(section.textContent).toContain('可在「设置与诊断 → 价格与费率」添加自定义价格')
+  })
+
+  it.each([0, 120])('handles a snapshot with no model detail and %i missing-rate tokens', async missingRateTokens => {
+    const data = snapshot()
+    data.tokens.month = tokenPeriod({ unratedTokens: 200, missingRateTokens })
+    const card = mountOverview(data)
+    card.querySelector<HTMLElement>('.value-toggle')!.click()
+    await nextTick()
+
+    expect(card.querySelector('.missing-rates') !== null).toBe(missingRateTokens > 0)
+    expect(card.querySelector('.missing-rates dl')).toBeNull()
+    if (missingRateTokens) expect(card.textContent).toContain('本月缺费率 120 Token')
+  })
+
   it('copies only the fixed query instruction and displays the paired query time beside stale fallback data', async () => {
     const queryTime = '2026-11-01T09:00:00Z'
     const fallbackTime = '2026-11-01T10:01:00Z'

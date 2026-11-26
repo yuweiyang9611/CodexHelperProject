@@ -13,6 +13,7 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set([
   'runtime.select',
   'settings.get',
   'claude.getAuthStatus',
+  'claude.getCliQuotaStatus',
   'antigravity.getQuota',
   'settings.pickClaudeTranscript',
   'settings.validateClaudeTranscript',

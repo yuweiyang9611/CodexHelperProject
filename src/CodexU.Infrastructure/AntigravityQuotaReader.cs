@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
@@ -16,29 +17,46 @@ public sealed class AntigravityQuotaReader
     private const int MaximumGroups = 32;
     private const int MaximumBucketsPerGroup = 16;
 
-    public static AntigravityQuotaReader Shared { get; } = new(
-        () => Discover(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            Environment.GetEnvironmentVariable("PATH")),
-        ClaudeCliAuthStatusReader.RunProcessAsync,
-        TimeProvider.System);
+    private const int GuardVersion = 1;
+    private static readonly ConcurrentDictionary<string, AntigravityQuotaReader> ByDataDirectory =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Func<string?> _discover;
     private readonly Func<ProcessStartInfo, CancellationToken, Task<ClaudeCliAuthCommandResult>> _run;
     private readonly TimeProvider _clock;
+    private readonly string? _guardFile;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private AntigravityQuotaSnapshot? _lastResult;
     private long _lastCompleted;
     // The CLI version that once answered /usage with a model turn. Accessed only under _gate.
+    // It is saved, so a restart cannot spend quota on the same version again.
     private string? _modelInvokingVersion;
+    private bool _guardLoaded;
 
     internal AntigravityQuotaReader(
         Func<string?> discover,
         Func<ProcessStartInfo, CancellationToken, Task<ClaudeCliAuthCommandResult>> run,
-        TimeProvider clock)
+        TimeProvider clock,
+        string? guardFile = null)
     {
         _discover = discover;
         _run = run;
         _clock = clock;
+        _guardFile = guardFile;
+        _guardLoaded = guardFile is null;
+    }
+
+    /// <summary>The process-wide reader for one application data directory.</summary>
+    public static AntigravityQuotaReader ForDataDirectory(string? applicationDataDirectory)
+    {
+        var directory = Path.GetFullPath(applicationDataDirectory
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "codexU"));
+        return ByDataDirectory.GetOrAdd(directory, root => new(
+            () => Discover(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Environment.GetEnvironmentVariable("PATH")),
+            ClaudeCliAuthStatusReader.RunProcessAsync,
+            TimeProvider.System,
+            Path.Combine(root, "antigravity", "quota-guard.json")));
     }
 
     public async Task<AntigravityQuotaSnapshot> ReadAsync(CancellationToken cancellationToken = default)
@@ -46,6 +64,8 @@ public sealed class AntigravityQuotaReader
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            // Not cached: the next refresh retries reading the guard.
+            if (!LoadGuard()) return Empty(AntigravityQuotaStatus.Unavailable);
             if (_lastResult is not null && _clock.GetElapsedTime(_lastCompleted) < RefreshInterval)
             {
                 return _lastResult;
@@ -86,7 +106,12 @@ public sealed class AntigravityQuotaReader
             var info = StartInfo(executable, workingDirectory,
                 ["-p", "/usage", "--output-format", "json", "--print-timeout", "12s"]);
             var result = Parse(await _run(info, deadline.Token), _clock.GetUtcNow());
-            _modelInvokingVersion = result.Status == AntigravityQuotaStatus.ModelInvoked ? versionText : null;
+            var invoking = result.Status == AntigravityQuotaStatus.ModelInvoked ? versionText : null;
+            if (!string.Equals(invoking, _modelInvokingVersion, StringComparison.Ordinal))
+            {
+                _modelInvokingVersion = invoking;
+                SaveGuard();
+            }
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -212,6 +237,63 @@ public sealed class AntigravityQuotaReader
     }
 
     private static AntigravityQuotaSnapshot Empty(AntigravityQuotaStatus status) => new(status, []);
+
+    private sealed record QuotaGuard(int Version, string? ModelInvokingCliVersion);
+
+    /// <summary>
+    /// Returns false when a guard file exists but cannot be read right now (for example
+    /// while another program holds a lock on it). Querying then could re-run a CLI
+    /// version the file blocks, so the caller skips the query and loading retries later.
+    /// </summary>
+    private bool LoadGuard()
+    {
+        if (_guardLoaded) return true;
+        try
+        {
+            var file = new FileInfo(_guardFile!);
+            if (file.Exists && file.Length <= 4096)
+            {
+                var guard = JsonSerializer.Deserialize<QuotaGuard>(File.ReadAllText(file.FullName), GuardJson);
+                // Only a well-formed version string is trusted; anything else costs one query.
+                if (guard is { Version: GuardVersion, ModelInvokingCliVersion: { Length: <= 64 } saved }
+                    && Version.TryParse(saved, out _))
+                    _modelInvokingVersion = saved;
+            }
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException
+            or JsonException or NotSupportedException or ArgumentException)
+        {
+            // Missing or unusable: nothing is blocked.
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException)
+        {
+            return false;
+        }
+        _guardLoaded = true;
+        return true;
+    }
+
+    private void SaveGuard()
+    {
+        if (_guardFile is null) return;
+        var temporary = $"{_guardFile}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_guardFile)!);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(new QuotaGuard(GuardVersion, _modelInvokingVersion), GuardJson));
+            File.Move(temporary, _guardFile, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or NotSupportedException or ArgumentException or System.Security.SecurityException)
+        {
+            // Best effort: the in-memory guard still protects this process.
+            try { File.Delete(temporary); }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private static readonly JsonSerializerOptions GuardJson = new(JsonSerializerDefaults.Web);
 
     /// <summary>
     /// True when the print-mode run reports any model turn or token use. A genuine

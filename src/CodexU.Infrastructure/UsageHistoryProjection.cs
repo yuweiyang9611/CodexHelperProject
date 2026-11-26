@@ -70,7 +70,7 @@ internal static class UsageHistoryProjection
             g => g.Any(e => e.SourceKind == "conflict") ? "conflict" : g.Any(e => e.SourceKind == "retained") ? "retained" : "live");
         var dayRecords = analysis.Entries.GroupBy(e => e.Date).ToDictionary(group => group.Key, group => Price(group));
 
-        TokenPeriod Price(IEnumerable<UsageAnalysisEntry> rows)
+        TokenPeriod Price(IEnumerable<UsageAnalysisEntry> rows, bool includeMissingRateByModel = false)
         {
             var data = rows.ToArray();
             // Legacy totals preserve the known daily breakdown. Their archived price
@@ -81,12 +81,20 @@ internal static class UsageHistoryProjection
             tokens = snapshots.Aggregate(tokens, (sum, day) => sum.Add(day.Tokens));
             var priced = UsageCredits.CalculateAppliedRates(data.Where(e => e.CreditsUsed.HasValue)
                 .Select(e => (e.Model, e.Breakdown!, e.Rate)));
+            var missingRates = data.Where(e => e.Rate is null && e.Model is not ("unknown" or "legacy-unattributed"));
+            var missingRateByModel = includeMissingRateByModel
+                ? missingRates.GroupBy(e => e.Model)
+                    .Select(g => new MissingRateModelUsage(g.Key, g.Sum(e => e.Tokens)))
+                    .OrderByDescending(e => e.Tokens).ThenBy(e => e.Model, StringComparer.Ordinal).ToArray()
+                : null;
             return new(data.Sum(e => e.Tokens), tokens, priced.CreditsUsed, data.Where(e => !e.CreditsUsed.HasValue).Sum(e => e.Tokens),
                 priced.ByModel, snapshots.Length > 0 ? DataQuality.Approximate : quality,
-                data.Where(e => e.Rate is null && e.Model is not ("unknown" or "legacy-unattributed")).Sum(e => e.Tokens),
-                data.Where(e => e.Rate is not null && !e.CreditsUsed.HasValue).Sum(e => e.Tokens));
+                missingRateByModel?.Sum(e => e.Tokens) ?? missingRates.Sum(e => e.Tokens),
+                data.Where(e => e.Rate is not null && !e.CreditsUsed.HasValue).Sum(e => e.Tokens),
+                MissingRateByModel: missingRateByModel);
         }
-        TokenPeriod Period(Func<DateOnly, bool> predicate) => Price(analysis.Entries.Where(e => predicate(e.Date)));
+        TokenPeriod Period(Func<DateOnly, bool> predicate, bool includeMissingRateByModel = false) =>
+            Price(analysis.Entries.Where(e => predicate(e.Date)), includeMissingRateByModel);
         var eventCounts = contributions.GroupBy(e => UsageCredits.NormalizeModel(e.Model), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Sum(e => e.Events), StringComparer.OrdinalIgnoreCase);
         var projectBranches = contributions.GroupBy(e => e.Workspace ?? "未知项目", StringComparer.OrdinalIgnoreCase)
@@ -113,7 +121,7 @@ internal static class UsageHistoryProjection
                     : Distribution(measured.GetValueOrDefault(date) ?? []), day?.UnratedTokens ?? 0);
         }).ToArray();
         return new(new(Period(d => d == today), Period(d => d >= today.AddDays(-6) && d <= today),
-            Period(d => d.Year == today.Year && d.Month == today.Month && d <= today), Period(_ => true)), days,
+            Period(d => d.Year == today.Year && d.Month == today.Month && d <= today, includeMissingRateByModel: true), Period(_ => true)), days,
             models.OrderByDescending(e => e.Tokens).ToArray(), projects.OrderByDescending(e => e.Tokens).ToArray(),
             new(retained, conflicts, legacy.Count), analysis);
     }

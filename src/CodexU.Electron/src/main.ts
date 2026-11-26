@@ -754,17 +754,14 @@ async function createMainWindow(settings: HostSettings): Promise<BrowserWindow> 
   });
 
   try {
-    await loadRenderer(window);
-    return window;
+    await rendererNavigation.run(() => navigateRenderer(window));
   } catch (reason) {
-    if (mainWindow === window) mainWindow = undefined;
-    if (!window.isDestroyed()) window.destroy();
-    throw reason;
+    if (smokeTest || window.isDestroyed() || window.webContents.isDestroyed()) throw reason;
+    runtimeLog('warn', 'renderer.load', 'initial navigation failed', reason);
+    // A process-gone event may already have scheduled this same retry.
+    scheduleRendererRecovery(window);
   }
-}
-
-function loadRenderer(window: BrowserWindow): Promise<void> {
-  return rendererNavigation.run(() => navigateRenderer(window));
+  return window;
 }
 
 async function navigateRenderer(window: BrowserWindow): Promise<void> {
@@ -1294,7 +1291,7 @@ async function recoverSidecar(attempt: number): Promise<void> {
   const window = mainWindow;
   if (!window || window.isDestroyed()) return;
   try {
-    await loadRendererForRecovery(window, true);
+    await loadRendererForRecovery(window);
     markRendererRecoveredBySidecar();
     if (!smokeTest) window.show();
   } catch (reason) {
@@ -1359,22 +1356,16 @@ async function recoverRenderer(window: BrowserWindow, attempt: number): Promise<
   rendererRecoveryRunning = false;
 }
 
-async function loadRendererForRecovery(window: BrowserWindow, fresh = false): Promise<void> {
-  let failureGeneration = rendererFailureGeneration.snapshot();
-  if (fresh) {
-    await rendererNavigation.runFresh(async () => {
-      // The required Sidecar navigation may have waited for a renderer flight
-      // that started against the previous backend. Fence the new flight itself,
-      // not the time spent draining that obsolete navigation.
-      failureGeneration = rendererFailureGeneration.snapshot();
-      await navigateRenderer(window);
-    });
-  } else {
-    await loadRenderer(window);
-  }
-  if (!rendererFailureGeneration.isCurrent(failureGeneration)) {
-    throw new Error('Renderer failed again while its recovery navigation was completing.');
-  }
+function loadRendererForRecovery(window: BrowserWindow): Promise<void> {
+  // An earlier navigation may still be settling after a renderer or Sidecar crash.
+  // Each retry must issue its own load against the current backend.
+  return rendererNavigation.runFresh(async () => {
+    const failureGeneration = rendererFailureGeneration.snapshot();
+    await navigateRenderer(window);
+    if (!rendererFailureGeneration.isCurrent(failureGeneration)) {
+      throw new Error('Renderer failed again while its recovery navigation was completing.');
+    }
+  });
 }
 
 function markRendererRecoveredBySidecar(): void {
@@ -1606,7 +1597,7 @@ function resolveAppIconPath(): string {
   const fileName = process.platform === 'win32' ? 'AppIcon.ico' : 'AppIcon.png';
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'Assets', fileName)
-    : path.resolve(__dirname, '..', '..', 'CodexU.App', 'Assets', fileName);
+    : path.resolve(__dirname, '..', '..', '..', 'assets', fileName);
   if (!existsSync(iconPath) || !statSync(iconPath).isFile()) {
     throw new Error(`Application icon was not found: ${iconPath}`);
   }
