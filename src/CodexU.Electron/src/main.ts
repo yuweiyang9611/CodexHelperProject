@@ -176,8 +176,16 @@ function updateSurfaces(data: SurfaceData): void {
     'statusStripShowTodayTokens', 'statusStripQuotaMode', 'desktopMode', 'todayValuation', 'layout', 'refreshing', 'refreshError']) {
     if (key in data) surfaceSettings[key] = data[key];
   }
-  statusStrip?.update(surfaceSettings);
-  desktopWidget?.update(surfaceSettings);
+  try {
+    statusStrip?.update(surfaceSettings);
+  } catch (reason) {
+    runtimeLog('error', 'status-strip', 'failed to update status strip', reason);
+  }
+  try {
+    desktopWidget?.update(surfaceSettings);
+  } catch (reason) {
+    runtimeLog('error', 'desktop-widget', 'failed to update desktop widget', reason);
+  }
 }
 
 async function handleSurfaceAction(action: string): Promise<unknown> {
@@ -524,7 +532,12 @@ async function startSidecar(): Promise<void> {
     }
 
     client.on('event', (event: SidecarEvent) => {
-      if (sidecar === client) handleSidecarEvent(client, event);
+      if (sidecar !== client) return;
+      try {
+        handleSidecarEvent(client, event);
+      } catch (reason) {
+        runtimeLog('error', 'sidecar.event', `failed to handle ${event.method}`, reason);
+      }
     });
     sidecarHandshakeVersion = handshake.backendVersion;
     sidecar = client;
@@ -586,7 +599,16 @@ function registerLifecycleHandlers(): void {
     updateWindowBackground();
     if (surfaceSettings.theme === 'system') {
       const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-      statusStrip?.update({ theme }); desktopWidget?.update({ theme });
+      try {
+        statusStrip?.update({ theme });
+      } catch (reason) {
+        runtimeLog('error', 'status-strip', 'failed to update status strip theme', reason);
+      }
+      try {
+        desktopWidget?.update({ theme });
+      } catch (reason) {
+        runtimeLog('error', 'desktop-widget', 'failed to update desktop widget theme', reason);
+      }
     }
   });
 
@@ -838,8 +860,8 @@ function handleSidecarEvent(source: SidecarClient, event: SidecarEvent): void {
       void applyChangedSettings(source, event);
       return;
     case 'host.window.setAlwaysOnTop':
-      if (isRecordWithBoolean(event.payload, 'enabled')) {
-        mainWindow?.setAlwaysOnTop(event.payload.enabled);
+      if (isRecordWithBoolean(event.payload, 'enabled') && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setAlwaysOnTop(event.payload.enabled);
       }
       return;
     case 'host.window.show':
@@ -849,7 +871,7 @@ function handleSidecarEvent(source: SidecarClient, event: SidecarEvent): void {
       showAndFocusMainWindow();
       return;
     case 'host.window.hide':
-      mainWindow?.hide();
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
       return;
     case 'host.openExternal':
       if (isSafeExternalUrl(event.payload)) {
@@ -1326,7 +1348,7 @@ async function recoverRenderer(window: BrowserWindow, attempt: number): Promise<
     await loadRendererForRecovery(window);
     rendererRecovery.markRecovered();
     cancelRecoveryFailure('renderer');
-    window.show();
+    if (!window.isDestroyed()) window.show();
     runtimeLog('info', 'renderer.recovery', `recovered attempt=${attempt}`);
   } catch (reason) {
     runtimeLog('error', 'renderer.recovery', `attempt=${attempt} failed`, reason);

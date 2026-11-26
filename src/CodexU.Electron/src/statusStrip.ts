@@ -17,6 +17,7 @@ export interface SurfaceData {
 
 export class StatusStripHost {
   private window?: BrowserWindow;
+  private ensuring?: Promise<void>;
   private data: SurfaceData = {};
   private expanded = false;
   private manual = false;
@@ -30,40 +31,49 @@ export class StatusStripHost {
     screen.on('display-removed', this.displayChanged);
     screen.on('display-metrics-changed', this.displayChanged);
   }
+  private get liveWindow(): BrowserWindow | undefined {
+    if (this.window?.isDestroyed()) this.window = undefined;
+    return this.window;
+  }
   owns(event: IpcMainInvokeEvent): boolean {
-    return Boolean(this.window && !this.window.isDestroyed() && event.sender === this.window.webContents
+    const window = this.liveWindow;
+    return Boolean(window && !window.webContents.isDestroyed?.() && event.sender === window.webContents
       && event.senderFrame === event.sender.mainFrame && event.senderFrame?.url === 'app://codexu/index.html?surface=strip');
   }
   update(data: SurfaceData): void {
     this.data = { ...this.data, ...data };
     if (this.data.statusStripEnabled) void this.ensure().catch(e => console.error('[status-strip]', e));
-    else if (!this.previewTimer) this.window?.hide();
+    else if (!this.previewTimer) this.liveWindow?.hide();
     this.send();
   }
   async control(payload: Record<string, unknown>): Promise<unknown> {
     if (payload.action === 'preview') {
-      await this.ensure();
+      await this.ensure(true);
       if (this.previewTimer) clearTimeout(this.previewTimer);
       const settings = payload.settings as SurfaceData | undefined;
       this.preview = { theme: settings?.theme, statusStripShowTodayTokens: settings?.statusStripShowTodayTokens,
         presentation: payload.presentation as SurfaceData['presentation'] ?? this.data.presentation };
       this.send();
       this.previewTimer = setTimeout(() => { this.previewTimer = undefined; this.preview = undefined; this.update(this.data); }, 10_000);
+      this.previewTimer.unref?.();
     } else if (payload.action === 'recover') {
       if (this.saveTimer) clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
       this.userMoving = false;
       for (const suffix of ['', '.bak', '.tmp']) rmSync(path.join(this.root, 'status-strip-placement.json' + suffix), { force: true });
       this.manual = false;
-      await this.ensure();
+      await this.ensure(true);
       this.placeDefault();
+      this.fit();
       if (!this.data.statusStripEnabled) {
         if (this.previewTimer) clearTimeout(this.previewTimer);
         this.previewTimer = setTimeout(() => { this.previewTimer = undefined; this.update(this.data); }, 10_000);
+        this.previewTimer.unref?.();
       }
     } else if (payload.action !== 'getState') throw new Error('Unsupported status strip control.');
-    const display = this.window ? screen.getDisplayMatching(this.window.getBounds()) : screen.getPrimaryDisplay();
-    return { configuredEnabled: this.data.statusStripEnabled === true, visible: this.window?.isVisible() ?? false,
+    const window = this.liveWindow;
+    const display = window ? screen.getDisplayMatching(window.getBounds()) : screen.getPrimaryDisplay();
+    return { configuredEnabled: this.data.statusStripEnabled === true, visible: window?.isVisible() ?? false,
       positionLocked: this.data.statusStripPositionLocked === true, hasManualPosition: this.manual,
       positionMode: this.manual ? 'manual' : 'automatic', displayName: display.label || String(display.id), message: 'Electron 状态条已接入' };
   }
@@ -75,13 +85,31 @@ export class StatusStripHost {
   }
   dispose(): void {
     if (this.previewTimer) clearTimeout(this.previewTimer);
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.persist(); }
+    this.previewTimer = undefined;
+    this.preview = undefined;
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; this.persist(); }
     screen.removeListener('display-removed', this.displayChanged);
     screen.removeListener('display-metrics-changed', this.displayChanged);
-    this.window?.destroy(); this.window = undefined;
+    this.liveWindow?.destroy();
+    this.window = undefined;
   }
-  private async ensure(): Promise<void> {
-    if (this.window && !this.window.isDestroyed()) { this.window.showInactive(); return; }
+  private async ensure(forceShow = false): Promise<void> {
+    const existing = this.liveWindow;
+    if (existing && !this.ensuring) {
+      if (forceShow || this.data.statusStripEnabled || this.previewTimer) existing.showInactive();
+      return;
+    }
+    if (!this.ensuring) {
+      this.ensuring = this.createWindow().finally(() => { this.ensuring = undefined; });
+    }
+    await this.ensuring;
+    const ready = this.liveWindow;
+    if (!ready) return;
+    this.send();
+    if (forceShow || this.data.statusStripEnabled || this.previewTimer) ready.showInactive();
+    else ready.hide();
+  }
+  private async createWindow(): Promise<void> {
     this.manual = false;
     this.userMoving = false;
     const window = new BrowserWindow({ width: 430, height: 46, frame: false, show: false,
@@ -91,7 +119,19 @@ export class StatusStripHost {
     this.window = window;
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
-    window.webContents.on('render-process-gone', () => { window.destroy(); this.window = undefined; });
+    window.webContents.on('render-process-gone', () => {
+      if (!window.isDestroyed()) window.destroy();
+      if (this.window === window) this.window = undefined;
+    });
+    window.once('closed', () => {
+      if (this.window !== window) return;
+      this.window = undefined;
+      if (this.previewTimer) {
+        clearTimeout(this.previewTimer);
+        this.previewTimer = undefined;
+        this.preview = undefined;
+      }
+    });
     window.on('will-move', event => {
       if (this.data.statusStripPositionLocked) { event.preventDefault(); return; }
       this.userMoving = true;
@@ -113,35 +153,47 @@ export class StatusStripHost {
       } catch { /* A missing or damaged placement falls back onto the current screen. */ }
     }
     this.fit();
-    await window.loadURL('app://codexu/index.html?surface=strip');
-    if (!window.isDestroyed()) { this.send(); window.showInactive(); }
+    try {
+      await window.loadURL('app://codexu/index.html?surface=strip');
+    } catch (error) {
+      if (!window.isDestroyed()) window.destroy();
+      if (this.window === window) this.window = undefined;
+      throw error;
+    }
   }
   private send(): void {
-    if (this.window && !this.window.isDestroyed()) this.window.webContents.send('codexu:surface-data', { ...this.data, ...this.preview, expanded: this.expanded });
+    const window = this.liveWindow;
+    if (window && !window.webContents.isDestroyed?.()) {
+      window.webContents.send('codexu:surface-data', { ...this.data, ...this.preview, expanded: this.expanded });
+    }
   }
   private placeDefault(): void {
+    const window = this.liveWindow;
+    if (!window) return;
     const area = screen.getPrimaryDisplay().workArea;
     const l = this.layout;
-    this.window?.setPosition(Math.round(area.x + area.width - Math.min(l.width, area.width) - l.rightOffset), area.y + l.topOffset);
+    window.setPosition(Math.round(area.x + area.width - Math.min(l.width, area.width) - l.rightOffset), area.y + l.topOffset);
   }
   private get layout() {
     return this.data.layout ?? { width: 430, collapsedHeight: 46, expandedHeight: 290, margin: 8, rightOffset: 18, topOffset: 10 };
   }
   private fit(): void {
-    if (!this.window || this.window.isDestroyed()) return;
-    const bounds = this.window.getBounds();
+    const window = this.liveWindow;
+    if (!window) return;
+    const bounds = window.getBounds();
     const area = screen.getDisplayMatching(bounds).workArea;
     const l = this.layout;
     const mx = Math.min(l.margin, Math.max(0, Math.floor((area.width - 1) / 2)));
     const my = Math.min(l.margin, Math.max(0, Math.floor((area.height - 1) / 2)));
     const width = Math.min(l.width, area.width - 2 * mx);
     const height = Math.min(this.expanded ? l.expandedHeight : l.collapsedHeight, area.height - 2 * my);
-    this.window.setBounds({ width, height, x: Math.max(area.x + mx, Math.min(bounds.x, area.x + area.width - mx - width)),
+    window.setBounds({ width, height, x: Math.max(area.x + mx, Math.min(bounds.x, area.x + area.width - mx - width)),
       y: Math.max(area.y + my, Math.min(bounds.y, area.y + area.height - my - height)) });
   }
   private persist(): void {
-    if (!this.manual || !this.window || this.window.isDestroyed()) return;
-    const b = this.window.getBounds(); const p = screen.dipToScreenPoint({ x: b.x, y: b.y });
+    const window = this.liveWindow;
+    if (!this.manual || !window) return;
+    const b = window.getBounds(); const p = screen.dipToScreenPoint({ x: b.x, y: b.y });
     try {
       mkdirSync(this.root, { recursive: true });
       const file = path.join(this.root, 'status-strip-placement.json');
