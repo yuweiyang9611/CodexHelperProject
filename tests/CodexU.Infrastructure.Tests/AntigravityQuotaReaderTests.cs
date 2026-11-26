@@ -70,11 +70,67 @@ public sealed class AntigravityQuotaReaderTests
     [InlineData(1, "SUCCESS", "usage", 0)]
     [InlineData(0, "FAILURE", "usage", 0)]
     [InlineData(0, "SUCCESS", "chat", 0)]
-    [InlineData(0, "SUCCESS", "usage", 1)]
     public void RejectsUnverifiedCommandResults(int exitCode, string status, string command, int turns)
     {
         var output = Envelope("[]", status, command, turns);
         Assert.Equal(AntigravityQuotaStatus.Unavailable, AntigravityQuotaReader.Parse(new(exitCode, output), Now).Status);
+    }
+
+    [Theory]
+    // Observed: a /usage that fell through to a prompt exits 3 with status ERROR and one turn.
+    [InlineData(3, """{"status":"ERROR","num_turns":1}""")]
+    [InlineData(0, """{"status":"SUCCESS","num_turns":1,"command":{"name":"usage","data":{"groups":[]}}}""")]
+    [InlineData(0, """{"status":"SUCCESS","num_turns":0,"usage":{"input_tokens":11000,"output_tokens":0},"command":{"name":"usage","data":{"groups":[]}}}""")]
+    public void AModelTurnIsReportedEvenWhenTheRunFailed(int exitCode, string output)
+    {
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, AntigravityQuotaReader.Parse(new(exitCode, output), Now).Status);
+    }
+
+    [Fact]
+    public void ZeroTokenUsageIsAnOrdinaryUsageAnswer()
+    {
+        var output = Envelope("""[{"name":"Gemini","buckets":[{"window":"5h","remaining_fraction":0.5}]}]""")
+            .Replace("\"num_turns\":0", "\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"total_tokens\":0}", StringComparison.Ordinal);
+        Assert.Equal(AntigravityQuotaStatus.Ready, AntigravityQuotaReader.Parse(new(0, output), Now).Status);
+    }
+
+    [Fact]
+    public void AGroupWithoutBucketsDoesNotHideTheOthers()
+    {
+        var result = AntigravityQuotaReader.Parse(new(0, Envelope("""
+            [{"name":"Credits","balance":3},
+             {"name":"Gemini","buckets":[{"window":"5h","remaining_fraction":0.4}]}]
+            """)), Now);
+
+        Assert.Equal(AntigravityQuotaStatus.Ready, result.Status);
+        Assert.Equal("Gemini", Assert.Single(result.Groups).Name);
+    }
+
+    [Fact]
+    public async Task AVersionThatRanAModelTurnIsNotQueriedAgainUntilTheVersionChanges()
+    {
+        var clock = new ManualClock();
+        var version = "1.5.18";
+        var usageCalls = 0;
+        var reader = new AntigravityQuotaReader(() => "agy.exe", (info, _) =>
+        {
+            if (info.ArgumentList.SequenceEqual(["--version"]))
+                return Task.FromResult(new ClaudeCliAuthCommandResult(0, version + "\n"));
+            usageCalls++;
+            return Task.FromResult(usageCalls == 1
+                ? new ClaudeCliAuthCommandResult(3, """{"status":"ERROR","num_turns":1}""")
+                : new ClaudeCliAuthCommandResult(0, Envelope("""[{"name":"Gemini","buckets":[{"window":"5h","remaining_fraction":1}]}]""")));
+        }, clock);
+
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await reader.ReadAsync()).Status);
+        clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(AntigravityQuotaStatus.ModelInvoked, (await reader.ReadAsync()).Status);
+        Assert.Equal(1, usageCalls);
+
+        version = "1.5.19";
+        clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(AntigravityQuotaStatus.Ready, (await reader.ReadAsync()).Status);
+        Assert.Equal(2, usageCalls);
     }
 
     [Fact]

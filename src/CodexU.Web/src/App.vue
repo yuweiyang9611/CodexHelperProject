@@ -10,31 +10,71 @@ import ProjectRankView from './views/ProjectRankView.vue'
 import SkillUsageView from './views/SkillUsageView.vue'
 import UsageTrendView from './views/UsageTrendView.vue'
 import { useRecentUsage } from './composables/useRecentUsage'
+import { antigravityQuotaVisible, useAntigravityQuota } from './composables/useAntigravityQuota'
 import { useThemePreference } from './composables/useThemePreference'
 import { useViewportScale } from './composables/useViewportScale'
 import { compactNumber, relativeTime } from './format'
 import { useDashboardStore } from './stores/dashboard'
 import { host } from './host'
+import { readPreference, writePreference } from './preferences'
+import type { AgentRuntime } from './types'
 
 const store = useDashboardStore()
-const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'antigravity' | 'diagnostics'>('usage')
+const isAntigravity = ref(readPreference('quota-provider') === 'antigravity')
+const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'antigravity' | 'diagnostics'>(
+  isAntigravity.value ? 'antigravity' : 'usage',
+)
 const snapshot = computed(() => store.snapshot)
+const quotaActive = computed(() => !!snapshot.value && antigravityQuotaVisible({
+  antigravitySelected: isAntigravity.value,
+  compactMode: store.compactMode,
+  activeTab: activeTab.value,
+}))
+const { quota, loading: antigravityLoading, refresh: refreshAntigravity } = useAntigravityQuota(
+  quotaActive,
+  computed(() => store.settings?.autoRefreshMinutes ?? 5),
+)
 const { layoutStyle } = useViewportScale()
 const { isLightTheme } = useThemePreference()
 // Only the tab summary needs it here; the usage panel derives the rest itself.
 const { lastSevenTotal } = useRecentUsage(snapshot)
 
-const tabs = [
+const dashboardTabs = [
   { id: 'usage' as const, icon: 'activity' as const, label: '用量趋势' },
   { id: 'projects' as const, icon: 'folder' as const, label: '项目排行' },
   { id: 'skills' as const, icon: 'sparkle' as const, label: 'Skill 使用' },
-  { id: 'combined' as const, icon: 'compare' as const, label: '双运行时' },
-  { id: 'antigravity' as const, icon: 'globe' as const, label: 'Antigravity' },
+  { id: 'antigravity' as const, icon: 'activity' as const, label: '额度概览' },
+  { id: 'combined' as const, icon: 'compare' as const, label: '三运行时' },
   { id: 'diagnostics' as const, icon: 'settings' as const, label: '设置与诊断' },
 ]
+const tabs = computed(() => dashboardTabs.filter(tab => isAntigravity.value
+  ? ['antigravity', 'combined', 'diagnostics'].includes(tab.id)
+  : tab.id !== 'antigravity'))
+
+async function selectProvider(provider: AgentRuntime | 'antigravity') {
+  if (provider === 'antigravity') {
+    if (isAntigravity.value) return
+    isAntigravity.value = true
+    writePreference('quota-provider', 'antigravity')
+    if (activeTab.value !== 'combined') activeTab.value = 'antigravity'
+    return
+  }
+  isAntigravity.value = false
+  writePreference('quota-provider', 'runtime')
+  if (activeTab.value === 'antigravity') activeTab.value = 'usage'
+  await store.selectRuntime(provider)
+}
+
+function refreshProvider() {
+  if (isAntigravity.value) {
+    void refreshAntigravity(true)
+  } else {
+    void store.refresh()
+  }
+}
 
 async function selectTabFromKeyboard(event: KeyboardEvent, index: number) {
-  const lastIndex = tabs.length - 1
+  const lastIndex = tabs.value.length - 1
   let nextIndex = index
 
   if (event.key === 'ArrowRight') nextIndex = index === lastIndex ? 0 : index + 1
@@ -44,15 +84,16 @@ async function selectTabFromKeyboard(event: KeyboardEvent, index: number) {
   else return
 
   event.preventDefault()
-  activeTab.value = tabs[nextIndex].id
+  activeTab.value = tabs.value[nextIndex].id
   await nextTick()
-  document.getElementById(`tab-${tabs[nextIndex].id}`)?.focus()
+  document.getElementById(`tab-${activeTab.value}`)?.focus()
 }
 
 onMounted(async () => {
   await store.initialize()
   await nextTick()
-  if (!store.error && store.snapshot && store.settings && document.querySelector('.overview-grid')) {
+  // The packaged smoke test relies on this only firing once a dashboard actually rendered.
+  if (!store.error && store.snapshot && store.settings && document.querySelector('.overview-grid, .antigravity-view')) {
     await host.request('app.ready')
   }
 })
@@ -76,18 +117,26 @@ onMounted(async () => {
     </div>
 
     <template v-else-if="snapshot">
-      <AppHeader :snapshot="snapshot" @open-settings="activeTab = 'diagnostics'" />
+      <AppHeader
+        :snapshot="snapshot"
+        :provider="isAntigravity ? 'antigravity' : store.runtime"
+        :refreshing="isAntigravity ? antigravityLoading : store.isRefreshing"
+        @select-provider="selectProvider"
+        @refresh="refreshProvider"
+        @open-settings="activeTab = 'diagnostics'"
+      />
 
-      <div v-if="store.error" class="notice error-notice" role="alert" aria-live="assertive" aria-atomic="true">{{ store.error }}</div>
+      <div v-if="store.error && !isAntigravity" class="notice error-notice" role="alert" aria-live="assertive" aria-atomic="true">{{ store.error }}</div>
       <div v-if="store.updateStatus?.isUpdateAvailable" class="notice update-notice">
         <span>{{ store.updateState?.phase === 'ready' ? `v${store.updateState.version} 已下载，可重启更新` : store.updateStatus.status }}</span>
         <button v-if="store.updateState?.phase === 'ready'" type="button" :disabled="store.isInstallingUpdate || store.isRunningLocalOperation || store.isUpdatingSettings" @click="store.installUpdate()">重启并更新</button>
         <button type="button" @click="store.openReleasePage()">查看发布</button>
       </div>
 
-      <OverviewCards v-if="activeTab !== 'antigravity'" :snapshot="snapshot" />
+      <OverviewCards v-if="!isAntigravity" :snapshot="snapshot" />
+      <AntigravityQuotaView v-else-if="store.compactMode" :quota="quota" :loading="antigravityLoading" />
 
-      <section class="dashboard-section glass-card">
+      <section v-if="!isAntigravity || !store.compactMode" class="dashboard-section glass-card">
         <div class="dashboard-toolbar">
           <nav class="tabs" role="tablist" aria-label="仪表盘视图">
             <button
@@ -110,7 +159,6 @@ onMounted(async () => {
             <template v-if="activeTab === 'usage'">近 7 日 <strong>{{ compactNumber(lastSevenTotal) }}</strong></template>
             <template v-else-if="activeTab === 'projects'">已归类 <strong>{{ snapshot.projects.length }}</strong> 个项目</template>
             <template v-else-if="activeTab === 'skills'">发现 <strong>{{ snapshot.skills.length }}</strong> 个 Skill</template>
-            <template v-else-if="activeTab === 'combined'">Codex + Claude Code 并列</template>
             <template v-else-if="activeTab === 'diagnostics'">数据源 <strong>{{ snapshot.diagnostics.length }}</strong> 项</template>
           </div>
         </div>
@@ -123,16 +171,23 @@ onMounted(async () => {
 
         <SkillUsageView v-else-if="activeTab === 'skills'" id="panel-skills" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-skills" tabindex="0" />
 
-        <!-- The only view without a :snapshot — it reads store.combined, which holds
-             both runtimes, rather than the single selected-runtime snapshot. -->
-        <CombinedRuntimeView v-else-if="activeTab === 'combined'" id="panel-combined" role="tabpanel" aria-labelledby="tab-combined" tabindex="0" />
+        <CombinedRuntimeView
+          v-else-if="activeTab === 'combined'"
+          id="panel-combined"
+          :antigravity-quota="quota"
+          :antigravity-loading="antigravityLoading"
+          role="tabpanel"
+          aria-labelledby="tab-combined"
+          tabindex="0"
+          @refresh-antigravity="refreshAntigravity"
+        />
 
-        <AntigravityQuotaView v-else-if="activeTab === 'antigravity'" id="panel-antigravity" role="tabpanel" aria-labelledby="tab-antigravity" tabindex="0" />
+        <AntigravityQuotaView v-else-if="activeTab === 'antigravity'" id="panel-antigravity" :quota="quota" :loading="antigravityLoading" role="tabpanel" aria-labelledby="tab-antigravity" tabindex="0" />
 
         <DiagnosticsSettings v-else id="panel-diagnostics" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0" />
       </section>
 
-      <footer class="app-footer">
+      <footer v-if="!isAntigravity" class="app-footer">
         <div><i class="status-light" /><span>数据仅在本机处理</span><span class="footer-divider" />{{ snapshot.diagnostics[0] ?? '精细 token 事件已就绪' }}</div>
         <span>刷新于 {{ relativeTime(snapshot.refreshedAt) }}</span>
       </footer>

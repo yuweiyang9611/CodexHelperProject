@@ -58,7 +58,7 @@ public sealed class DashboardService(
                 claudeDesktopUsageTranscript,
                 // Only the dashboard reader queries the CLI; the analysis reader below
                 // never needs quota, so it must not start extra CLI processes.
-                claudeCliQuotaEnabled ? ClaudeCliQuotaCollector.Shared : null),
+                claudeCliQuotaEnabled ? ClaudeCliQuotaCollector.ForDataDirectory(applicationDataDirectory) : null),
             new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)),
             new CodexLocalUsageReader(paths, incrementalIndexEnabled, null, showSubagents,
                 customRates, completeRateCatalog, applicationDataDirectory),

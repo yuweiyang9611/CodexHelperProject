@@ -505,8 +505,8 @@ public sealed class UsageMathTests
     [Fact]
     public void BuiltInCatalog_IdentifiesCurrentOfficialOpenAiCatalog()
     {
-        Assert.Equal("2026.11.1", UsageCredits.BuiltInCatalog.CatalogVersion);
-        Assert.Equal(new DateOnly(2026, 11, 1), UsageCredits.BuiltInCatalog.PublishedOn);
+        Assert.Equal("2026.11.2", UsageCredits.BuiltInCatalog.CatalogVersion);
+        Assert.Equal(new DateOnly(2026, 11, 27), UsageCredits.BuiltInCatalog.PublishedOn);
         Assert.Contains("OpenAI API Standard", UsageCredits.BuiltInCatalog.Source, StringComparison.Ordinal);
 
         var astra = Assert.Single(UsageCredits.BuiltInRates, rate => rate.Model == "gpt-6-astra");

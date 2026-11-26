@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
-import { openDemo, openTab, TAB_IDS } from './demo'
+import { openAntigravity, openDemo, openTab, TAB_IDS } from './demo'
 
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 
@@ -23,6 +23,10 @@ test('all dashboard views satisfy WCAG A and AA automated checks', async ({ page
 
     expect(results.violations, `Axe violations in dashboard tab ${id}`).toEqual([])
   }
+
+  await openAntigravity(page)
+  const antigravity = await new AxeBuilder({ page }).include('.app-shell').withTags(wcagTags).analyze()
+  expect(antigravity.violations, 'Axe violations in the Antigravity overview').toEqual([])
 })
 
 test('pinned rate snapshot satisfies WCAG A and AA automated checks', async ({ page }, testInfo) => {

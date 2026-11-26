@@ -1,6 +1,6 @@
 import { createApp, nextTick, type App } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CombinedRuntimeView from '../../src/views/CombinedRuntimeView.vue'
 import { useDashboardStore } from '../../src/stores/dashboard'
 import { monthlyValue, appSettings, rateLimitWindow, runtimeRead, snapshot, tokenPeriod } from './fixtures'
@@ -17,6 +17,7 @@ function summary(cost: Partial<CombinedRuntimeSummary['cost']> = {}): CombinedRu
 
 let pinia: Pinia
 let app: App | null
+const noAntigravity = { antigravityQuota: null, antigravityLoading: false }
 
 beforeEach(() => {
   pinia = createPinia()
@@ -43,7 +44,7 @@ describe('combined subscription amounts', () => {
     ]
     store.combined = { summary: result, codex: runtimeRead(), claudeCode: runtimeRead({ snapshot: snapshot({ runtime: 'claudeCode' }) }) }
     const container = document.createElement('div')
-    app = createApp(CombinedRuntimeView)
+    app = createApp(CombinedRuntimeView, noAntigravity)
     app.use(pinia)
     app.mount(container)
     expect([...container.querySelectorAll('.combined-table tbody tr')].map(r => r.children[3]?.textContent?.trim()))
@@ -69,7 +70,7 @@ describe('combined subscription amounts', () => {
     }
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(CombinedRuntimeView)
+    app = createApp(CombinedRuntimeView, noAntigravity)
     app.use(pinia)
     app.mount(container)
 
@@ -92,7 +93,7 @@ describe('combined subscription amounts', () => {
         tokens: { ...snapshot().tokens, month: tokenPeriod({ tokens: 100 }) }, monthlyValue: partial }) }),
     }
     const container = document.createElement('div')
-    app = createApp(CombinedRuntimeView)
+    app = createApp(CombinedRuntimeView, noAntigravity)
     app.use(pinia)
     app.mount(container)
     const costs = [...container.querySelectorAll('.combined-card')].find(card => card.querySelector('h2')?.textContent === '合计成本')!
@@ -127,7 +128,7 @@ describe('combined subscription amounts', () => {
     }
     const container = document.createElement('div')
     document.body.append(container)
-    app = createApp(CombinedRuntimeView)
+    app = createApp(CombinedRuntimeView, noAntigravity)
     app.use(pinia)
     app.mount(container)
 
@@ -154,4 +155,48 @@ describe('combined subscription amounts', () => {
     expect(costs.textContent).not.toContain('US$400.00')
     expect(costs.textContent).not.toContain('含手动值')
   })
+})
+
+it('preserves Antigravity quota when the combined usage read fails, and retries both reads', () => {
+  const store = useDashboardStore(pinia)
+  const loadCombined = vi.spyOn(store, 'loadCombined').mockResolvedValue(undefined)
+  const refreshAntigravity = vi.fn()
+  store.combinedError = '无法读取本机用量'
+  const container = document.createElement('div')
+  app = createApp(CombinedRuntimeView, {
+    antigravityQuota: {
+      status: 'ready',
+      groups: [{
+        name: 'Gemini Pro',
+        buckets: [{ label: '每周', remainingPercent: 0, disabled: false }],
+      }],
+    },
+    antigravityLoading: false,
+    onRefreshAntigravity: refreshAntigravity,
+  })
+  app.use(pinia)
+  app.mount(container)
+
+  expect(container.querySelector('.combined-runtime-column')?.textContent).toContain('Gemini Pro')
+  expect(container.querySelector('.combined-state-error')?.textContent).toContain('无法读取本机用量')
+  expect(container.querySelector('.combined-statistics-scope')).toBeNull()
+  container.querySelector<HTMLButtonElement>('.combined-refresh')!.click()
+  expect(loadCombined).toHaveBeenLastCalledWith(true)
+  expect(refreshAntigravity).toHaveBeenCalledOnce()
+})
+
+it('keeps the usage retry available while only a background Antigravity poll is running', () => {
+  const store = useDashboardStore(pinia)
+  const loadCombined = vi.spyOn(store, 'loadCombined').mockResolvedValue(undefined)
+  store.combinedError = '无法读取本机用量'
+  const container = document.createElement('div')
+  app = createApp(CombinedRuntimeView, { antigravityQuota: null, antigravityLoading: true })
+  app.use(pinia)
+  app.mount(container)
+
+  const retry = container.querySelector<HTMLButtonElement>('.combined-refresh')!
+  expect(retry.disabled).toBe(false)
+  expect(retry.textContent?.trim()).toBe('重新读取')
+  retry.click()
+  expect(loadCombined).toHaveBeenLastCalledWith(true)
 })

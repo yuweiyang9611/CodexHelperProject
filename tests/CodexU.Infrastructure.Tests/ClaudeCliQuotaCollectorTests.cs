@@ -183,6 +183,112 @@ public sealed class ClaudeCliQuotaCollectorTests
     }
 
     [Fact]
+    public async Task ADetectedLoginDoesNotClearAFailureBackoffThatMayBeTheEndpointsRateLimit()
+    {
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        var collector = Collector(clock, (_, _, _) => { calls++; throw new IOException("rate limited"); });
+        await collector.ReadAsync();
+
+        collector.RetrySoon();
+        clock.Advance(ClaudeCliQuotaCollector.FailureBackoff[0] - TimeSpan.FromSeconds(1));
+        await collector.ReadAsync();
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task ARestartedAppKeepsTheIntervalAndReusesTheSavedReading()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query = (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 47, Now.AddHours(3)), Window("weekly_all", 34, Now.AddDays(2)))));
+        };
+        await Persistent(fixture, clock, query).ReadAsync();
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var restarted = await Persistent(fixture, clock, query).ReadAsync();
+
+        Assert.Equal(1, calls);
+        Assert.Equal(ClaudeCliQuotaStatus.Fresh, restarted.Status);
+        Assert.Equal(new RateLimitWindow(47, 300, Now.AddHours(3), Now, "claude-cli-get-usage"), restarted.Primary);
+        Assert.Equal(34, restarted.Secondary?.UsedPercent);
+        var saved = await File.ReadAllTextAsync(fixture.StateFile);
+        Assert.DoesNotContain("request", saved, StringComparison.OrdinalIgnoreCase);
+
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        await Persistent(fixture, clock, query).ReadAsync();
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task ARestartedAppKeepsTheFailureBackoff()
+    {
+        using var fixture = new Fixture();
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> failing = (_, _, _) => { calls++; throw new IOException("429"); };
+        await Persistent(fixture, clock, failing).ReadAsync();
+
+        clock.Advance(ClaudeCliQuotaCollector.FailureBackoff[0] - TimeSpan.FromSeconds(1));
+        var restarted = await Persistent(fixture, clock, failing).ReadAsync();
+
+        Assert.Equal(1, calls);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, restarted.Status);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Persistent(fixture, clock, failing).ReadAsync();
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("""{"version":99,"nextAttemptAt":"2099-01-01T00:00:00Z","failures":0,"lastStatus":1}""")]
+    [InlineData("""{"version":1,"nextAttemptAt":"2026-11-26T03:00:00Z","failures":-5,"lastStatus":1}""")]
+    public async Task AnUnusableSavedScheduleCostsOnlyOneExtraQuery(string saved)
+    {
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StateFile)!);
+        await File.WriteAllTextAsync(fixture.StateFile, saved);
+        var calls = 0;
+
+        var reading = await Persistent(fixture, new MutableClock(Now), (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 12, Now.AddHours(1)))));
+        }).ReadAsync();
+
+        Assert.Equal(1, calls);
+        Assert.Equal(12, reading.Primary?.UsedPercent);
+    }
+
+    [Fact]
+    public async Task ASavedWaitBeyondTheLongestScheduleIsCapped()
+    {
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StateFile)!);
+        await File.WriteAllTextAsync(fixture.StateFile,
+            """{"version":1,"nextAttemptAt":"2027-06-01T00:00:00Z","failures":1,"lastStatus":5}""");
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query = (_, id, _) =>
+        {
+            calls++;
+            return Task.FromResult(Response(id, Limits(Window("session", 12, Now.AddHours(2)))));
+        };
+        var collector = Persistent(fixture, clock, query);
+
+        await collector.ReadAsync();
+        Assert.Equal(0, calls);
+        clock.Advance(ClaudeCliQuotaCollector.NotAvailableRetry);
+        await collector.ReadAsync();
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task ADetectedLoginEndsTheWaitButNotTheIntervalAfterASuccess()
     {
         var clock = new MutableClock(Now);
@@ -316,6 +422,11 @@ public sealed class ClaudeCliQuotaCollectorTests
         Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query) =>
         new(() => new("fixture", ClaudeCliSource.DesktopEmbedded), query, clock, TimeSpan.FromSeconds(20));
 
+    // Each call stands for a fresh app process sharing the saved schedule.
+    private static ClaudeCliQuotaCollector Persistent(Fixture fixture, TimeProvider clock,
+        Func<ClaudeCliExecutable, string, CancellationToken, Task<string>> query) =>
+        new(() => new("fixture", ClaudeCliSource.DesktopEmbedded), query, clock, TimeSpan.FromSeconds(20), fixture.StateFile);
+
     internal static string Response(string requestId, JsonArray limits, JsonObject? extra = null)
     {
         var usage = extra ?? new JsonObject();
@@ -348,6 +459,7 @@ public sealed class ClaudeCliQuotaCollectorTests
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "codexu-cli-quota-" + Guid.NewGuid().ToString("N"));
+        public string StateFile => Path.Combine(Root, "claude-code", "cli-quota-state.json");
         public Fixture() => Directory.CreateDirectory(Root);
         public void Dispose()
         {

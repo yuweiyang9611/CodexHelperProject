@@ -142,6 +142,24 @@ public sealed class ClaudeCliAuthStatusReaderTests
         Assert.Equal(ClaudeCliSource.None, status.Source);
     }
 
+    [Fact]
+    public async Task RealProcessWithOversizedOutputFailsAtOnceInsteadOfWaitingForTheDeadline()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var info = ClaudeCliAuthStatusReader.StartInfo("powershell.exe");
+        info.ArgumentList.Clear();
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::Out.Write('x' * 200000); [Console]::Out.Flush(); Start-Sleep -Seconds 60" })
+            info.ArgumentList.Add(argument);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var watch = Stopwatch.StartNew();
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => ClaudeCliAuthStatusReader.RunProcessAsync(info, deadline.Token));
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
+        Assert.False(deadline.IsCancellationRequested);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

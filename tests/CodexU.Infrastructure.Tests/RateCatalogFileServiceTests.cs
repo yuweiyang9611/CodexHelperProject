@@ -99,6 +99,10 @@ public sealed class RateCatalogFileServiceTests
     [InlineData("claude-mythos-5-1", 9, 1, 250d, 6.25d, 1_250d, "anthropic-2026.10.1")]
     [InlineData("claude-opus-5-5", 9, 22, 100d, 5d, 500d, "anthropic-2026.10.1")]
     [InlineData("claude-sonnet-5-5", 9, 28, 50d, 5d, 250d, "anthropic-2026.10.1")]
+    [InlineData("gpt-6.2-astra", 11, 17, 200d, 10d, 1_000d, "2026.11.2")]
+    [InlineData("gpt-6.2-sol", 11, 17, 50d, 2.5d, 250d, "2026.11.2")]
+    [InlineData("claude-fable-5-2", 11, 9, 200d, 5d, 1_000d, "anthropic-2026.11.2")]
+    [InlineData("claude-mythos-5-2", 11, 9, 200d, 5d, 1_000d, "anthropic-2026.11.2")]
     public async Task ExportAndImportAsync_RoundTripsNewOfficialRatesWithoutChangingProvenance(
         string model, int month, int day, double input, double cached, double output, string version)
     {
@@ -114,8 +118,8 @@ public sealed class RateCatalogFileServiceTests
             var imported = await service.ImportAsync(path);
 
             Assert.True(export.Success);
-            Assert.Equal("2026.11.1", imported.CatalogVersion);
-            Assert.Equal("2026.11.1", imported.BaseCatalogVersion);
+            Assert.Equal(UsageCredits.CurrentCatalogVersion, imported.CatalogVersion);
+            Assert.Equal(UsageCredits.CurrentCatalogVersion, imported.BaseCatalogVersion);
             var row = Assert.Single(imported.Rates, rate => rate.Model == model && rate.EffectiveFrom == effective);
             Assert.Equal(original, row);
             Assert.Equal(version, row.CatalogVersion);

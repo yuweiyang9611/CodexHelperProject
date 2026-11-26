@@ -90,7 +90,7 @@ public sealed class IpcDispatcher : IDisposable
         _externalUriLauncher = externalUriLauncher;
         _readClaudeAuthStatus = readClaudeAuthStatus ?? new ClaudeCliAuthStatusReader().ReadAsync;
         // A login confirmed in settings ends the background quota query's long wait.
-        _claudeCliLoggedIn = claudeCliLoggedIn ?? ClaudeCliQuotaCollector.Shared.RetrySoon;
+        _claudeCliLoggedIn = claudeCliLoggedIn ?? ClaudeCliQuotaCollector.RetrySoonAfterLogin;
         _readAntigravityQuota = readAntigravityQuota ?? AntigravityQuotaReader.Shared.ReadAsync;
         _statusStripCommands = statusStripCommands;
 

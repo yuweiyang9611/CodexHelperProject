@@ -2,11 +2,14 @@
 import { computed, onMounted } from 'vue'
 import QuotaRing from '../components/QuotaRing.vue'
 import ClaudeDataNotice from '../components/ClaudeDataNotice.vue'
+import AntigravityQuotaView from './AntigravityQuotaView.vue'
 import { compactNumber, currencyAmount, exhaustionTime, qualityLabel, relativeTime } from '../format'
 import { useQuotaClock } from '../composables/useQuotaClock'
 import { useDashboardStore } from '../stores/dashboard'
-import type { AgentRuntime, RuntimeReadResult } from '../types'
+import type { AgentRuntime, AntigravityQuotaSnapshot, RuntimeReadResult } from '../types'
 
+defineProps<{ antigravityQuota: AntigravityQuotaSnapshot | null; antigravityLoading: boolean }>()
+const emit = defineEmits<{ refreshAntigravity: [] }>()
 const store = useDashboardStore()
 const summary = computed(() => store.combined?.summary)
 const entries = computed(() => store.combined ? [store.combined.codex, store.combined.claudeCode] : [])
@@ -14,6 +17,11 @@ const now = useQuotaClock(() => entries.value.flatMap(e => [e.snapshot.primaryQu
 const earliest = computed(() => summary.value?.forecasts.find(phase => !phase.validUntil || Date.parse(phase.validUntil) > now.value))
 const PERIODS = [{ key: 'today', label: '今日' }, { key: 'sevenDays', label: '近 7 日' }, { key: 'month', label: '本月' }] as const
 const runtimeLabel = (runtime: AgentRuntime) => runtime === 'codex' ? 'Codex' : 'Claude Code'
+
+function reloadAll() {
+  void store.loadCombined(true)
+  emit('refreshAntigravity')
+}
 
 function subscriptionText(entry: RuntimeReadResult) {
   const value = entry.snapshot.monthlyValue
@@ -38,62 +46,64 @@ onMounted(() => void store.loadCombined())
   <!-- Single root: App.vue's id / role="tabpanel" / aria-labelledby / tabindex fall
        through onto this element, as they do for every other panel view. -->
   <section class="combined-view">
-    <div v-if="store.isLoadingCombined && !summary" class="combined-state" role="status" aria-live="polite">
-      正在同时读取 Codex 与 Claude Code 的本机数据…
+    <div v-if="summary?.failedRuntimes.length" class="combined-banner" role="alert">
+      {{ summary.failedRuntimes.map(runtimeLabel).join('、') }} 本次未能读取，下面的合计不包含它的用量。
     </div>
 
-    <div v-else-if="store.combinedError && !summary" class="combined-state combined-state-error" role="alert">
-      <strong>双运行时数据读取失败</strong>
-      <span>{{ store.combinedError }}</span>
-      <button type="button" @click="store.loadCombined(true)">重试</button>
-    </div>
-
-    <template v-else-if="summary">
-      <div v-if="summary.failedRuntimes.length" class="combined-banner" role="alert">
-        {{ summary.failedRuntimes.map(runtimeLabel).join('、') }} 本次未能读取，下面的合计不包含它的用量。
+    <div class="combined-columns">
+      <div v-if="!summary && store.combinedError" class="combined-state combined-state-error glass-card" role="alert">
+        <strong>Codex 与 Claude Code 数据读取失败</strong>
+        <span>{{ store.combinedError }}</span>
       </div>
+      <div v-else-if="!summary" class="combined-state glass-card" role="status">
+        正在读取 Codex 与 Claude Code 的本机数据…
+      </div>
+      <article v-for="entry in entries" :key="entry.snapshot.runtime" class="combined-runtime-column glass-card">
+        <header>
+          <strong>{{ runtimeLabel(entry.snapshot.runtime) }}</strong>
+          <span v-if="entry.contribution === 'failed'" class="combined-tag combined-tag-error">读取失败</span>
+          <span v-else-if="entry.contribution === 'absent'" class="combined-tag">未发现本机用量</span>
+          <span v-else class="combined-tag">{{ entry.snapshot.account?.planType?.toUpperCase() ?? '本机' }}</span>
+        </header>
 
-      <div class="combined-columns">
-        <article v-for="entry in entries" :key="entry.snapshot.runtime" class="combined-runtime-column glass-card">
-          <header>
-            <strong>{{ runtimeLabel(entry.snapshot.runtime) }}</strong>
-            <span v-if="entry.contribution === 'failed'" class="combined-tag combined-tag-error">读取失败</span>
-            <span v-else-if="entry.contribution === 'absent'" class="combined-tag">未发现本机用量</span>
-            <span v-else class="combined-tag">{{ entry.snapshot.account?.planType?.toUpperCase() ?? '本机' }}</span>
-          </header>
+        <div class="combined-quota-pair">
+          <QuotaRing
+            label="5 小时"
+            :quota="entry.snapshot.primaryQuota"
+            :now="now"
+            color="blue"
+            :forecast="entry.snapshot.primaryForecast"
+          />
+          <QuotaRing
+            label="7 天"
+            :quota="entry.snapshot.secondaryQuota"
+            :now="now"
+            color="violet"
+            :forecast="entry.snapshot.secondaryForecast"
+          />
+        </div>
 
-          <div class="combined-quota-pair">
-            <QuotaRing
-              label="5 小时"
-              :quota="entry.snapshot.primaryQuota"
-              :now="now"
-              color="blue"
-              :forecast="entry.snapshot.primaryForecast"
-            />
-            <QuotaRing
-              label="7 天"
-              :quota="entry.snapshot.secondaryQuota"
-              :now="now"
-              color="violet"
-              :forecast="entry.snapshot.secondaryForecast"
-            />
+        <ClaudeDataNotice :snapshot="entry.snapshot" :now="now" />
+
+        <dl class="combined-runtime-facts">
+          <div><dt>本月本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.month.tokens) }}</dd></div>
+          <div><dt>本机原始 token API 估算</dt><dd>{{ entry.contribution === 'present' && entry.snapshot.monthlyValue?.knownAmount != null ? (entry.snapshot.monthlyValue.isLowerBound ? '≥ ' : '') + currencyAmount(entry.snapshot.monthlyValue.knownAmount) : '无法核算' }}</dd></div>
+          <div><dt>累计本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.lifetime.tokens) }}</dd></div>
+          <div>
+            <dt>订阅月费估算</dt>
+            <dd>{{ subscriptionText(entry) }}</dd>
           </div>
+          <div><dt>统计精度</dt><dd>{{ qualityLabel(entry.snapshot.tokens.month.quality) }}</dd></div>
+        </dl>
+      </article>
+      <article class="combined-runtime-column glass-card">
+        <header><strong>Antigravity</strong></header>
+        <AntigravityQuotaView embedded :quota="antigravityQuota" :loading="antigravityLoading" />
+      </article>
+    </div>
 
-          <ClaudeDataNotice :snapshot="entry.snapshot" :now="now" />
-
-          <dl class="combined-runtime-facts">
-            <div><dt>本月本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.month.tokens) }}</dd></div>
-            <div><dt>本机原始 token API 估算</dt><dd>{{ entry.contribution === 'present' && entry.snapshot.monthlyValue?.knownAmount != null ? (entry.snapshot.monthlyValue.isLowerBound ? '≥ ' : '') + currencyAmount(entry.snapshot.monthlyValue.knownAmount) : '无法核算' }}</dd></div>
-            <div><dt>累计本机原始 token</dt><dd>{{ compactNumber(entry.snapshot.tokens.lifetime.tokens) }}</dd></div>
-            <div>
-              <dt>订阅月费估算</dt>
-              <dd>{{ subscriptionText(entry) }}</dd>
-            </div>
-            <div><dt>统计精度</dt><dd>{{ qualityLabel(entry.snapshot.tokens.month.quality) }}</dd></div>
-          </dl>
-        </article>
-      </div>
-
+    <template v-if="summary">
+      <p class="combined-statistics-scope">用量、费用、项目和耗尽预测仅统计 Codex 与 Claude Code。</p>
       <article class="combined-card glass-card">
         <h2>合计本机原始用量</h2>
         <div class="combined-metrics">
@@ -147,12 +157,11 @@ onMounted(() => void store.loadCombined())
             <span>{{ exhaustionTime(earliest.exhaustsAt, now) }}</span>
           </p>
           <p class="combined-note">
-            {{ earliest.total }} 个额度窗口中有 {{ earliest.predictable }} 个可预测，
-            其余窗口样本不足或会在耗尽前重置。四个窗口是四份独立额度，不做相加或平均。
+            {{ earliest.total }} 个额度窗口中有 {{ earliest.predictable }} 个可预测，其余窗口样本不足或会在耗尽前重置。
           </p>
         </template>
         <p v-else class="combined-note">
-          暂无窗口会在重置前耗尽，或样本还不足以预测。四个窗口是四份独立额度，不做相加或平均。
+          暂无窗口会在重置前耗尽，或样本还不足以预测。
         </p>
       </article>
 
@@ -184,7 +193,7 @@ onMounted(() => void store.loadCombined())
       <details class="combined-card glass-card combined-omissions">
         <summary>本视图不合并的内容</summary>
         <ul>
-          <li>额度百分比：两个厂商的窗口是彼此独立的额度，分母不同、重置时钟不同，相加或求平均不代表任何东西。</li>
+          <li>额度百分比：各运行时的额度独立展示，每个窗口各有其计量口径和重置时间。</li>
           <li>累计 token：Codex 以云端账户累计兜底（可能含其他机器），Claude 只统计本机现存 transcript（已轮转的日期不计）。</li>
           <li>Token 构成条：Codex 不记录缓存写入，Claude 不记录推理输出，合并后的分段会结构性地只来自一侧。</li>
           <li>费率覆盖率：两侧口径不同，单一数字会让完全未定价的一侧被另一侧掩盖。覆盖率按运行时分别显示。</li>
@@ -193,14 +202,15 @@ onMounted(() => void store.loadCombined())
           <li>日用量曲线：Codex 的序列可能来自 SQLite 兜底，会把一个会话的全部 token 压在一天上。</li>
         </ul>
       </details>
-
-      <p class="combined-footnote">
-        数据刷新于 {{ relativeTime(summary.refreshedAt) }}（取两侧较早者）。
-        <button type="button" class="combined-refresh" @click="store.loadCombined(true)" :disabled="store.isLoadingCombined">
-          {{ store.isLoadingCombined ? '读取中…' : '重新读取' }}
-        </button>
-      </p>
     </template>
+    <p class="combined-footnote">
+      <span v-if="summary">Codex 与 Claude Code 刷新于 {{ relativeTime(summary.refreshedAt) }}（取两侧较早者）。</span>
+      <!-- Only the Codex/Claude read blocks a retry: a background Antigravity poll has its
+           own loading state in its column and coalesces a second request. -->
+      <button type="button" class="combined-refresh" @click="reloadAll" :disabled="store.isLoadingCombined">
+        {{ store.isLoadingCombined ? '读取中…' : '重新读取' }}
+      </button>
+    </p>
   </section>
 </template>
 
@@ -208,10 +218,19 @@ onMounted(() => void store.loadCombined())
 .combined-view { display: flex; flex-direction: column; gap: 14px; }
 .combined-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 16px; color: var(--text-secondary); }
 .combined-state-error strong { color: var(--text-primary); }
-.combined-state button, .combined-refresh { padding: 4px 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.combined-refresh { margin-left: auto; padding: 4px 12px; border: 1px solid var(--stroke); border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .combined-banner { padding: 9px 13px; border-radius: 9px; background: rgba(255,150,90,.12); color: #ffb27a; font-size: 12px; font-weight: 600; }
-.combined-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
-.combined-runtime-column { padding: 16px; }
+.combined-columns {
+  --quota-ring-width: 126px;
+  --quota-ring-size: 108px;
+  --quota-ring-content-top: 18px;
+  --quota-ring-value-size: 28px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.combined-runtime-column { padding: 16px; min-width: 0; }
 .combined-runtime-column header { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
 .combined-runtime-column header strong { color: var(--text-primary); font-size: 14px; }
 .combined-tag { padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,.07); color: var(--text-tertiary); font-size: 11px; }
@@ -229,6 +248,7 @@ onMounted(() => void store.loadCombined())
 .combined-metric strong { color: var(--text-primary); font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .combined-metric-sub { color: var(--text-secondary); font-size: 11px; }
 .combined-note { margin: 11px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.65; }
+.combined-statistics-scope { margin: 0; color: var(--text-secondary); font-size: 12px; }
 .combined-earliest { display: flex; align-items: baseline; gap: 10px; margin: 0; }
 .combined-earliest strong { color: var(--text-primary); font-size: 16px; }
 .combined-earliest span { color: #ffb27a; font-size: 13px; font-weight: 600; }
@@ -240,5 +260,5 @@ onMounted(() => void store.loadCombined())
 .combined-table small { color: var(--text-tertiary); font-weight: 400; }
 .combined-omissions summary { color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; }
 .combined-omissions ul { margin: 11px 0 0; padding-left: 18px; color: var(--text-tertiary); font-size: 11px; line-height: 1.75; }
-.combined-footnote { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; color: var(--text-tertiary); font-size: 11px; }
+.combined-footnote { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; color: var(--text-tertiary); font-size: 11px; }
 </style>

@@ -13,7 +13,8 @@ export interface AntigravityQuotaBucket {
   disabled: boolean
 }
 export interface AntigravityQuotaSnapshot {
-  status: 'ready' | 'notInstalled' | 'unsupportedVersion' | 'unavailable' | 'noQuota'
+  /** modelInvoked: the CLI ran /usage as a prompt; queries stop until its version changes. */
+  status: 'ready' | 'notInstalled' | 'unsupportedVersion' | 'unavailable' | 'noQuota' | 'modelInvoked'
   groups: { name: string; buckets: AntigravityQuotaBucket[] }[]
   observedAt?: string | null
 }

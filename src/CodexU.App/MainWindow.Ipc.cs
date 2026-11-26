@@ -229,7 +229,7 @@ public partial class MainWindow
 
             case "claude.getAuthStatus":
                 var authStatus = await new ClaudeCliAuthStatusReader().ReadAsync(_lifetimeCancellation.Token);
-                if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) ClaudeCliQuotaCollector.Shared.RetrySoon();
+                if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) ClaudeCliQuotaCollector.RetrySoonAfterLogin();
                 return authStatus;
 
             case "antigravity.getQuota":

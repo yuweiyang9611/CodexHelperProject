@@ -23,7 +23,7 @@ export async function openDemo(
 }
 
 /**
- * Every dashboard tab, in the order they appear.
+ * Codex and Claude dashboard tabs, in the order they appear.
  *
  * Tabs are opened by name rather than by position: an index silently points at a
  * different panel the moment a tab is inserted, and a test that opens the wrong panel
@@ -34,11 +34,20 @@ export const TAB_IDS = [
   'projects',
   'skills',
   'combined',
-  'antigravity',
   'diagnostics',
 ] as const
 
 export type TabId = typeof TAB_IDS[number]
+
+export async function openAntigravity(page: Page) {
+  const runtime = page.getByRole('button', { name: 'Antigravity', exact: true })
+  await runtime.click()
+  await expect(runtime).toHaveAttribute('aria-pressed', 'true')
+  const panel = page.locator('#panel-antigravity')
+  await expect(panel.getByRole('heading', { name: 'Gemini Pro', exact: true })).toBeVisible()
+  await settleUi(page)
+  return panel
+}
 
 export async function openTab(page: Page, id: TabId) {
   const tab = page.locator(`#tab-${id}`)
@@ -46,8 +55,11 @@ export async function openTab(page: Page, id: TabId) {
   await expect(tab).toHaveAttribute('aria-selected', 'true')
   // The combined panel loads independently. Wait for its final height before
   // scrolling or capturing it; a short loading panel clamps the scroll position.
-  if (id === 'combined') await expect(page.locator('.combined-columns')).toBeVisible()
-  if (id === 'antigravity') await expect(page.getByRole('button', { name: '刷新额度', exact: true })).toBeEnabled()
+  if (id === 'combined') {
+    const combined = page.locator('#panel-combined')
+    await expect(combined.locator('.combined-runtime-column')).toHaveCount(3)
+    await expect(combined.getByRole('heading', { name: 'Gemini Pro', exact: true })).toBeVisible()
+  }
   if (id === 'diagnostics') {
     await expect(page.getByRole('region', { name: 'Claude CLI 登录状态', exact: true })).toHaveAttribute('aria-busy', 'false')
   }

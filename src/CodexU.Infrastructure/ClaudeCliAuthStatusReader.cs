@@ -163,15 +163,33 @@ public sealed class ClaudeCliAuthStatusReader
         {
             if (!process.Start()) throw new InvalidOperationException("CLI did not start.");
             process.StandardInput.Close();
-            var stdout = ReadBoundedAsync(process.StandardOutput.BaseStream, MaximumOutputBytes, cancellationToken);
-            var stderr = ReadBoundedAsync(process.StandardError.BaseStream, 16 * 1024, cancellationToken);
-            await Task.WhenAll(process.WaitForExitAsync(cancellationToken), stdout, stderr);
+            // An oversized stream stops being read, so a chatty process would block on its
+            // full pipe and never exit. Abort the wait at once instead of holding the
+            // caller until the deadline; the finally block then ends the process tree.
+            using var abort = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var stdout = AbortOnFailure(ReadBoundedAsync(process.StandardOutput.BaseStream, MaximumOutputBytes, abort.Token), abort);
+            var stderr = AbortOnFailure(ReadBoundedAsync(process.StandardError.BaseStream, 16 * 1024, abort.Token), abort);
+            await Task.WhenAll(process.WaitForExitAsync(abort.Token), stdout, stderr);
             return new(process.ExitCode, new UTF8Encoding(false, true).GetString(await stdout));
         }
         finally
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-            catch (Exception exception) when (exception is InvalidOperationException or Win32Exception or NotSupportedException) { }
+            // AggregateException: part of the tree could not be ended. Letting it escape
+            // the finally block would replace the original outcome with an IPC error.
+            catch (Exception exception) when (exception is InvalidOperationException or Win32Exception
+                or NotSupportedException or AggregateException)
+            { }
+        }
+    }
+
+    private static async Task<byte[]> AbortOnFailure(Task<byte[]> read, CancellationTokenSource abort)
+    {
+        try { return await read; }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            abort.Cancel();
+            throw;
         }
     }
 

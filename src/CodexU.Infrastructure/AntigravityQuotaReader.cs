@@ -28,6 +28,8 @@ public sealed class AntigravityQuotaReader
     private readonly SemaphoreSlim _gate = new(1, 1);
     private AntigravityQuotaSnapshot? _lastResult;
     private long _lastCompleted;
+    // The CLI version that once answered /usage with a model turn. Accessed only under _gate.
+    private string? _modelInvokingVersion;
 
     internal AntigravityQuotaReader(
         Func<string?> discover,
@@ -73,13 +75,19 @@ public sealed class AntigravityQuotaReader
             if (version.ExitCode != 0) return Empty(AntigravityQuotaStatus.Unavailable);
 
             // Older versions may run unsupported slash commands as model prompts.
-            if (!Version.TryParse(version.Output.Trim(), out var parsedVersion) || parsedVersion < MinimumVersion)
+            var versionText = version.Output.Trim();
+            if (!Version.TryParse(versionText, out var parsedVersion) || parsedVersion < MinimumVersion)
                 return Empty(AntigravityQuotaStatus.UnsupportedVersion);
+            // A version that already turned /usage into a model turn would do it again on
+            // every refresh, each time spending quota. Only a different CLI version retries.
+            if (string.Equals(_modelInvokingVersion, versionText, StringComparison.Ordinal))
+                return Empty(AntigravityQuotaStatus.ModelInvoked);
 
             var info = StartInfo(executable, workingDirectory,
                 ["-p", "/usage", "--output-format", "json", "--print-timeout", "12s"]);
-            var result = await _run(info, deadline.Token);
-            return Parse(result, _clock.GetUtcNow());
+            var result = Parse(await _run(info, deadline.Token), _clock.GetUtcNow());
+            _modelInvokingVersion = result.Status == AntigravityQuotaStatus.ModelInvoked ? versionText : null;
+            return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -131,7 +139,7 @@ public sealed class AntigravityQuotaReader
 
     internal static AntigravityQuotaSnapshot Parse(ClaudeCliAuthCommandResult result, DateTimeOffset observedAt)
     {
-        if (result.ExitCode != 0 || Encoding.UTF8.GetByteCount(result.Output) > MaximumOutputBytes)
+        if (Encoding.UTF8.GetByteCount(result.Output) > MaximumOutputBytes)
             return Empty(AntigravityQuotaStatus.Unavailable);
 
         try
@@ -142,7 +150,10 @@ public sealed class AntigravityQuotaReader
                 AllowDuplicateProperties = false
             });
             var root = json.RootElement;
-            if (Text(root, "status") != "SUCCESS" || Number(root, "num_turns", 0) != 0
+            // Checked before the exit code: a /usage that fell through to a model turn
+            // ends with status ERROR and a non-zero exit, yet has already spent quota.
+            if (InvokedModel(root)) return Empty(AntigravityQuotaStatus.ModelInvoked);
+            if (result.ExitCode != 0 || Text(root, "status") != "SUCCESS" || Number(root, "num_turns", 0) != 0
                 || !Object(root, "command", out var command) || Text(command, "name") != "usage"
                 || !Object(command, "data", out var data) || !Array(data, "groups", MaximumGroups, out var groups))
                 return Empty(AntigravityQuotaStatus.Unavailable);
@@ -150,8 +161,9 @@ public sealed class AntigravityQuotaReader
             var parsed = new List<AntigravityQuotaGroup>();
             foreach (var group in groups.EnumerateArray())
             {
-                if (!Array(group, "buckets", MaximumBucketsPerGroup, out var buckets))
-                    return Empty(AntigravityQuotaStatus.Unavailable);
+                // One malformed or unexpected group (for example a credits-only group
+                // without buckets) must not hide every other group's quota.
+                if (!Array(group, "buckets", MaximumBucketsPerGroup, out var buckets)) continue;
                 if (SafeLabel(Text(group, "name")) is not { } name) continue;
                 var rows = new List<AntigravityQuotaBucket>();
                 foreach (var bucket in buckets.EnumerateArray())
@@ -200,6 +212,22 @@ public sealed class AntigravityQuotaReader
     }
 
     private static AntigravityQuotaSnapshot Empty(AntigravityQuotaStatus status) => new(status, []);
+
+    /// <summary>
+    /// True when the print-mode run reports any model turn or token use. A genuine
+    /// /usage answer has zero turns; field names under usage vary, so any positive
+    /// token counter counts.
+    /// </summary>
+    private static bool InvokedModel(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        if (root.TryGetProperty("num_turns", out var turns) && turns.ValueKind == JsonValueKind.Number
+            && turns.TryGetDouble(out var count) && count > 0) return true;
+        if (!Object(root, "usage", out var usage)) return false;
+        return usage.EnumerateObject().Any(property => property.Name.Contains("token", StringComparison.OrdinalIgnoreCase)
+            && property.Value.ValueKind == JsonValueKind.Number
+            && property.Value.TryGetDouble(out var tokens) && tokens > 0);
+    }
 
     private static bool Object(JsonElement parent, string key, out JsonElement value) =>
         parent.TryGetProperty(key, out value) && value.ValueKind == JsonValueKind.Object;

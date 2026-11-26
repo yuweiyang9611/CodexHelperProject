@@ -1,6 +1,10 @@
 namespace CodexU.Core;
 
-public enum AntigravityQuotaStatus { Ready, NotInstalled, UnsupportedVersion, Unavailable, NoQuota }
+/// <summary>
+/// ModelInvoked: the CLI answered /usage by running a model turn, which spends the
+/// account's quota; queries stay stopped until the CLI version changes.
+/// </summary>
+public enum AntigravityQuotaStatus { Ready, NotInstalled, UnsupportedVersion, Unavailable, NoQuota, ModelInvoked }
 
 public sealed record AntigravityQuotaSnapshot(
     AntigravityQuotaStatus Status,

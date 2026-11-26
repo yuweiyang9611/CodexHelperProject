@@ -59,7 +59,7 @@ const quotaMessage = computed(() => {
   if (quota?.source === 'cliQuery') {
     return quota.cliStatus === 'noWindows'
       ? 'Claude CLI 后台查询成功，当前没有一般额度窗口。'
-      : '额度来自 Claude CLI 后台查询（CLI 所登录的账号），随刷新更新，至多每 2 分钟一次。'
+      : '额度来自 Claude CLI 后台查询（CLI 所登录的账号），随刷新更新，至多每 5 分钟一次。'
   }
   if (quota?.queryStatus === 'noWindows') return 'Desktop 查询成功，最近一次查询没有仍有效的一般额度窗口。可在绑定的 Desktop 会话更新。'
   if (quota?.source === 'desktopQuery') return 'Desktop 查询快照；源缓存最多 60 秒。请在绑定的 Desktop 会话再次调用 get_usage 更新，读取时超过 15 分钟则忽略。账号范围未确认，暂不作额度预测或提醒。'

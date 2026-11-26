@@ -90,6 +90,7 @@ public static class UsageCredits
     private const string Catalog2026092Version = "2026.09.2";
     private const string Catalog2026101Version = "2026.10.1";
     private const string Catalog2026111Version = "2026.11.1";
+    private const string Catalog2026112Version = "2026.11.2";
     private const string OpenAiStandardSource = "OpenAI API 官方 Standard 短上下文价目与 Changelog";
     private const string OpenAiSolPromotionSource =
         "OpenAI API 官方 Standard 短上下文价目（GPT-5.6 Sol 促销价，至少持续至 2026-11-21）";
@@ -97,6 +98,8 @@ public static class UsageCredits
         "OpenAI API 官方专业模型价目与 Changelog（GPT-Rosalind 自 2026-10-05 起计费）";
     private const string OpenAi6RosalindSource =
         "OpenAI API 官方专业模型价目与 Changelog（GPT-6 Rosalind 自 2026-10-30 发布）";
+    private const string CodexAutoReviewSource =
+        "Codex 自动审查：使用 ChatGPT 登录时不计费，按 0 计（OpenAI 价目页未列出单价）";
     // Shown in the settings page for the built-in catalog as a whole. The per-row
     // Source still names each vendor's own table; this only has to stop claiming the
     // combined catalog is OpenAI-only now that it spans more than one lineage.
@@ -108,7 +111,8 @@ public static class UsageCredits
     private const string CatalogAnthropic2026101Source = "Anthropic 官方 Claude API 模型页与发布记录";
     private const string CatalogAnthropic2026111Version = "anthropic-2026.11.1";
     private const string CatalogAnthropic2026111Source = "Anthropic 官方 Claude API 模型页与发布记录（短上下文基础价格）";
-    public const string CurrentCatalogVersion = Catalog2026111Version;
+    private const string CatalogAnthropic2026112Version = "anthropic-2026.11.2";
+    public const string CurrentCatalogVersion = Catalog2026112Version;
     public const string CurrentCatalogSource = BuiltInCatalogSource;
 
     // Cache writes are priced as a fixed multiple of the model's base input rate
@@ -175,6 +179,14 @@ public static class UsageCredits
         OpenAiApi(Catalog2026101Version, OpenAiRosalindSource, new DateOnly(2026, 10, 5), "gpt-rosalind-research", 5d, 0.5d, 25d),
         OpenAiApi(Catalog2026111Version, OpenAiStandardSource, new DateOnly(2026, 10, 26), "gpt-6.1-terra", 1d, 0.05d, 5d),
         OpenAiApi(Catalog2026111Version, OpenAi6RosalindSource, new DateOnly(2026, 10, 30), "gpt-6-rosalind", 15d, 1.5d, 75d),
+        // Released 2026-11-17 (API changelog); Standard short-context (<=272K input)
+        // prices from the API pricing page. GPT-6.2 Sol keeps GPT-6.1 Sol's prices.
+        OpenAiApi(Catalog2026112Version, OpenAiStandardSource, new DateOnly(2026, 11, 17), "gpt-6.2-astra", 8d, 0.4d, 40d),
+        OpenAiApi(Catalog2026112Version, OpenAiStandardSource, new DateOnly(2026, 11, 17), "gpt-6.2-sol", 2d, 0.1d, 10d),
+        // Codex's automatic review runs under this alias rather than a published API
+        // model. It is not charged for ChatGPT sign-ins, so count it as free instead of
+        // leaving it unrated or borrowing the price of whichever model it points to.
+        BuiltIn(Catalog2026112Version, CodexAutoReviewSource, null, "codex-auto-review", 0d, 0d, 0d),
 
         // Anthropic prices converted at CreditsPerDollar. Store each model's explicit
         // cache-read price: newer versions can differ from the older 0.1x ratio.
@@ -200,7 +212,11 @@ public static class UsageCredits
         // Haiku 5.5's base price applies to requests with <=100K input tokens.
         // Daily aggregates do not preserve request lengths; keep the documented
         // short-context equivalent basis rather than infer a tier from daily totals.
-        BuiltIn(CatalogAnthropic2026111Version, CatalogAnthropic2026111Source, new DateOnly(2026, 10, 7), "claude-haiku-5-5", 2.5d, 0.25d, 12.5d)
+        BuiltIn(CatalogAnthropic2026111Version, CatalogAnthropic2026111Source, new DateOnly(2026, 10, 7), "claude-haiku-5-5", 2.5d, 0.25d, 12.5d),
+        // Released 2026-11-09 at US$8 / US$40 per MTok (release notes), cache reads US$0.20.
+        // Fable and Mythos 5.2 are one model with the same price; earlier usage stays unrated.
+        BuiltIn(CatalogAnthropic2026112Version, CatalogAnthropic2026101Source, new DateOnly(2026, 11, 9), "claude-fable-5-2", 200d, 5d, 1_000d),
+        BuiltIn(CatalogAnthropic2026112Version, CatalogAnthropic2026101Source, new DateOnly(2026, 11, 9), "claude-mythos-5-2", 200d, 5d, 1_000d)
     ];
 
     public static IReadOnlyList<ModelCreditRate> BuiltInRates => Rates;
@@ -235,7 +251,7 @@ public static class UsageCredits
         RateCatalogSchemaVersion,
         CurrentCatalogVersion,
         BuiltInCatalogSource,
-        new DateOnly(2026, 11, 1),
+        new DateOnly(2026, 11, 27),
         Rates.Count);
 
     public static RateCatalogSnapshot CatalogSnapshot => new(BuiltInCatalog, Rates);
