@@ -45,6 +45,24 @@ public sealed class IpcDispatcherTests
     }
 
     [Fact]
+    public async Task SettingsPatch_EnablesCliQuotaAndRebuildsTheDashboardService()
+    {
+        var replacement = new ImmediateDashboardService();
+        using var context = TestContext.Create(new ImmediateDashboardService(), replacement: replacement);
+        Assert.False(context.Session.CurrentSettings.ClaudeCliQuotaEnabled);
+
+        var result = Assert.IsType<AppSettings>(await context.Dispatcher.DispatchAsync(Request("settings.update", new
+        {
+            patch = new { claudeCliQuotaEnabled = true }
+        })));
+        await context.Session.LoadCurrentRuntimeSnapshotAsync();
+
+        Assert.True(result.ClaudeCliQuotaEnabled);
+        Assert.Equal(result, await new AppSettingsStore(context.DataDirectory).LoadAsync());
+        Assert.Equal(1, replacement.CallCount);
+    }
+
+    [Fact]
     public async Task StartupReconciliationRequiresTheElectronHostRoute()
     {
         using var context = TestContext.Create(new ImmediateDashboardService());
@@ -665,6 +683,8 @@ public sealed class IpcDispatcherTests
     private sealed class ImmediateDashboardService : IDashboardService
     {
         private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
 
         public Task<DashboardSnapshot> LoadAsync(
             AgentRuntime runtime = AgentRuntime.Codex,

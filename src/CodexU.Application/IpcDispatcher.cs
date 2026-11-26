@@ -18,6 +18,7 @@ public sealed class IpcDispatcher : IDisposable
         "codexHome",
         "codexExecutable",
         "claudeDesktopUsageTranscript",
+        "claudeCliQuotaEnabled",
         "defaultWorkspace",
         "theme",
         "showSubagents",

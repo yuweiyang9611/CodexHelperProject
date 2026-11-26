@@ -21,6 +21,7 @@ public partial class MainWindow
         "codexHome",
         "codexExecutable",
         "claudeDesktopUsageTranscript",
+        "claudeCliQuotaEnabled",
         "defaultWorkspace",
         "theme",
         "showSubagents",

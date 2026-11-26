@@ -360,6 +360,7 @@ public partial class MainWindow : Window
         || previous.ShowSubagents != current.ShowSubagents
         || !string.Equals(previous.CodexExecutable, current.CodexExecutable, StringComparison.OrdinalIgnoreCase)
         || !string.Equals(previous.ClaudeDesktopUsageTranscript, current.ClaudeDesktopUsageTranscript, StringComparison.OrdinalIgnoreCase)
+        || previous.ClaudeCliQuotaEnabled != current.ClaudeCliQuotaEnabled
         || !(previous.CustomModelRates ?? []).SequenceEqual(current.CustomModelRates ?? [])
         || previous.IsRateCatalogPinned != current.IsRateCatalogPinned;
 
@@ -373,7 +374,8 @@ public partial class MainWindow : Window
             settings.CustomModelRates,
             settings.IsRateCatalogPinned,
             applicationDataDirectory: _applicationDataDirectory,
-            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript);
+            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript,
+            claudeCliQuotaEnabled: settings.ClaudeCliQuotaEnabled);
 
     public async Task RefreshAsync()
     {

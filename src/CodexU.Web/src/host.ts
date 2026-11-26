@@ -63,6 +63,7 @@ class HostBridge {
     claudeMonthlySubscriptionAmount: 20,
     codexAutoDetectSubscriptionAmount: true,
     claudeAutoDetectSubscriptionAmount: true,
+    claudeCliQuotaEnabled: false,
     checkForUpdates: true,
     includePrereleaseUpdates: false,
     autoInstallUpdates: true,

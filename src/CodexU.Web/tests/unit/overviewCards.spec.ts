@@ -94,6 +94,40 @@ describe('OverviewCards local token activity', () => {
     expect(card.textContent).toContain('查询成功')
     expect(card.querySelector('.query-actions button')?.textContent).toBe('复制查询指令')
   })
+  it('labels a background CLI reading and never asks for a manual Desktop query', () => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      claudeQuotaState: { source: 'cliQuery', queryStatus: 'stale', historyExpired: false, cliStatus: 'fresh', action: 'none' },
+      primaryQuota: rateLimitWindow({ source: 'claude-cli-get-usage', remainingPercent: 10 }),
+    })).querySelector('.quota-card')!
+    expect(card.textContent).toContain('额度来自 Claude CLI 后台查询')
+    expect(card.textContent).not.toContain('get_usage 结果已过期')
+    expect(card.querySelector('.query-actions')).toBeNull()
+  })
+
+  it.each([
+    ['notAvailable', 'CLI 当前未登录 Claude 订阅账号'],
+    ['notInstalled', '未找到 Claude Code CLI'],
+    ['unavailable', '稍后会自动重试'],
+  ] as const)('explains a failing background CLI query (%s) beside the fallback source', (cliStatus, hint) => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, cliStatus, action: 'none' },
+      secondaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
+    })).querySelector('.quota-card')!
+    expect(card.textContent).toContain(hint)
+    expect(card.textContent).toContain('本地 Claude Desktop 历史仅提供额度百分比')
+  })
+
+  it('adds no CLI hint while the background query is disabled', () => {
+    const card = mountOverview(snapshot({
+      runtime: 'claudeCode',
+      claudeQuotaState: { source: 'statusLine', queryStatus: 'unbound', historyExpired: false, cliStatus: 'disabled', action: 'none' },
+      primaryQuota: rateLimitWindow({ source: 'statusline' }),
+    })).querySelector('.quota-card')!
+    expect(card.textContent).not.toContain('Claude CLI 后台查询')
+  })
+
   it.each([0, 100])('shows the resolved manual monthly amount (%s)', amount => {
     const card = mountOverview(snapshot({ runtime: 'claudeCode', monthlyValue: monthlyValue({ subscriptionAmount: amount }) })).querySelector('.quota-card')!
     expect(card.textContent).toContain(`订阅月费 US$${amount.toFixed(2)}（手动）`)

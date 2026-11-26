@@ -2,7 +2,7 @@
 
 Claude 额度后台读取方案需要使用 Anthropic 官方 **Claude Code CLI**。CLI 使用自己的 Claude 登录，codexU 读取它返回的额度百分比和重置时间。首次使用时，应在 CLI 登录与 Claude Desktop 相同的账号；有多个组织时也应核对当前组织。
 
-本说明对应 2026-11-12 起的验证工作。当前发布版 0.6.7 使用 Desktop 会话查询结果或本地历史缓存；CLI 后台读取已于 2026-11-26 在本机验证通过，尚未接入自动刷新。
+本说明对应 2026-11-12 起的验证工作。当前发布版 0.6.7 使用 Desktop 会话查询结果或本地历史缓存；CLI 后台读取已于 2026-11-26 在本机验证通过，当前源码可在设置中开启，默认关闭，见下文「开启后台读取」。
 
 ## 在 codexU 检查登录
 
@@ -56,7 +56,18 @@ claude auth status
 
 官方 SDK 另提供实验性 `/usage` 结构化报告，满足认证条件时包含 `percent` 和 `resets_at`。查询返回成功、空结果或没有权限是不同状态，应分别处理。[SDK 用量报告](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusagereport)
 
-登录后的验证结果记录在 [后台读取方案核查](research-claude-background-usage-2026-11-12.md)，本机验证已通过。下一步是将查询接入 codexU 的定时刷新，并加入缓存、超时和查询限流时的退避；接入前，应用仍不会在后台读取 CLI 额度。
+登录后的验证结果记录在 [后台读取方案核查](research-claude-background-usage-2026-11-12.md)，本机验证已通过。
+
+## 开启后台读取
+
+在「设置与诊断 → 数据源」勾选「通过 Claude CLI 在后台读取额度」并保存。该选项默认关闭；关闭时应用不会为额度启动 CLI。开启后：
+
+- 每次刷新（自动或手动）时，按上文的查找顺序找到 CLI，以 `-p --input-format stream-json --output-format stream-json --verbose --strict-mcp-config --no-session-persistence --safe-mode` 在临时目录 `%TEMP%\codexU-claude-cli` 中启动，只写入一条 `get_usage` 控制帧，收到匹配的 `control_response` 后关闭输入并结束进程。不写入任何用户消息，不读取凭据。
+- 2 分钟内的重复刷新复用上一次结果，并发刷新共用一个 CLI 进程。单次查询最长 20 秒，超时会结束整个进程树。
+- 查询失败、超时或当前登录没有订阅额度（`rate_limits_available=false`）时，依次等待 2、5、10、15 分钟后再试。失败期间最多继续显示 15 分钟内最后一次成功的结果，窗口上保留其读取时间；已过重置时间的窗口会被丢弃。
+- 只采用没有 `scope` 的 `session`（五小时）和 `weekly_all`（七天）窗口；按模型的窗口、额外用量、套餐和账号字段都不保留。百分比超过 100 时按 100 显示。
+
+成功的 CLI 结果是一份完整测量：它优先于 Desktop 历史采样和 statusLine 快照，且不会从其他来源补齐缺失窗口。已绑定的 Desktop 会话查询结果如果比 CLI 结果更新，则使用 Desktop 结果。CLI 结果带有服务端重置时间，和 statusLine 一样参与额度提醒、耗尽预测和顶部状态条。查询不可用时，概览会说明原因，并回退到其他来源。
 
 ## 数据范围
 

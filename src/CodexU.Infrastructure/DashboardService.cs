@@ -33,7 +33,8 @@ public sealed class DashboardService(
         IReadOnlyList<ModelCreditRate>? customRates = null,
         bool completeRateCatalog = false,
         string? applicationDataDirectory = null,
-        string? claudeDesktopUsageTranscript = null)
+        string? claudeDesktopUsageTranscript = null,
+        bool claudeCliQuotaEnabled = false)
     {
         var paths = CodexPaths.Discover(configuredCodexHome);
         return new DashboardService(
@@ -54,7 +55,10 @@ public sealed class DashboardService(
                 completeRateCatalog,
                 applicationDataDirectory,
                 incrementalIndexEnabled,
-                claudeDesktopUsageTranscript),
+                claudeDesktopUsageTranscript,
+                // Only the dashboard reader queries the CLI; the analysis reader below
+                // never needs quota, so it must not start extra CLI processes.
+                claudeCliQuotaEnabled ? ClaudeCliQuotaCollector.Shared : null),
             new QuotaForecastCollector(new QuotaSampleStore(applicationDataDirectory)),
             new CodexLocalUsageReader(paths, incrementalIndexEnabled, null, showSubagents,
                 customRates, completeRateCatalog, applicationDataDirectory),

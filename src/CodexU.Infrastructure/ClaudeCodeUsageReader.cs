@@ -11,7 +11,8 @@ public sealed partial class ClaudeCodeUsageReader(
     bool completeRateCatalog = false,
     string? applicationDataDirectory = null,
     bool incrementalIndexEnabled = true,
-    string? claudeDesktopUsageTranscript = null) : ILocalUsageReader
+    string? claudeDesktopUsageTranscript = null,
+    ClaudeCliQuotaCollector? cliQuotaCollector = null) : ILocalUsageReader
 {
     private const long MaximumTaskFileLength = 2 * 1024 * 1024;
 
@@ -255,16 +256,26 @@ public sealed partial class ClaudeCodeUsageReader(
         ReadQuotaSnapshotAsync(CancellationToken cancellationToken)
     {
         var now = Clock.GetUtcNow();
+        var cli = cliQuotaCollector is null ? null : await cliQuotaCollector.ReadAsync(cancellationToken);
+        var cliStatus = cli?.Status ?? ClaudeCliQuotaStatus.Disabled;
         var queried = string.IsNullOrWhiteSpace(claudeDesktopUsageTranscript) ? null
             : await new ClaudeDesktopToolUsageReader(claudeDesktopUsageTranscript).ReadAsync(now, cancellationToken);
         var queryObservedAt = queried?.ObservedAt <= now ? queried.ObservedAt : null;
         var queryStatus = queried?.Status ?? ClaudeTranscriptStatus.Unbound;
+        if (cli is { Success: true } && (queried is not { Success: true } || !(queried.ObservedAt > cli.ObservedAt)))
+        {
+            // A successful background CLI query is a whole measurement with real
+            // reset times. Like a native Desktop result, an empty one must not
+            // acquire old windows from another source; a newer Desktop result wins.
+            return (null, cli.Primary, cli.Secondary, WithQueryDiagnostic(cli.Diagnostic, queried), queryObservedAt,
+                new(ClaudeQuotaSource.CliQuery, queryStatus, false, cliStatus));
+        }
         if (queried is { Success: true })
         {
             // An explicitly bound, fresh native result owns the entire measurement.
             // A successful empty result must not acquire old windows from another source.
-            return (null, queried.Primary, queried.Secondary, queried.Diagnostic, queryObservedAt,
-                new(ClaudeQuotaSource.DesktopQuery, queryStatus));
+            return (null, queried.Primary, queried.Secondary, WithCliDiagnostic(queried.Diagnostic, cli), queryObservedAt,
+                new(ClaudeQuotaSource.DesktopQuery, queryStatus, false, cliStatus));
         }
         var statusline = await ReadStatuslineQuotaAsync(now, cancellationToken);
         var desktop = await new ClaudeDesktopQuotaReader(paths.ClaudeDesktopDataDirectory).ReadAsync(now, cancellationToken);
@@ -273,17 +284,22 @@ public sealed partial class ClaudeCodeUsageReader(
             // These sources do not share an authenticated account identity. Choose
             // one whole measurement, never fill a missing window or plan from the
             // other source (a missing 5h window can be intentional on some plans).
-            return (null, desktop.Primary, desktop.Secondary, WithQueryDiagnostic(desktop.Diagnostic, queried), queryObservedAt,
-                new(ClaudeQuotaSource.DesktopHistory, queryStatus));
+            return (null, desktop.Primary, desktop.Secondary,
+                WithCliDiagnostic(WithQueryDiagnostic(desktop.Diagnostic, queried), cli), queryObservedAt,
+                new(ClaudeQuotaSource.DesktopHistory, queryStatus, false, cliStatus));
         }
         var diagnostic = string.IsNullOrEmpty(desktop.Diagnostic)
             ? statusline.Diagnostic : statusline.Diagnostic + "；" + desktop.Diagnostic;
-        return (statusline.Account, statusline.Primary, statusline.Secondary, WithQueryDiagnostic(diagnostic, queried), queryObservedAt,
-            new(statusline.HasQuota ? ClaudeQuotaSource.StatusLine : ClaudeQuotaSource.None, queryStatus, desktop.Expired));
+        return (statusline.Account, statusline.Primary, statusline.Secondary,
+            WithCliDiagnostic(WithQueryDiagnostic(diagnostic, queried), cli), queryObservedAt,
+            new(statusline.HasQuota ? ClaudeQuotaSource.StatusLine : ClaudeQuotaSource.None, queryStatus, desktop.Expired, cliStatus));
     }
 
     private static string WithQueryDiagnostic(string diagnostic, ClaudeDesktopToolUsageReadResult? queried) =>
         queried is null ? diagnostic : queried.Diagnostic + "；" + diagnostic;
+
+    private static string WithCliDiagnostic(string diagnostic, ClaudeCliQuotaReading? cli) =>
+        cli is null ? diagnostic : cli.Diagnostic + "；" + diagnostic;
 
     private sealed record StatuslineQuota(AccountSnapshot? Account, RateLimitWindow? Primary,
         RateLimitWindow? Secondary, DateTimeOffset? MeasuredAt, string Diagnostic)

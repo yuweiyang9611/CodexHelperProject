@@ -97,6 +97,77 @@ public sealed class ClaudeDesktopToolIntegrationTests
         Assert.Equal(ClaudeQuotaAction.Rebind, oversized.ClaudeQuotaState!.Action);
     }
 
+    [Fact]
+    public async Task FreshCliQuery_OwnsTheSnapshotOverHistoryAndNeedsNoManualQuery()
+    {
+        using var fixture = new Fixture();
+        await fixture.WriteHistoryAsync();
+        await File.WriteAllTextAsync(fixture.Transcript, "");
+
+        var result = await fixture.Reader(Cli(Now.AddMinutes(-1), ClaudeCliQuotaCollectorTests.Window("session", 90, Now.AddHours(1)))).ReadAsync();
+
+        Assert.Equal(90, result.PrimaryQuota?.UsedPercent);
+        Assert.Equal(Now.AddHours(1), result.PrimaryQuota?.ResetsAt);
+        Assert.Equal("claude-cli-get-usage", result.PrimaryQuota?.Source);
+        Assert.Null(result.SecondaryQuota);
+        Assert.Null(result.Account);
+        Assert.Equal(new ClaudeQuotaState(ClaudeQuotaSource.CliQuery, ClaudeTranscriptStatus.MissingResult, false, ClaudeCliQuotaStatus.Fresh),
+            result.ClaudeQuotaState);
+        Assert.Equal(ClaudeQuotaAction.None, result.ClaudeQuotaState!.Action);
+        Assert.Contains(result.Diagnostics, line => line.Contains("Claude CLI 后台额度", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NewerBoundDesktopQuery_WinsOverAnOlderCliReading()
+    {
+        using var fixture = new Fixture();
+        await fixture.WriteQueryAsync(new
+        {
+            status = "ok",
+            windows = new[] { new { label = "5-hour limit", percentUsed = 27, resetsAt = Now.AddHours(2).ToString("O") } }
+        }, Now.AddMinutes(-1));
+
+        var result = await fixture.Reader(Cli(Now.AddMinutes(-5), ClaudeCliQuotaCollectorTests.Window("session", 90, Now.AddHours(1)))).ReadAsync();
+
+        Assert.Equal(27, result.PrimaryQuota?.UsedPercent);
+        Assert.Equal(new ClaudeQuotaState(ClaudeQuotaSource.DesktopQuery, ClaudeTranscriptStatus.Fresh, false, ClaudeCliQuotaStatus.Fresh),
+            result.ClaudeQuotaState);
+    }
+
+    [Fact]
+    public async Task FailedCliQuery_FallsBackToHistoryAndReportsTheCliStatus()
+    {
+        using var fixture = new Fixture();
+        await fixture.WriteHistoryAsync();
+        var failing = new ClaudeCliQuotaCollector(() => new("fixture", ClaudeCliSource.Standalone),
+            (_, _, _) => throw new IOException("private-path"), new ClaudeCliQuotaCollectorTests.MutableClock(Now), TimeSpan.FromSeconds(5));
+
+        var result = await fixture.Reader(failing).ReadAsync();
+
+        Assert.Equal(42, result.SecondaryQuota?.UsedPercent);
+        Assert.Equal("claude-desktop-history", result.SecondaryQuota?.Source);
+        Assert.Equal(ClaudeQuotaSource.DesktopHistory, result.ClaudeQuotaState?.Source);
+        Assert.Equal(ClaudeCliQuotaStatus.Unavailable, result.ClaudeQuotaState?.CliStatus);
+        Assert.DoesNotContain(result.Diagnostics, line => line.Contains("private-path", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DisabledCliQueryLeavesTheStateUnchanged()
+    {
+        using var fixture = new Fixture();
+        await fixture.WriteHistoryAsync();
+
+        var result = await fixture.Reader().ReadAsync();
+
+        Assert.Equal(ClaudeCliQuotaStatus.Disabled, result.ClaudeQuotaState?.CliStatus);
+        Assert.DoesNotContain(result.Diagnostics, line => line.Contains("Claude CLI 后台额度", StringComparison.Ordinal));
+    }
+
+    private static ClaudeCliQuotaCollector Cli(DateTimeOffset readAt, params System.Text.Json.Nodes.JsonObject[] windows) =>
+        new(() => new("fixture", ClaudeCliSource.Standalone),
+            (_, id, _) => Task.FromResult(ClaudeCliQuotaCollectorTests.Response(id, ClaudeCliQuotaCollectorTests.Limits(windows))),
+            new ClaudeCliQuotaCollectorTests.MutableClock(readAt), TimeSpan.FromSeconds(5));
+
     private sealed class FixedClock : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => Now;
@@ -109,9 +180,9 @@ public sealed class ClaudeDesktopToolIntegrationTests
         internal string Transcript => Path.Combine(Root, _session + ".jsonl");
         private string Data => Path.Combine(Root, "data");
         private string Desktop => Path.Combine(Root, "Claude-Data");
-        internal ClaudeCodeUsageReader Reader() => new(new CodexPaths(Root, Root,
+        internal ClaudeCodeUsageReader Reader(ClaudeCliQuotaCollector? cli = null) => new(new CodexPaths(Root, Root,
             Path.Combine(Root, "missing.db"), Root, Root, Root, Root, Path.Combine(Root, ".claude"), Desktop),
-            applicationDataDirectory: Data, claudeDesktopUsageTranscript: Transcript)
+            applicationDataDirectory: Data, claudeDesktopUsageTranscript: Transcript, cliQuotaCollector: cli)
         { Clock = new FixedClock() };
 
         internal async Task WriteHistoryAsync()

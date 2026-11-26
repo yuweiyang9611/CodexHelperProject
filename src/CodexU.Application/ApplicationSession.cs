@@ -77,7 +77,8 @@ public sealed class ApplicationSession : IDisposable
             current.CustomModelRates,
             current.IsRateCatalogPinned,
             applicationDataDirectory: dataDirectory,
-            claudeDesktopUsageTranscript: current.ClaudeDesktopUsageTranscript));
+            claudeDesktopUsageTranscript: current.ClaudeDesktopUsageTranscript,
+            claudeCliQuotaEnabled: current.ClaudeCliQuotaEnabled));
     }
 
     public event Action<DashboardSnapshot>? SnapshotChanged;
@@ -785,6 +786,7 @@ public sealed class ApplicationSession : IDisposable
         || previous.ShowSubagents != current.ShowSubagents
         || !string.Equals(previous.CodexExecutable, current.CodexExecutable, StringComparison.OrdinalIgnoreCase)
         || !string.Equals(previous.ClaudeDesktopUsageTranscript, current.ClaudeDesktopUsageTranscript, StringComparison.OrdinalIgnoreCase)
+        || previous.ClaudeCliQuotaEnabled != current.ClaudeCliQuotaEnabled
         || !(previous.CustomModelRates ?? []).SequenceEqual(current.CustomModelRates ?? [])
         || previous.IsRateCatalogPinned != current.IsRateCatalogPinned;
 }

@@ -47,7 +47,10 @@ public sealed record AppSettings(
     string? PinnedRateCatalogVersion = null,
     string? PinnedRateCatalogSource = null,
     string? PinnedRateCatalogBaseVersion = null,
-    string? ClaudeDesktopUsageTranscript = null)
+    string? ClaudeDesktopUsageTranscript = null,
+    // Opt-in: each refresh may start the official Claude CLI in the background
+    // to read the plan windows of the CLI's own login.
+    bool ClaudeCliQuotaEnabled = false)
 {
     private static readonly char[] InvalidWindowsPathCharacters = ['\0', '"', '<', '>', '|', '?', '*'];
 

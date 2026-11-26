@@ -45,8 +45,21 @@ async function copyInstruction() {
     copyState.value = 'manual'
   }
 }
+const cliHint = computed(() => {
+  const quota = state.value
+  if (!quota || quota.source === 'cliQuery') return ''
+  if (quota.cliStatus === 'notAvailable') return 'Claude CLI 后台查询未取得额度：CLI 当前未登录 Claude 订阅账号，或使用 API 密钥、第三方服务。可在“设置与诊断”检查登录状态。'
+  if (quota.cliStatus === 'notInstalled') return 'Claude CLI 后台查询未找到 Claude Code CLI，请安装官方 CLI 或确认 Desktop 内嵌 CLI 可用。'
+  if (quota.cliStatus === 'unavailable') return 'Claude CLI 后台查询暂时失败，稍后会自动重试。'
+  return ''
+})
 const quotaMessage = computed(() => {
   const quota = state.value
+  if (quota?.source === 'cliQuery') {
+    return quota.cliStatus === 'noWindows'
+      ? 'Claude CLI 后台查询成功，当前没有一般额度窗口。'
+      : '额度来自 Claude CLI 后台查询（CLI 所登录的账号），随刷新更新，至多每 2 分钟一次。'
+  }
   if (quota?.queryStatus === 'noWindows') return 'Desktop 查询成功，最近一次查询没有仍有效的一般额度窗口。可在绑定的 Desktop 会话更新。'
   if (quota?.source === 'desktopQuery') return 'Desktop 查询快照；源缓存最多 60 秒。请在绑定的 Desktop 会话再次调用 get_usage 更新，读取时超过 15 分钟则忽略。账号范围未确认，暂不作额度预测或提醒。'
   const fallback = quota?.source === 'desktopHistory' ? '当前为历史采样' : quota?.source === 'statusLine' ? '当前为终端 statusLine 快照' : ''
@@ -64,7 +77,8 @@ const quotaMessage = computed(() => {
 </script>
 
 <template>
-  <aside v-if="isClaude && (quotaMessage || missingSubscription || showManualAmount)" class="runtime-data-notice" role="note">
+  <aside v-if="isClaude && (quotaMessage || cliHint || missingSubscription || showManualAmount)" class="runtime-data-notice" role="note">
+    <p v-if="cliHint">{{ cliHint }}</p>
     <p v-if="quotaMessage">{{ quotaMessage }}</p>
     <div v-if="expiredQuery || state?.action === 'query'" class="query-actions">
       <span v-if="observedAt">上次查询（本地时间） <time :datetime="observedAt">{{ quotaSampleTime(observedAt) }}</time></span>

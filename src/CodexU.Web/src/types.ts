@@ -314,6 +314,8 @@ export interface AppSettings {
   codexHome?: string
   codexExecutable?: string
   claudeDesktopUsageTranscript?: string | null
+  /** Opt-in background quota reads through the official Claude CLI's own login. */
+  claudeCliQuotaEnabled?: boolean
   defaultWorkspace?: string
   theme: 'dark' | 'light' | 'system'
   showSubagents: boolean
@@ -466,9 +468,11 @@ export interface DashboardSnapshot {
   projectRanking?: ProjectRanking
   monthlyValue?: MonthlyValue | null
   claudeQuotaState?: {
-    source: 'none' | 'desktopQuery' | 'desktopHistory' | 'statusLine'
+    source: 'none' | 'desktopQuery' | 'desktopHistory' | 'statusLine' | 'cliQuery'
     queryStatus: ClaudeTranscriptValidation['status'] | 'unbound'
     historyExpired: boolean
+    /** Outcome of the opt-in background CLI query; absent from older hosts. */
+    cliStatus?: 'disabled' | 'fresh' | 'noWindows' | 'notAvailable' | 'notInstalled' | 'unavailable'
     action: 'none' | 'query' | 'rebind'
   } | null
   claudeDesktopQueryObservedAt?: string | null

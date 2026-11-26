@@ -239,5 +239,6 @@ public sealed class SidecarBackend : IDisposable
             settings.CustomModelRates,
             settings.IsRateCatalogPinned,
             applicationDataDirectory: applicationDataDirectory,
-            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript);
+            claudeDesktopUsageTranscript: settings.ClaudeDesktopUsageTranscript,
+            claudeCliQuotaEnabled: settings.ClaudeCliQuotaEnabled);
 }
