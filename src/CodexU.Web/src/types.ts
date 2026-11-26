@@ -314,8 +314,10 @@ export interface AppSettings {
   codexHome?: string
   codexExecutable?: string
   claudeDesktopUsageTranscript?: string | null
-  /** Opt-in background quota reads through the official Claude CLI's own login. */
+  /** Background quota reads through the official Claude CLI's own login; on by default since 0.6.9. */
   claudeCliQuotaEnabled?: boolean
+  /** Defaults revision the saved settings were written against; read-only for the renderer. */
+  settingsRevision?: number
   defaultWorkspace?: string
   theme: 'dark' | 'light' | 'system'
   showSubagents: boolean

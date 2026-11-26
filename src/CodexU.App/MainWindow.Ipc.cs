@@ -228,7 +228,9 @@ public partial class MainWindow
                 return _settings;
 
             case "claude.getAuthStatus":
-                return await new ClaudeCliAuthStatusReader().ReadAsync(_lifetimeCancellation.Token);
+                var authStatus = await new ClaudeCliAuthStatusReader().ReadAsync(_lifetimeCancellation.Token);
+                if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) ClaudeCliQuotaCollector.Shared.RetrySoon();
+                return authStatus;
 
             case "settings.pickClaudeTranscript":
                 var sessionDialog = new OpenFileDialog

@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 保留为独立 Sidecar 后端（当前为 .NET 11）。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.8** 新增可选的 Claude CLI 后台额度读取，并在设置中显示 CLI 登录状态；用户变更说明见 [0.6.8 发布说明](docs/release-0.6.8.md)，CLI 登录与查询方式见 [CLI 使用说明](docs/claude-cli-usage.md)，Claude 数据范围见 [接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.9** 将 Claude CLI 后台额度读取改为默认开启，CLI 未登录时降低重试频率；用户变更说明见 [0.6.9 发布说明](docs/release-0.6.9.md)，CLI 登录与查询方式见 [CLI 使用说明](docs/claude-cli-usage.md)，Claude 数据范围见 [接入说明](docs/claude-desktop-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
@@ -167,7 +167,7 @@ C# 测试覆盖 token delta、内置与自定义点数费率、按日期选择�
 
 从 0.6.8 起，「设置与诊断 → 数据源」显示 Claude CLI 登录状态。打开页面或点击「重新检查登录状态」可后台检测是否登录，并显示检测的 CLI 来源。
 
-同一位置还可开启「通过 Claude CLI 在后台读取额度」（默认关闭）。开启后，刷新时由官方 CLI 用它自己的登录读取五小时／七天额度和重置时间，至多每 2 分钟一次，失败时退避重试；查询只发送一条 `get_usage` 控制帧，不发送提示词，也不调用模型。登录、查询方式和来源优先级见 [CLI 使用说明](docs/claude-cli-usage.md)。
+同一位置的「通过 Claude CLI 在后台读取额度」从 0.6.9 起默认开启：刷新时由官方 CLI 用它自己的登录读取五小时／七天额度和重置时间，至多每 2 分钟一次；CLI 未登录订阅账号时每小时重试一次，失败时退避重试。查询只发送一条 `get_usage` 控制帧，不发送提示词，也不调用模型。可随时在设置中关闭。登录、查询方式和来源优先级见 [CLI 使用说明](docs/claude-cli-usage.md)。
 
 Claude Code transcript 只有 Token 计数，没有订阅配额；HTTP 429 只能说明当时被限流。
 

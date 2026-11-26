@@ -160,22 +160,54 @@ public sealed class ClaudeCliQuotaCollectorTests
     }
 
     [Fact]
-    public async Task NotAvailableLoginBacksOffLikeAFailureWithoutReusingOldWindows()
+    public async Task NotSignedInWaitsAnHourAndNeverReusesTheEarlierAccountsWindows()
     {
         var clock = new MutableClock(Now);
         var calls = 0;
+        var collector = Collector(clock, (_, id, _) => Task.FromResult(++calls == 1
+            ? Response(id, Limits(Window("session", 30, Now.AddHours(4))))
+            : NotSignedIn(id)));
+        await collector.ReadAsync();
+
+        clock.Advance(ClaudeCliQuotaCollector.MinimumInterval);
+        var signedOut = await collector.ReadAsync();
+        Assert.Equal(ClaudeCliQuotaStatus.NotAvailable, signedOut.Status);
+        Assert.Null(signedOut.Primary);
+
+        clock.Advance(ClaudeCliQuotaCollector.NotAvailableRetry - TimeSpan.FromSeconds(1));
+        await collector.ReadAsync();
+        Assert.Equal(2, calls);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await collector.ReadAsync();
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public async Task ADetectedLoginEndsTheWaitButNotTheIntervalAfterASuccess()
+    {
+        var clock = new MutableClock(Now);
+        var calls = 0;
+        var signedIn = false;
         var collector = Collector(clock, (_, id, _) =>
         {
             calls++;
-            return Task.FromResult("""{"type":"control_response","response":{"subtype":"success","request_id":"REQUEST","response":{"rate_limits_available":false}}}"""
-                .Replace("REQUEST", id, StringComparison.Ordinal));
+            return Task.FromResult(signedIn ? Response(id, Limits(Window("session", 20, Now.AddHours(4)))) : NotSignedIn(id));
         });
-
         Assert.Equal(ClaudeCliQuotaStatus.NotAvailable, (await collector.ReadAsync()).Status);
-        clock.Advance(ClaudeCliQuotaCollector.FailureBackoff[0] - TimeSpan.FromSeconds(1));
+
+        signedIn = true;
+        collector.RetrySoon();
+        Assert.Equal(20, (await collector.ReadAsync()).Primary?.UsedPercent);
+        Assert.Equal(2, calls);
+
+        collector.RetrySoon();
         await collector.ReadAsync();
-        Assert.Equal(1, calls);
+        Assert.Equal(2, calls);
     }
+
+    private static string NotSignedIn(string requestId) =>
+        """{"type":"control_response","response":{"subtype":"success","request_id":"REQUEST","response":{"rate_limits_available":false}}}"""
+            .Replace("REQUEST", requestId, StringComparison.Ordinal);
 
     [Fact]
     public async Task MissingCliNeverStartsAProcess()

@@ -59,6 +59,7 @@ public sealed class IpcDispatcher : IDisposable
     private readonly IExternalUriLauncher _externalUriLauncher;
     private readonly IStatusStripCommands? _statusStripCommands;
     private readonly Func<CancellationToken, Task<ClaudeCliAuthStatus>> _readClaudeAuthStatus;
+    private readonly Action _claudeCliLoggedIn;
     private bool _disposed;
 
     public IpcDispatcher(
@@ -69,7 +70,8 @@ public sealed class IpcDispatcher : IDisposable
         IWindowCommands windowCommands,
         IExternalUriLauncher externalUriLauncher,
         IStatusStripCommands? statusStripCommands = null,
-        Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null)
+        Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
+        Action? claudeCliLoggedIn = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(hostEnvironment);
@@ -85,6 +87,8 @@ public sealed class IpcDispatcher : IDisposable
         _windowCommands = windowCommands;
         _externalUriLauncher = externalUriLauncher;
         _readClaudeAuthStatus = readClaudeAuthStatus ?? new ClaudeCliAuthStatusReader().ReadAsync;
+        // A login confirmed in settings ends the background quota query's long wait.
+        _claudeCliLoggedIn = claudeCliLoggedIn ?? ClaudeCliQuotaCollector.Shared.RetrySoon;
         _statusStripCommands = statusStripCommands;
 
         _session.SnapshotChanged += OnSnapshotChanged;
@@ -147,7 +151,9 @@ public sealed class IpcDispatcher : IDisposable
                 return _session.CurrentSettings;
 
             case "claude.getAuthStatus":
-                return await _readClaudeAuthStatus(_session.LifetimeToken);
+                var authStatus = await _readClaudeAuthStatus(_session.LifetimeToken);
+                if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) _claudeCliLoggedIn();
+                return authStatus;
 
             case "settings.pickClaudeTranscript":
                 return await _userInteraction.PickOpenFileAsync(

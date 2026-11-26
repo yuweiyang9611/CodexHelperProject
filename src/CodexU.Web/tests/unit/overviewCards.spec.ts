@@ -105,19 +105,26 @@ describe('OverviewCards local token activity', () => {
     expect(card.querySelector('.query-actions')).toBeNull()
   })
 
-  it.each([
-    ['notAvailable', 'CLI 当前未登录 Claude 订阅账号'],
-    ['notInstalled', '未找到 Claude Code CLI'],
-    ['unavailable', '稍后会自动重试'],
-  ] as const)('explains a failing background CLI query (%s) beside the fallback source', (cliStatus, hint) => {
+  it('reports a failed background CLI query beside the fallback source', () => {
     const card = mountOverview(snapshot({
       runtime: 'claudeCode',
-      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, cliStatus, action: 'none' },
+      claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, cliStatus: 'unavailable', action: 'none' },
       secondaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
     })).querySelector('.quota-card')!
-    expect(card.textContent).toContain(hint)
+    expect(card.textContent).toContain('Claude CLI 后台额度查询暂时失败，稍后会自动重试')
     expect(card.textContent).toContain('本地 Claude Desktop 历史仅提供额度百分比')
   })
+
+  it.each(['notAvailable', 'notInstalled'] as const)(
+    'keeps the overview quiet when the default-on CLI query is simply %s', cliStatus => {
+      const card = mountOverview(snapshot({
+        runtime: 'claudeCode',
+        claudeQuotaState: { source: 'desktopHistory', queryStatus: 'unbound', historyExpired: false, cliStatus, action: 'none' },
+        secondaryQuota: rateLimitWindow({ source: 'claude-desktop-history', resetsAt: null }),
+      })).querySelector('.quota-card')!
+      expect(card.textContent).not.toContain('Claude CLI')
+      expect(card.textContent).toContain('本地 Claude Desktop 历史仅提供额度百分比')
+    })
 
   it('adds no CLI hint while the background query is disabled', () => {
     const card = mountOverview(snapshot({

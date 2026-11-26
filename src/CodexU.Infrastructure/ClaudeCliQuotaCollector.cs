@@ -21,6 +21,7 @@ public sealed class ClaudeCliQuotaCollector
     internal static readonly TimeSpan MaximumAge = TimeSpan.FromMinutes(15);
     internal static readonly TimeSpan[] FailureBackoff =
         [TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(15)];
+    internal static readonly TimeSpan NotAvailableRetry = TimeSpan.FromMinutes(60);
     internal static readonly string[] Arguments =
     [
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -75,13 +76,30 @@ public sealed class ClaudeCliQuotaCollector
         lock (_gate) return Current(_clock.GetUtcNow());
     }
 
+    /// <summary>
+    /// Called when the CLI reports a login. A pending wait after "not logged in" or a
+    /// failure is cleared so the next refresh queries at once; a recent success keeps
+    /// its normal interval.
+    /// </summary>
+    public void RetrySoon()
+    {
+        lock (_gate)
+        {
+            if (_lastAttempt is not { Success: false }) return;
+            _failures = 0;
+            _nextAttemptAt = DateTimeOffset.MinValue;
+        }
+    }
+
     private ClaudeCliQuotaReading Current(DateTimeOffset now)
     {
         var attempt = _lastAttempt ?? ClaudeCliQuotaParser.Unavailable(null, "尚未完成查询");
         if (attempt.Success) return WithoutExpiredWindows(attempt, now);
         // A transient failure keeps the last good reading visible while it is still
         // recent; its windows carry their own read time, so it is not shown as new.
-        if (attempt.Status != ClaudeCliQuotaStatus.NotInstalled && _lastSuccess is { ObservedAt: { } readAt } success
+        // A missing CLI or a login without plan windows means that reading no longer
+        // describes the CLI's account, so it is not reused.
+        if (attempt.Status == ClaudeCliQuotaStatus.Unavailable && _lastSuccess is { ObservedAt: { } readAt } success
             && now - readAt <= MaximumAge)
         {
             var kept = WithoutExpiredWindows(success, now);
@@ -150,6 +168,14 @@ public sealed class ClaudeCliQuotaCollector
             {
                 // Discovery is only a few file checks; recheck at the normal pace.
                 _nextAttemptAt = completedAt + MinimumInterval;
+            }
+            else if (reading.Status == ClaudeCliQuotaStatus.NotAvailable)
+            {
+                // Most Desktop users have an embedded CLI they never signed in to.
+                // That state is stable, so do not start the CLI for it every few
+                // minutes; a detected login clears the wait (see RetrySoon).
+                _failures = 0;
+                _nextAttemptAt = completedAt + NotAvailableRetry;
             }
             else
             {

@@ -172,6 +172,51 @@ public sealed class AppDataStoreTests
         }
     }
 
+    [Theory]
+    // 0.6.8 wrote its default "off" with every save; that is not a user choice.
+    [InlineData("""{"theme":"dark","claudeCliQuotaEnabled":false}""", true)]
+    [InlineData("""{"theme":"dark"}""", true)]
+    // Saved against the current defaults, an explicit "off" is a choice and stays.
+    [InlineData("""{"theme":"dark","claudeCliQuotaEnabled":false,"settingsRevision":1}""", false)]
+    [InlineData("""{"theme":"dark","claudeCliQuotaEnabled":true,"settingsRevision":1}""", true)]
+    public async Task SettingsStore_EnablesCliQuotaForSettingsWrittenBeforeItBecameTheDefault(string saved, bool expected)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"codexu-cli-default-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(root);
+            await File.WriteAllTextAsync(Path.Combine(root, "settings.json"), saved);
+
+            var result = await new AppSettingsStore(root).LoadAsync();
+
+            Assert.Equal(expected, result.ClaudeCliQuotaEnabled);
+            Assert.Equal(AppSettings.CurrentSettingsRevision, result.SettingsRevision);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SettingsStore_PersistsTheRevisionSoAnExplicitOffSurvivesReload()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"codexu-cli-revision-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new AppSettingsStore(root);
+            await store.SaveAsync(new AppSettings(ClaudeCliQuotaEnabled: false, SettingsRevision: 0));
+
+            using var raw = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "settings.json")));
+            Assert.Equal(AppSettings.CurrentSettingsRevision, raw.RootElement.GetProperty("settingsRevision").GetInt32());
+            Assert.False((await new AppSettingsStore(root).LoadAsync()).ClaudeCliQuotaEnabled);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task SettingsStore_MovesALegacySubscriptionAmountOntoCodex()
     {

@@ -160,6 +160,30 @@ public sealed class LocalDataManagementServiceTests
     }
 
     [Fact]
+    public async Task RestoreAsync_KeepsADeliberatelyDisabledCliQuotaQuery()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var dataRoot = DataRoot(root);
+            var settingsStore = new AppSettingsStore(dataRoot);
+            var service = new LocalDataManagementService(settingsStore, new TodoStore(dataRoot), dataRoot);
+            var backupPath = Path.Combine(root, "cli-disabled-backup.json");
+            var backupSettings = await settingsStore.SaveAsync(new AppSettings(ClaudeCliQuotaEnabled: false));
+            await service.BackupAsync(backupSettings, backupPath);
+            _ = await settingsStore.SaveAsync(new AppSettings(ClaudeCliQuotaEnabled: true));
+
+            Assert.True((await service.RestoreAsync(backupPath)).Success);
+
+            Assert.False((await settingsStore.LoadAsync()).ClaudeCliQuotaEnabled);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RestoreAsync_Schema3WithoutHistoryRemovesHistoryCreatedAfterBackup()
     {
         var root = CreateRoot();

@@ -48,10 +48,20 @@ public sealed record AppSettings(
     string? PinnedRateCatalogSource = null,
     string? PinnedRateCatalogBaseVersion = null,
     string? ClaudeDesktopUsageTranscript = null,
-    // Opt-in: each refresh may start the official Claude CLI in the background
-    // to read the plan windows of the CLI's own login.
-    bool ClaudeCliQuotaEnabled = false)
+    // On by default since 0.6.9: each refresh may start the official Claude CLI in
+    // the background to read the plan windows of the CLI's own login.
+    bool ClaudeCliQuotaEnabled = true,
+    // Identifies which defaults a saved settings file was written against, so a
+    // later default change can tell an untouched old value from a deliberate one.
+    int SettingsRevision = AppSettings.CurrentSettingsRevision)
 {
+    /// <summary>
+    /// 1 (0.6.9): background Claude CLI quota reads became on by default. Files
+    /// without a revision were written by 0.6.8 or earlier, where the toggle
+    /// defaulted to off and was saved along with every other setting.
+    /// </summary>
+    public const int CurrentSettingsRevision = 1;
+
     private static readonly char[] InvalidWindowsPathCharacters = ['\0', '"', '<', '>', '|', '?', '*'];
 
     public AppSettings Validate()
@@ -72,6 +82,9 @@ public sealed record AppSettings(
 
     public AppSettings Normalize() => this with
     {
+        // Every normalized value is expressed against the current defaults; legacy
+        // files are migrated by the settings store before they reach this point.
+        SettingsRevision = CurrentSettingsRevision,
         CodexHome = NormalizePath(CodexHome),
         CodexExecutable = NormalizePath(CodexExecutable),
         ClaudeDesktopUsageTranscript = NormalizePath(ClaudeDesktopUsageTranscript),

@@ -23,9 +23,16 @@ public sealed class ClaudeQuotaStateTests
     }
 
     [Fact]
-    public void BackgroundCliQueryIsOptIn()
+    public void BackgroundCliQueryIsOnByDefaultAndCanBeTurnedOff()
     {
-        Assert.False(new AppSettings().ClaudeCliQuotaEnabled);
-        Assert.True((new AppSettings() with { ClaudeCliQuotaEnabled = true }).Validate().Normalize().ClaudeCliQuotaEnabled);
+        Assert.True(new AppSettings().ClaudeCliQuotaEnabled);
+        Assert.False((new AppSettings() with { ClaudeCliQuotaEnabled = false }).Validate().Normalize().ClaudeCliQuotaEnabled);
+    }
+
+    [Fact]
+    public void NormalizedSettingsAlwaysCarryTheCurrentRevision()
+    {
+        Assert.Equal(AppSettings.CurrentSettingsRevision, new AppSettings().SettingsRevision);
+        Assert.Equal(AppSettings.CurrentSettingsRevision, (new AppSettings() with { SettingsRevision = 0 }).Normalize().SettingsRevision);
     }
 }

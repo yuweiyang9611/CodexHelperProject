@@ -45,13 +45,14 @@ async function copyInstruction() {
     copyState.value = 'manual'
   }
 }
+// The background query is on by default, so a missing CLI or one that is not signed
+// in to a subscription is a normal state for many users. Those details live in the
+// CLI login status under settings; the overview only reports a query that failed.
 const cliHint = computed(() => {
   const quota = state.value
-  if (!quota || quota.source === 'cliQuery') return ''
-  if (quota.cliStatus === 'notAvailable') return 'Claude CLI 后台查询未取得额度：CLI 当前未登录 Claude 订阅账号，或使用 API 密钥、第三方服务。可在“设置与诊断”检查登录状态。'
-  if (quota.cliStatus === 'notInstalled') return 'Claude CLI 后台查询未找到 Claude Code CLI，请安装官方 CLI 或确认 Desktop 内嵌 CLI 可用。'
-  if (quota.cliStatus === 'unavailable') return 'Claude CLI 后台查询暂时失败，稍后会自动重试。'
-  return ''
+  return quota && quota.source !== 'cliQuery' && quota.cliStatus === 'unavailable'
+    ? 'Claude CLI 后台额度查询暂时失败，稍后会自动重试。'
+    : ''
 })
 const quotaMessage = computed(() => {
   const quota = state.value

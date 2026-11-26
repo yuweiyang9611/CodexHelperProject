@@ -88,7 +88,7 @@ describe('desktop host capabilities', () => {
     } finally { request.mockRestore() }
   })
 
-  it('opts in to background CLI quota reads through the regular settings patch', async () => {
+  it('turns off the default background CLI quota reads through the regular settings patch', async () => {
     const originalRequest = host.request.bind(host)
     const request = vi.spyOn(host, 'request')
       .mockImplementation(<T>(method: string, payload?: object): Promise<T> =>
@@ -98,15 +98,16 @@ describe('desktop host capabilities', () => {
     try {
       const { container, store } = mountSettings([])
       const toggle = labelledControl(container, '通过 Claude CLI 在后台读取额度') as HTMLInputElement
-      expect(toggle.checked).toBe(false)
+      expect(toggle.checked).toBe(true)
       expect(container.textContent).toContain('不发送提示词，也不调用模型')
+      expect(container.textContent).toContain('每小时重试一次')
       toggle.click()
       await nextTick()
-      expect(store.settingsDraft?.claudeCliQuotaEnabled).toBe(true)
+      expect(store.settingsDraft?.claudeCliQuotaEnabled).toBe(false)
       button(container, '保存设置').click()
-      await vi.waitFor(() => expect(store.settings?.claudeCliQuotaEnabled).toBe(true))
+      await vi.waitFor(() => expect(store.settings?.claudeCliQuotaEnabled).toBe(false))
       const update = request.mock.calls.find(([method]) => method === 'settings.update')
-      expect(update?.[1]).toEqual({ patch: { claudeCliQuotaEnabled: true } })
+      expect(update?.[1]).toEqual({ patch: { claudeCliQuotaEnabled: false } })
     } finally { request.mockRestore() }
   })
 

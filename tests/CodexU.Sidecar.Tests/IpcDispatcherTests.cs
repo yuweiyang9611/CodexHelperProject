@@ -8,17 +8,24 @@ namespace CodexU.Sidecar.Tests;
 
 public sealed class IpcDispatcherTests
 {
-    [Fact]
-    public async Task ClaudeAuthStatusIsReadWithoutChangingSettingsOrRefreshingUsage()
+    [Theory]
+    [InlineData(ClaudeCliLoginStatus.LoggedIn, 1)]
+    [InlineData(ClaudeCliLoginStatus.LoggedOut, 0)]
+    [InlineData(ClaudeCliLoginStatus.Unavailable, 0)]
+    public async Task ClaudeAuthStatusIsReadWithoutChangingSettingsAndOnlyALoginResumesTheQuotaQuery(
+        ClaudeCliLoginStatus status, int expectedResumes)
     {
-        var expected = new ClaudeCliAuthStatus(ClaudeCliLoginStatus.LoggedIn,
+        var expected = new ClaudeCliAuthStatus(status,
             ClaudeCliAuthMethod.ClaudeAi, ClaudeCliSource.Standalone, DateTimeOffset.UtcNow);
-        using var context = TestContext.Create(new ImmediateDashboardService(), readClaudeAuthStatus: _ => Task.FromResult(expected));
+        var resumes = 0;
+        using var context = TestContext.Create(new ImmediateDashboardService(),
+            readClaudeAuthStatus: _ => Task.FromResult(expected), claudeCliLoggedIn: () => resumes++);
         var saved = context.Session.CurrentSettings;
 
         var actual = await context.Dispatcher.DispatchAsync(Request("claude.getAuthStatus"));
 
         Assert.Same(expected, actual);
+        Assert.Equal(expectedResumes, resumes);
         Assert.Equal(saved, context.Session.CurrentSettings);
         Assert.Empty(context.EventSink.EventsFor("usage.snapshotChanged"));
         Assert.Empty(context.EventSink.EventsFor("settings.changed"));
@@ -45,19 +52,20 @@ public sealed class IpcDispatcherTests
     }
 
     [Fact]
-    public async Task SettingsPatch_EnablesCliQuotaAndRebuildsTheDashboardService()
+    public async Task SettingsPatch_DisablesTheDefaultCliQuotaAndRebuildsTheDashboardService()
     {
         var replacement = new ImmediateDashboardService();
         using var context = TestContext.Create(new ImmediateDashboardService(), replacement: replacement);
-        Assert.False(context.Session.CurrentSettings.ClaudeCliQuotaEnabled);
+        Assert.True(context.Session.CurrentSettings.ClaudeCliQuotaEnabled);
 
         var result = Assert.IsType<AppSettings>(await context.Dispatcher.DispatchAsync(Request("settings.update", new
         {
-            patch = new { claudeCliQuotaEnabled = true }
+            patch = new { claudeCliQuotaEnabled = false }
         })));
         await context.Session.LoadCurrentRuntimeSnapshotAsync();
 
-        Assert.True(result.ClaudeCliQuotaEnabled);
+        Assert.False(result.ClaudeCliQuotaEnabled);
+        Assert.Equal(AppSettings.CurrentSettingsRevision, result.SettingsRevision);
         Assert.Equal(result, await new AppSettingsStore(context.DataDirectory).LoadAsync());
         Assert.Equal(1, replacement.CallCount);
     }
@@ -627,7 +635,8 @@ public sealed class IpcDispatcherTests
 
         private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null,
             IDashboardService? replacement = null,
-            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null)
+            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
+            Action? claudeCliLoggedIn = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -651,7 +660,9 @@ public sealed class IpcDispatcherTests
                 EventSink,
                 interaction ?? new ConfirmingUserInteractionService(),
                 new NoOpWindowCommands(),
-                new UnsupportedExternalUriLauncher(), readClaudeAuthStatus: readClaudeAuthStatus);
+                new UnsupportedExternalUriLauncher(), readClaudeAuthStatus: readClaudeAuthStatus,
+                // Never touch the process-wide collector from tests.
+                claudeCliLoggedIn: claudeCliLoggedIn ?? (() => { }));
         }
 
         public ApplicationSession Session { get; }
@@ -666,8 +677,9 @@ public sealed class IpcDispatcherTests
 
         public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null,
             IDashboardService? replacement = null,
-            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null) =>
-            new(dashboardService, interaction, replacement, readClaudeAuthStatus);
+            Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
+            Action? claudeCliLoggedIn = null) =>
+            new(dashboardService, interaction, replacement, readClaudeAuthStatus, claudeCliLoggedIn);
 
         public void Dispose()
         {

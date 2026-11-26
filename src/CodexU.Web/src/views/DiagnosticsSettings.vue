@@ -168,7 +168,7 @@ function removeCustomRate(index: number) {
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.claudeCliQuotaEnabled" type="checkbox" />通过 Claude CLI 在后台读取额度</label>
           </div>
-          <p>刷新时启动官方 CLI 读取它所登录账号的额度和重置时间，至多每 2 分钟一次；不发送提示词，也不调用模型。</p>
+          <p>刷新时启动官方 CLI 读取它所登录账号的额度和重置时间，至多每 2 分钟一次；不发送提示词，也不调用模型。CLI 未登录订阅账号时每小时重试一次，登录后点击“重新检查登录状态”即可立即恢复。</p>
           <ClaudeTranscriptBinding v-model="store.settingsDraft.claudeDesktopUsageTranscript" :disabled="settingsBusy" />
           <div class="setting-checks">
             <label><input v-model="store.settingsDraft.incrementalIndexEnabled" type="checkbox" />启用增量索引</label>

@@ -207,7 +207,21 @@ public sealed class AppSettingsStore
             };
         }
 
-        return settings.Validate().Normalize();
+        return MigrateToCurrentRevision(settings, document.RootElement).Validate().Normalize();
+    }
+
+    /// <summary>
+    /// Applies default changes to settings written before they took effect. Shared by
+    /// the settings file and backup restore, which both hold raw saved JSON.
+    /// </summary>
+    internal static AppSettings MigrateToCurrentRevision(AppSettings settings, JsonElement root)
+    {
+        var revision = TryGetProperty(root, "settingsRevision", out var value)
+            && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : 0;
+        // 0.6.8 saved the then-default "off" with every settings change, so an old
+        // false is not a choice; only a value saved at revision 1 or later is.
+        if (revision < 1) settings = settings with { ClaudeCliQuotaEnabled = true };
+        return settings;
     }
 
     private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)

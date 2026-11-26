@@ -815,8 +815,10 @@ public sealed class LocalDataManagementService(
         IReadOnlyList<TodoItem> todos;
         try
         {
-            var importedSettings = JsonSerializer.Deserialize<AppSettings>(settingsBytes, JsonOptions)
+            using var settingsDocument = JsonDocument.Parse(settingsBytes);
+            var importedSettings = settingsDocument.RootElement.Deserialize<AppSettings>(JsonOptions)
                 ?? throw new InvalidDataException("备份中的设置为空。");
+            importedSettings = AppSettingsStore.MigrateToCurrentRevision(importedSettings, settingsDocument.RootElement);
             settings = (importedSettings with { CodexExecutable = null })
                 .Validate()
                 .Normalize();

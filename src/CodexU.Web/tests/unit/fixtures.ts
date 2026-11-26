@@ -164,6 +164,7 @@ export function appSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     claudeMonthlySubscriptionAmount: 20,
     codexAutoDetectSubscriptionAmount: true,
     claudeAutoDetectSubscriptionAmount: true,
+    claudeCliQuotaEnabled: true,
     checkForUpdates: true,
     includePrereleaseUpdates: false,
     monthlyAmountAlert: 0,
