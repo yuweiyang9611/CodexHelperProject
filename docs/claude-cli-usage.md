@@ -2,7 +2,7 @@
 
 Claude 额度后台读取方案需要使用 Anthropic 官方 **Claude Code CLI**。CLI 使用自己的 Claude 登录，codexU 读取它返回的额度百分比和重置时间。首次使用时，应在 CLI 登录与 Claude Desktop 相同的账号；有多个组织时也应核对当前组织。
 
-本说明对应 2026-11-12 的验证工作。当前发布版 0.6.7 使用 Desktop 会话查询结果或本地历史缓存；CLI 后台读取正在验证，尚未接入发布版的自动刷新。
+本说明对应 2026-11-12 起的验证工作。当前发布版 0.6.7 使用 Desktop 会话查询结果或本地历史缓存；CLI 后台读取已于 2026-11-26 在本机验证通过，尚未接入自动刷新。
 
 ## 在 codexU 检查登录
 
@@ -52,11 +52,11 @@ claude auth status
 - 与 Desktop 用量页面的同范围读数一致。
 - 查询过程没有发送模型提示词或产生模型调用。
 
-本机原版 CLI 2.1.321 已确认识别 stdin 的 `get_usage` 控制查询；登录前返回 `rate_limits_available=false`，额度和订阅类型均为空。该控制协议未在公开 CLI 文档中形成稳定合同，应按实验性能力验证版本兼容性。
+本机原版 CLI 2.1.321 已确认识别 stdin 的 `get_usage` 控制查询；登录前返回 `rate_limits_available=false`，额度和订阅类型均为空。2026-11-26 使用 2.1.330 登录后复测，返回五小时、七天及按模型七天窗口的百分比和重置时间，与 Desktop 同时刻读数一致，且没有产生模型调用。该控制协议未在公开 CLI 文档中形成稳定合同，应按实验性能力验证版本兼容性。
 
 官方 SDK 另提供实验性 `/usage` 结构化报告，满足认证条件时包含 `percent` 和 `resets_at`。查询返回成功、空结果或没有权限是不同状态，应分别处理。[SDK 用量报告](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusagereport)
 
-登录后的验证结果记录在 [后台读取方案核查](research-claude-background-usage-2026-11-12.md)。验证通过后，才可将查询接入 codexU 的定时刷新，并加入缓存、超时和查询限流时的退避。
+登录后的验证结果记录在 [后台读取方案核查](research-claude-background-usage-2026-11-12.md)，本机验证已通过。下一步是将查询接入 codexU 的定时刷新，并加入缓存、超时和查询限流时的退避；接入前，应用仍不会在后台读取 CLI 额度。
 
 ## 数据范围
 

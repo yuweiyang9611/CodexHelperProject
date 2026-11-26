@@ -16,6 +16,18 @@
 
 这确认新版二进制仍识别该控制查询，独立启动时依然缺少可用的同账号认证上下文。尚未证明登录后能读到 Desktop 对应账户的两个通用窗口。不得把“控制请求成功”展示为“实时额度接通”。
 
+## 登录后复测（2026-11-26）
+
+用户通过官方流程 `auth login --claudeai` 登录 Desktop 6.28899.6.0 内嵌的原版 Claude Code `2.1.330` 后复测。`auth status` 返回 `loggedIn=true`、`authMethod=claude.ai`，退出码为 0。CLI 登录的组织与 Desktop 本地用量历史中唯一的组织一致；比较只在内存中进行，组织标识未输出或存档。
+
+在隔离的空工作目录中，以 `-p --input-format stream-json --output-format stream-json --verbose --strict-mcp-config --no-session-persistence --safe-mode` 启动，只写入一条 `subtype=get_usage`、`skip_behaviors=true` 的控制帧。两次查询均在约 0.7–1.1 秒内收到匹配 request_id 的成功 `control_response`，进程退出码为 0，stdout 没有其他消息，stderr 为空。响应中的会话统计为 `total_cost_usd=0`、`total_api_duration_ms=0`，确认没有模型调用。
+
+响应 `rate_limits_available=true`，`subscription_type` 为订阅套餐。`rate_limits.limits[]` 按 `kind` 返回 `session`（五小时）、`weekly_all`（七天、全部模型）和 `weekly_scoped`（按模型的七天窗口，`scope.model` 有值）。每项含整数 `percent`、`severity`、`is_active`、`group`，以及 ISO 8601 带时区偏移的 `resets_at`（UTC，微秒精度）；通用窗口的 `scope` 为 null。响应同时保留旧形状 `five_hour`／`seven_day.utilization` 和大量内部代号字段（本次均为 null），不应依赖。响应不含账号邮箱或组织标识。
+
+同一时刻对照 Desktop Code 会话内建的 `get_usage` 工具：三个窗口的百分比完全一致，重置时间精确到秒一致，只有亚秒部分不同。真实百分比和会话标识未写入本记录。
+
+结论：本机后台 CLI 路线已接通，满足 [CLI 使用说明](claude-cli-usage.md) 列出的四项验证条件。该控制帧仍是没有公开合同的实验接口，接入时需按版本容错：只映射 `scope` 为 null 的 `session` 与 `weekly_all`；未知 `kind`、缺失窗口和空 `resets_at` 保持未知；以查询完成时间作为采样时间；超时、非零退出与 `rate_limits_available=false` 分别处理。
+
 ## 自动化方式与限制
 
 本机分发代码的只读复查对象为 Desktop 5.1231.2.0，内嵌 CLI 为 2.1.321。沿上一轮已识别模块核对，Code 会话内的工具仍受 `sessionType=ccd` 限制，SDK 实验入口仍发送 `get_usage` 控制帧。Desktop 的 PlanUsage preload 只暴露触发刷新的 `nudgeRefresh`，所追踪实现没有返回额度的 getter。历史缓存仍为 version 2 的 `t/org/u` 百分比结构。这些是当前分发实现的观察，不是公开接口合同；核查未操作窗口或读取凭据。
