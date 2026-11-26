@@ -60,6 +60,7 @@ public sealed class IpcDispatcher : IDisposable
     private readonly IStatusStripCommands? _statusStripCommands;
     private readonly Func<CancellationToken, Task<ClaudeCliAuthStatus>> _readClaudeAuthStatus;
     private readonly Action _claudeCliLoggedIn;
+    private readonly Func<CancellationToken, Task<AntigravityQuotaSnapshot>> _readAntigravityQuota;
     private bool _disposed;
 
     public IpcDispatcher(
@@ -71,7 +72,8 @@ public sealed class IpcDispatcher : IDisposable
         IExternalUriLauncher externalUriLauncher,
         IStatusStripCommands? statusStripCommands = null,
         Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
-        Action? claudeCliLoggedIn = null)
+        Action? claudeCliLoggedIn = null,
+        Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(hostEnvironment);
@@ -89,6 +91,7 @@ public sealed class IpcDispatcher : IDisposable
         _readClaudeAuthStatus = readClaudeAuthStatus ?? new ClaudeCliAuthStatusReader().ReadAsync;
         // A login confirmed in settings ends the background quota query's long wait.
         _claudeCliLoggedIn = claudeCliLoggedIn ?? ClaudeCliQuotaCollector.Shared.RetrySoon;
+        _readAntigravityQuota = readAntigravityQuota ?? AntigravityQuotaReader.Shared.ReadAsync;
         _statusStripCommands = statusStripCommands;
 
         _session.SnapshotChanged += OnSnapshotChanged;
@@ -160,6 +163,9 @@ public sealed class IpcDispatcher : IDisposable
                     new HostFileDialogRequest("选择 Claude Desktop 额度会话文件", "", ".jsonl",
                         [new HostFileType("Desktop 会话", ["*.jsonl"])], CheckFileExists: true),
                     _session.LifetimeToken);
+
+            case "antigravity.getQuota":
+                return await _readAntigravityQuota(_session.LifetimeToken);
 
             case "settings.validateClaudeTranscript":
                 return await new ClaudeDesktopToolUsageReader(GetRequiredString(request.Payload, "path").Trim())

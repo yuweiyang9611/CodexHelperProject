@@ -23,6 +23,7 @@ public static class IpcSecurityPolicy
         "runtime.select",
         "settings.get",
         "claude.getAuthStatus",
+        "antigravity.getQuota",
         "settings.pickClaudeTranscript",
         "settings.validateClaudeTranscript",
         "settings.update",

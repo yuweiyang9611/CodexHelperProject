@@ -232,6 +232,9 @@ public partial class MainWindow
                 if (authStatus.Status == ClaudeCliLoginStatus.LoggedIn) ClaudeCliQuotaCollector.Shared.RetrySoon();
                 return authStatus;
 
+            case "antigravity.getQuota":
+                return await AntigravityQuotaReader.Shared.ReadAsync(_lifetimeCancellation.Token);
+
             case "settings.pickClaudeTranscript":
                 var sessionDialog = new OpenFileDialog
                 {

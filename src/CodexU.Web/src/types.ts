@@ -5,6 +5,18 @@ export interface ClaudeCliAuthStatus {
   source: 'none' | 'standalone' | 'path' | 'desktopEmbedded'
   checkedAt: string
 }
+export interface AntigravityQuotaBucket {
+  label: string
+  remainingPercent?: number | null
+  remainingAmount?: number | null
+  resetsAt?: string | null
+  disabled: boolean
+}
+export interface AntigravityQuotaSnapshot {
+  status: 'ready' | 'notInstalled' | 'unsupportedVersion' | 'unavailable' | 'noQuota'
+  groups: { name: string; buckets: AntigravityQuotaBucket[] }[]
+  observedAt?: string | null
+}
 export type DataQuality = 'detailed' | 'partial' | 'approximate' | 'unavailable'
 export interface UsageAmount { knownAmount?: number | null; isLowerBound: boolean }
 export interface UsageAnalysisRequest {

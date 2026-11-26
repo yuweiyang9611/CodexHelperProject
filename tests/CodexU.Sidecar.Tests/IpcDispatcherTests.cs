@@ -8,6 +8,22 @@ namespace CodexU.Sidecar.Tests;
 
 public sealed class IpcDispatcherTests
 {
+    [Fact]
+    public async Task AntigravityQuotaReadDoesNotChangeRuntimeOrRefreshDashboard()
+    {
+        var expected = new AntigravityQuotaSnapshot(AntigravityQuotaStatus.NoQuota, [], DateTimeOffset.UtcNow);
+        using var context = TestContext.Create(new ImmediateDashboardService(),
+            readAntigravityQuota: _ => Task.FromResult(expected));
+        var runtime = context.Session.CurrentRuntime;
+
+        var actual = await context.Dispatcher.DispatchAsync(Request("antigravity.getQuota"));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(runtime, context.Session.CurrentRuntime);
+        Assert.Empty(context.EventSink.EventsFor("usage.snapshotChanged"));
+        Assert.Empty(context.EventSink.EventsFor("settings.changed"));
+    }
+
     [Theory]
     [InlineData(ClaudeCliLoginStatus.LoggedIn, 1)]
     [InlineData(ClaudeCliLoginStatus.LoggedOut, 0)]
@@ -636,7 +652,8 @@ public sealed class IpcDispatcherTests
         private TestContext(IDashboardService dashboardService, IUserInteractionService? interaction = null,
             IDashboardService? replacement = null,
             Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
-            Action? claudeCliLoggedIn = null)
+            Action? claudeCliLoggedIn = null,
+            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null)
         {
             _rootDirectory = Path.Combine(
                 Path.GetTempPath(),
@@ -662,7 +679,8 @@ public sealed class IpcDispatcherTests
                 new NoOpWindowCommands(),
                 new UnsupportedExternalUriLauncher(), readClaudeAuthStatus: readClaudeAuthStatus,
                 // Never touch the process-wide collector from tests.
-                claudeCliLoggedIn: claudeCliLoggedIn ?? (() => { }));
+                claudeCliLoggedIn: claudeCliLoggedIn ?? (() => { }),
+                readAntigravityQuota: readAntigravityQuota);
         }
 
         public ApplicationSession Session { get; }
@@ -678,8 +696,9 @@ public sealed class IpcDispatcherTests
         public static TestContext Create(IDashboardService dashboardService, IUserInteractionService? interaction = null,
             IDashboardService? replacement = null,
             Func<CancellationToken, Task<ClaudeCliAuthStatus>>? readClaudeAuthStatus = null,
-            Action? claudeCliLoggedIn = null) =>
-            new(dashboardService, interaction, replacement, readClaudeAuthStatus, claudeCliLoggedIn);
+            Action? claudeCliLoggedIn = null,
+            Func<CancellationToken, Task<AntigravityQuotaSnapshot>>? readAntigravityQuota = null) =>
+            new(dashboardService, interaction, replacement, readClaudeAuthStatus, claudeCliLoggedIn, readAntigravityQuota);
 
         public void Dispose()
         {

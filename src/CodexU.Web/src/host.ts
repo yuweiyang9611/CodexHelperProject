@@ -1,4 +1,4 @@
-import type { AgentRuntime, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
+import type { AgentRuntime, AntigravityQuotaSnapshot, AppSettings, DashboardSnapshot, IpcEnvelope, StatusStripControlState, UsageAnalysisRequest } from './types'
 import { createDemoAnalysis } from './demoAnalysis'
 import { demoRateCatalog, demoRatePreview } from './demoRateEditor'
 import { demoCombined } from './demoCombined'
@@ -270,6 +270,25 @@ class HostBridge {
     if (method === 'claude.getAuthStatus') return {
       status: 'notInstalled', authMethod: 'none', source: 'none', checkedAt: demoNow().toISOString(),
     } as T
+    if (method === 'antigravity.getQuota') return {
+      status: 'ready',
+      observedAt: demoNow().toISOString(),
+      groups: [
+        { name: 'Gemini Pro', buckets: [
+          { label: '5 小时', remainingPercent: 72.5, resetsAt: new Date(demoNow().getTime() + 9_000_000).toISOString(), disabled: false },
+          { label: '每周', remainingPercent: 0, resetsAt: new Date(demoNow().getTime() + 259_200_000).toISOString(), disabled: false },
+        ] },
+        { name: 'Gemini Flash', buckets: [
+          { label: '5 小时', remainingPercent: 93, disabled: false },
+          { label: '每周', disabled: true },
+        ] },
+        { name: 'Claude 和 GPT', buckets: [
+          { label: '5 小时', disabled: false },
+          { label: '每周', remainingPercent: 45, disabled: false },
+        ] },
+        { name: 'AI Credits', buckets: [{ label: '余额', remainingAmount: 1_000, disabled: false }] },
+      ],
+    } satisfies AntigravityQuotaSnapshot as T
     if (method === 'settings.pickClaudeTranscript') return (visualTestMode ? demoTranscript : null) as T
     if (method === 'settings.validateClaudeTranscript') {
       return (visualTestMode && (payload as { path?: string }).path === demoTranscript

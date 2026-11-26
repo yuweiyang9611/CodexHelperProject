@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import OverviewCards from './components/OverviewCards.vue'
 import UiIcon from './components/UiIcon.vue'
+import AntigravityQuotaView from './views/AntigravityQuotaView.vue'
 import CombinedRuntimeView from './views/CombinedRuntimeView.vue'
 import DiagnosticsSettings from './views/DiagnosticsSettings.vue'
 import ProjectRankView from './views/ProjectRankView.vue'
@@ -16,7 +17,7 @@ import { useDashboardStore } from './stores/dashboard'
 import { host } from './host'
 
 const store = useDashboardStore()
-const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'diagnostics'>('usage')
+const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'antigravity' | 'diagnostics'>('usage')
 const snapshot = computed(() => store.snapshot)
 const { layoutStyle } = useViewportScale()
 const { isLightTheme } = useThemePreference()
@@ -28,6 +29,7 @@ const tabs = [
   { id: 'projects' as const, icon: 'folder' as const, label: '项目排行' },
   { id: 'skills' as const, icon: 'sparkle' as const, label: 'Skill 使用' },
   { id: 'combined' as const, icon: 'compare' as const, label: '双运行时' },
+  { id: 'antigravity' as const, icon: 'globe' as const, label: 'Antigravity' },
   { id: 'diagnostics' as const, icon: 'settings' as const, label: '设置与诊断' },
 ]
 
@@ -83,7 +85,7 @@ onMounted(async () => {
         <button type="button" @click="store.openReleasePage()">查看发布</button>
       </div>
 
-      <OverviewCards :snapshot="snapshot" />
+      <OverviewCards v-if="activeTab !== 'antigravity'" :snapshot="snapshot" />
 
       <section class="dashboard-section glass-card">
         <div class="dashboard-toolbar">
@@ -109,7 +111,7 @@ onMounted(async () => {
             <template v-else-if="activeTab === 'projects'">已归类 <strong>{{ snapshot.projects.length }}</strong> 个项目</template>
             <template v-else-if="activeTab === 'skills'">发现 <strong>{{ snapshot.skills.length }}</strong> 个 Skill</template>
             <template v-else-if="activeTab === 'combined'">Codex + Claude Code 并列</template>
-            <template v-else>数据源 <strong>{{ snapshot.diagnostics.length }}</strong> 项</template>
+            <template v-else-if="activeTab === 'diagnostics'">数据源 <strong>{{ snapshot.diagnostics.length }}</strong> 项</template>
           </div>
         </div>
 
@@ -124,6 +126,8 @@ onMounted(async () => {
         <!-- The only view without a :snapshot — it reads store.combined, which holds
              both runtimes, rather than the single selected-runtime snapshot. -->
         <CombinedRuntimeView v-else-if="activeTab === 'combined'" id="panel-combined" role="tabpanel" aria-labelledby="tab-combined" tabindex="0" />
+
+        <AntigravityQuotaView v-else-if="activeTab === 'antigravity'" id="panel-antigravity" role="tabpanel" aria-labelledby="tab-antigravity" tabindex="0" />
 
         <DiagnosticsSettings v-else id="panel-diagnostics" :snapshot="snapshot" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0" />
       </section>

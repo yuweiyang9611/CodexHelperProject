@@ -34,6 +34,7 @@ export const TAB_IDS = [
   'projects',
   'skills',
   'combined',
+  'antigravity',
   'diagnostics',
 ] as const
 
@@ -46,6 +47,7 @@ export async function openTab(page: Page, id: TabId) {
   // The combined panel loads independently. Wait for its final height before
   // scrolling or capturing it; a short loading panel clamps the scroll position.
   if (id === 'combined') await expect(page.locator('.combined-columns')).toBeVisible()
+  if (id === 'antigravity') await expect(page.getByRole('button', { name: '刷新额度', exact: true })).toBeEnabled()
   if (id === 'diagnostics') {
     await expect(page.getByRole('region', { name: 'Claude CLI 登录状态', exact: true })).toHaveAttribute('aria-busy', 'false')
   }

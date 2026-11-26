@@ -19,7 +19,7 @@ test('local JSONL periods drive token overview and usage charts', async ({ page 
   expect(latestTooltip).toContain('US$')
 })
 
-test('last selected runtime survives reopening with the restored five tabs', async ({ page }, testInfo) => {
+test('last selected runtime survives reopening', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-dark-100')
   await openDemo(page, testInfo)
   await page.getByRole('button', { name: 'Claude Code', exact: true }).click()
@@ -27,5 +27,5 @@ test('last selected runtime survives reopening with the restored five tabs', asy
   await expect(page.locator('.token-card')).toContainText('本机原始统计')
   await page.reload()
   await expect(page.getByRole('button', { name: 'Claude Code', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('tab')).toHaveText(['用量趋势', '项目排行', 'Skill 使用', '双运行时', '设置与诊断'])
+  await expect(page.getByRole('tab')).toHaveText(['用量趋势', '项目排行', 'Skill 使用', '双运行时', 'Antigravity', '设置与诊断'])
 })

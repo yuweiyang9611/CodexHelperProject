@@ -193,6 +193,14 @@ Claude Code transcript 只有 Token 计数，没有订阅配额；HTTP 429 只�
 
 statusLine 和 Desktop 用量历史都**没有订阅账单金额**。在「设置与诊断 → 价格与费率」填写实际 Claude 月费，并关闭「自动推算 Claude 月费」，主概览和双运行时会一致使用该值并标为手动。只有来源明确给出可识别套餐时，自动模式才提供参考价格；旧的裸 `max` 标签无法区分旧 5x／20x 档位，不再猜成 100 美元。明确的 Ultra／旧 Max 20x 参考价为 200 美元/月，不能代替实际账单。
 
+## Antigravity 额度
+
+在「Antigravity」页可查看各模型组的剩余额度及重置时间。打开页面时会查询一次，也可以点击「刷新额度」。
+
+安装 Google 官方 Antigravity CLI（`agy`，1.1.11 或以上），并在 CLI 中登录有额度的 Google 账号。Windows 上应用会查找官方默认安装目录和 PATH 中的 `agy.exe`。应用在后台执行官方的 `agy -p "/usage" --output-format json`，只使用额度分组、剩余量与重置时间。该命令不会执行模型推理。CLI 版本不受支持、没有可用的额度数据或查询失败时，页面会显示对应状态。
+
+Google 按模型组提供独立额度窗口。页面以 CLI 返回的分组和窗口为准，Antigravity 额度不计入 Codex 与 Claude 的用量和费用汇总。[官方用量说明](https://antigravity.google/docs/cli/commands/usage) · [官方 CLI 安装说明](https://antigravity.google/docs/getting-started?tab=cli)
+
 ## 隐私
 
 - 不上传本机 usage、线程、路径或账户数据。
