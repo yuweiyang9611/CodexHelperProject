@@ -173,7 +173,11 @@ public sealed class ClaudeCliAuthStatusReaderTests
         processInfo.ArgumentList.Add("-NoProfile");
         processInfo.ArgumentList.Add("-NonInteractive");
         processInfo.ArgumentList.Add("-Command");
-        processInfo.ArgumentList.Add($"[IO.File]::WriteAllText('{pidFile.Replace("'", "''")}', [string]$PID); Start-Sleep -Seconds 30");
+        // Written then renamed: pid.txt exists only once its content is complete and the
+        // child has closed it. Polling a file the child is still writing raced on CI.
+        var quotedPid = pidFile.Replace("'", "''");
+        processInfo.ArgumentList.Add(
+            $"[IO.File]::WriteAllText('{quotedPid}.tmp', [string]$PID); [IO.File]::Move('{quotedPid}.tmp', '{quotedPid}'); Start-Sleep -Seconds 30");
         var reader = new ClaudeCliAuthStatusReader(() => new("fixture", ClaudeCliSource.Standalone),
             (_, token) => ClaudeCliAuthStatusReader.RunProcessAsync(processInfo, token), new FixedClock(), TimeSpan.FromSeconds(5));
         using var cancellation = new CancellationTokenSource();
