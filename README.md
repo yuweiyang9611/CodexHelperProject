@@ -5,7 +5,7 @@
 
 codexU Windows 参考 [shanggqm/codexU](https://github.com/shanggqm/codexU) 的产品设计，并吸收 [liu1198767931-bit/codexU-windows](https://github.com/liu1198767931-bit/codexU-windows) 的 Windows 功能边界。v0.5.0 是 WPF/WebView2 版本；从 v0.6.0-beta.1 起，公开发布切换为内置 Chromium 的 Electron 宿主，继续使用 Vue 3，并将 .NET 保留为独立 Sidecar 后端（当前为 .NET 11）。已有 v0.5.0 不会被新链路覆盖。
 
-当前版本 **0.6.12** 加强 Antigravity 与 Claude CLI 后台额度查询的防护和限流，并修复 Antigravity 模式下的错误提示与紧凑模式设置入口。参见 [0.6.12 发布说明](docs/release-0.6.12.md)、[0.6.11 发布说明](docs/release-0.6.11.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
+当前版本 **0.6.13** 新增「通过 Antigravity CLI 读取额度」开关（默认开启），并说明 Antigravity 额度的读取方式。参见 [0.6.13 发布说明](docs/release-0.6.13.md)、[0.6.12 发布说明](docs/release-0.6.12.md)、[0.6.11 发布说明](docs/release-0.6.11.md)、[Antigravity 额度](#antigravity-额度)和 [Claude CLI 使用说明](docs/claude-cli-usage.md)。模型费率更新依据保留在 [2026-11-01 更新说明](docs/update-2026-11-01.md)。
 
 ## 仓库迁移与隐私说明
 
@@ -198,6 +198,8 @@ statusLine 和 Desktop 用量历史都**没有订阅账单金额**。在「设�
 在顶部选择「Antigravity」，可以用额度环查看各模型组的剩余额度和重置时间。顶部刷新按钮立即查询，页面可见时按「设置与诊断」的自动刷新间隔更新。也可以在「三运行时」页同时查看 Codex、Claude Code 和 Antigravity 的额度。
 
 安装 Google 官方 Antigravity CLI（`agy`，1.1.11 或以上），并在 CLI 中登录有额度的 Google 账号。Windows 上应用会查找官方默认安装目录和 PATH 中的 `agy.exe`。应用在后台执行官方的 `agy -p "/usage" --output-format json`，只使用额度分组、剩余量与重置时间。该命令不会执行模型推理。CLI 版本不受支持、没有可用的额度数据或查询失败时，页面会显示对应状态。
+
+额度由 `agy` 用它自己的登录向 Google 查询，与在终端里手动输入 `/usage` 相同；codexU 不直接访问 Google 的任何接口，也不读取或转发 Antigravity 的登录凭据。查询只在 Antigravity 额度显示在屏幕上时进行。如果某个 CLI 版本把 `/usage` 当作提问调用了模型，应用会停止查询该版本；结果无法确认时，该版本依次暂停 30 分钟到 24 小时。不希望应用启动 `agy` 时，可在「设置与诊断 → 数据源」关闭「通过 Antigravity CLI 读取额度」（默认开启）；关闭后手动刷新也不会查询。
 
 Google 按模型组提供独立额度窗口。页面以 CLI 返回的分组和窗口为准，Antigravity 额度不计入 Codex 与 Claude 的用量和费用汇总。[官方用量说明](https://antigravity.google/docs/cli/commands/usage) · [官方 CLI 安装说明](https://antigravity.google/docs/getting-started?tab=cli)
 

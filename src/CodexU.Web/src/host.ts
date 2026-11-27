@@ -45,6 +45,7 @@ class HostBridge {
     codexAutoDetectSubscriptionAmount: true,
     claudeAutoDetectSubscriptionAmount: true,
     claudeCliQuotaEnabled: true,
+    antigravityQuotaEnabled: true,
     checkForUpdates: true,
     includePrereleaseUpdates: false,
     autoInstallUpdates: true,
@@ -197,6 +198,7 @@ class HostBridge {
       enabled: this.mockSettings.claudeCliQuotaEnabled !== false, lastStatus: 'notInstalled',
       lastAttemptAt: demoNow().toISOString(), lastSuccessAt: null, nextAttemptAt: null,
     } as T
+    if (method === 'antigravity.getQuota' && this.mockSettings.antigravityQuotaEnabled === false) return { status: 'disabled', groups: [] } as T
     if (method === 'antigravity.getQuota') return {
       status: 'ready',
       observedAt: demoNow().toISOString(),

@@ -171,6 +171,10 @@ function removeCustomRate(index: number) {
           <p>刷新时启动官方 CLI 读取它所登录账号的额度和重置时间，至多每 5 分钟一次；不发送提示词，也不调用模型。CLI 未登录订阅账号时每小时重试一次，登录后点击“重新检查登录状态”即可立即恢复。</p>
           <ClaudeTranscriptBinding v-model="store.settingsDraft.claudeDesktopUsageTranscript" :disabled="settingsBusy" />
           <div class="setting-checks">
+            <label><input v-model="store.settingsDraft.antigravityQuotaEnabled" type="checkbox" />通过 Antigravity CLI 读取额度</label>
+          </div>
+          <p>显示 Antigravity 额度时，按自动刷新间隔运行官方 agy CLI 自带的只读 /usage 命令；codexU 不直接访问 Google 接口，也不读取登录凭据。关闭后不再为额度启动 agy。</p>
+          <div class="setting-checks">
             <label><input v-model="store.settingsDraft.incrementalIndexEnabled" type="checkbox" />启用增量索引</label>
           </div>
         </fieldset>

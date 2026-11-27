@@ -51,6 +51,10 @@ public sealed record AppSettings(
     // On by default since 0.6.9: each refresh may start the official Claude CLI in
     // the background to read the plan windows of the CLI's own login.
     bool ClaudeCliQuotaEnabled = true,
+    // On by default: while an Antigravity quota view is visible, refreshes run the
+    // official agy CLI's own read-only /usage command (never a Google API directly).
+    // Off, agy is never started for quota.
+    bool AntigravityQuotaEnabled = true,
     // Identifies which defaults a saved settings file was written against, so a
     // later default change can tell an untouched old value from a deliberate one.
     int SettingsRevision = AppSettings.CurrentSettingsRevision)

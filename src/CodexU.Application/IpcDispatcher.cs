@@ -19,6 +19,7 @@ public sealed class IpcDispatcher : IDisposable
         "codexExecutable",
         "claudeDesktopUsageTranscript",
         "claudeCliQuotaEnabled",
+        "antigravityQuotaEnabled",
         "defaultWorkspace",
         "theme",
         "showSubagents",
@@ -182,6 +183,9 @@ public sealed class IpcDispatcher : IDisposable
                 return _describeClaudeCliQuota(_session.CurrentSettings.ClaudeCliQuotaEnabled);
 
             case "antigravity.getQuota":
+                // Off means agy is never started, not even for a manual refresh.
+                if (!_session.CurrentSettings.AntigravityQuotaEnabled)
+                    return new AntigravityQuotaSnapshot(AntigravityQuotaStatus.Disabled, []);
                 return await _readAntigravityQuota(_session.LifetimeToken);
 
             case "settings.validateClaudeTranscript":

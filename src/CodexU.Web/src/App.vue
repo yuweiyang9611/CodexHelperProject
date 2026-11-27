@@ -17,7 +17,7 @@ import { compactNumber, relativeTime } from './format'
 import { useDashboardStore } from './stores/dashboard'
 import { host } from './host'
 import { readPreference, writePreference } from './preferences'
-import type { AgentRuntime } from './types'
+import type { AgentRuntime, AntigravityQuotaSnapshot } from './types'
 
 const store = useDashboardStore()
 const isAntigravity = ref(readPreference('quota-provider') === 'antigravity')
@@ -25,15 +25,23 @@ const activeTab = ref<'usage' | 'projects' | 'skills' | 'combined' | 'antigravit
   isAntigravity.value ? 'antigravity' : 'usage',
 )
 const snapshot = computed(() => store.snapshot)
-const quotaActive = computed(() => !!snapshot.value && antigravityQuotaVisible({
+// Off in settings: no polling and no manual query; every view shows the disabled state.
+const antigravityEnabled = computed(() => store.settings?.antigravityQuotaEnabled !== false)
+const quotaActive = computed(() => !!snapshot.value && antigravityEnabled.value && antigravityQuotaVisible({
   antigravitySelected: isAntigravity.value,
   compactMode: store.compactMode,
   activeTab: activeTab.value,
 }))
-const { quota, loading: antigravityLoading, refresh: refreshAntigravity } = useAntigravityQuota(
+const { quota: polledQuota, loading: polling, refresh: refreshPolledQuota } = useAntigravityQuota(
   quotaActive,
   computed(() => store.settings?.autoRefreshMinutes ?? 5),
 )
+const quota = computed<AntigravityQuotaSnapshot | null>(() =>
+  antigravityEnabled.value ? polledQuota.value : { status: 'disabled', groups: [] })
+const antigravityLoading = computed(() => antigravityEnabled.value && polling.value)
+function refreshAntigravity(force = false) {
+  if (antigravityEnabled.value) return refreshPolledQuota(force)
+}
 const { layoutStyle } = useViewportScale()
 const { isLightTheme } = useThemePreference()
 // Only the tab summary needs it here; the usage panel derives the rest itself.

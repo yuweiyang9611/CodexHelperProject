@@ -24,6 +24,32 @@ public sealed class IpcDispatcherTests
         Assert.Empty(context.EventSink.EventsFor("settings.changed"));
     }
 
+    [Fact]
+    public async Task TurningAntigravityQuotaOffNeverStartsTheCli()
+    {
+        var reads = 0;
+        using var context = TestContext.Create(new ImmediateDashboardService(), readAntigravityQuota: _ =>
+        {
+            reads++;
+            return Task.FromResult(new AntigravityQuotaSnapshot(AntigravityQuotaStatus.Ready, []));
+        });
+        Assert.True(context.Session.CurrentSettings.AntigravityQuotaEnabled);
+
+        var saved = Assert.IsType<AppSettings>(await context.Dispatcher.DispatchAsync(
+            Request("settings.update", new { patch = new { antigravityQuotaEnabled = false } })));
+        var quota = Assert.IsType<AntigravityQuotaSnapshot>(await context.Dispatcher.DispatchAsync(Request("antigravity.getQuota")));
+
+        Assert.False(saved.AntigravityQuotaEnabled);
+        Assert.Equal(AntigravityQuotaStatus.Disabled, quota.Status);
+        Assert.Empty(quota.Groups);
+        Assert.Equal(0, reads);
+
+        await context.Dispatcher.DispatchAsync(Request("settings.update", new { patch = new { antigravityQuotaEnabled = true } }));
+        Assert.Equal(AntigravityQuotaStatus.Ready, Assert.IsType<AntigravityQuotaSnapshot>(
+            await context.Dispatcher.DispatchAsync(Request("antigravity.getQuota"))).Status);
+        Assert.Equal(1, reads);
+    }
+
     [Theory]
     [InlineData(ClaudeCliLoginStatus.LoggedIn, 1)]
     [InlineData(ClaudeCliLoginStatus.LoggedOut, 0)]

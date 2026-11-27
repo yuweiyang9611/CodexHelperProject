@@ -173,6 +173,26 @@ public sealed class AppDataStoreTests
     }
 
     [Theory]
+    // Files written before the setting existed keep Antigravity quota reads on.
+    [InlineData("""{"theme":"dark","settingsRevision":1}""", true)]
+    [InlineData("""{"theme":"dark","antigravityQuotaEnabled":false,"settingsRevision":1}""", false)]
+    public async Task SettingsStore_KeepsAntigravityQuotaOnUnlessTurnedOff(string saved, bool expected)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"codexu-agy-default-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(root);
+            await File.WriteAllTextAsync(Path.Combine(root, "settings.json"), saved);
+
+            Assert.Equal(expected, (await new AppSettingsStore(root).LoadAsync()).AntigravityQuotaEnabled);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
     // 0.6.8 wrote its default "off" with every save; that is not a user choice.
     [InlineData("""{"theme":"dark","claudeCliQuotaEnabled":false}""", true)]
     [InlineData("""{"theme":"dark"}""", true)]

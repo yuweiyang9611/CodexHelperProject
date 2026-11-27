@@ -30,6 +30,13 @@ public sealed class ClaudeQuotaStateTests
     }
 
     [Fact]
+    public void AntigravityQuotaReadIsOnByDefaultAndCanBeTurnedOff()
+    {
+        Assert.True(new AppSettings().AntigravityQuotaEnabled);
+        Assert.False((new AppSettings() with { AntigravityQuotaEnabled = false }).Validate().Normalize().AntigravityQuotaEnabled);
+    }
+
+    [Fact]
     public void NormalizedSettingsAlwaysCarryTheCurrentRevision()
     {
         Assert.Equal(AppSettings.CurrentSettingsRevision, new AppSettings().SettingsRevision);

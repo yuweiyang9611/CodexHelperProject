@@ -10,6 +10,7 @@ const groups = computed(() => props.quota?.status === 'ready' ? props.quota.grou
 const now = useQuotaClock(() => groups.value.flatMap(group => group.buckets.map(bucket => bucket.resetsAt)))
 
 const notice = computed(() => {
+  if (props.quota?.status === 'disabled') return '已关闭 Antigravity 额度读取。可在「设置与诊断 → 数据源」重新开启。'
   if (props.loading || !props.quota) return '正在读取 Antigravity 额度…'
   switch (props.quota.status) {
     case 'notInstalled': return '未找到 Antigravity CLI。安装 agy 后，用订阅账号登录，再点击刷新。'

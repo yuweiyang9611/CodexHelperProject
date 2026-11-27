@@ -111,6 +111,27 @@ describe('desktop host capabilities', () => {
     } finally { request.mockRestore() }
   })
 
+  it('turns off Antigravity quota reads through the regular settings patch', async () => {
+    const originalRequest = host.request.bind(host)
+    const request = vi.spyOn(host, 'request')
+      .mockImplementation(<T>(method: string, payload?: object): Promise<T> =>
+        method === 'settings.update'
+          ? Promise.resolve({ ...useDashboardStore(pinia).settings, ...(payload as { patch: object }).patch }) as Promise<T>
+          : originalRequest<T>(method, payload))
+    try {
+      const { container, store } = mountSettings([])
+      const toggle = labelledControl(container, '通过 Antigravity CLI 读取额度') as HTMLInputElement
+      expect(toggle.checked).toBe(true)
+      expect(container.textContent).toContain('不直接访问 Google 接口')
+      toggle.click()
+      await nextTick()
+      button(container, '保存设置').click()
+      await vi.waitFor(() => expect(store.settings?.antigravityQuotaEnabled).toBe(false))
+      const update = request.mock.calls.find(([method]) => method === 'settings.update')
+      expect(update?.[1]).toEqual({ patch: { antigravityQuotaEnabled: false } })
+    } finally { request.mockRestore() }
+  })
+
   it('can save unrelated edits when the rate preview host is unavailable', async () => {
     const request = vi.spyOn(host, 'request').mockRejectedValueOnce(new Error('offline'))
     try {
