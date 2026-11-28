@@ -87,6 +87,23 @@ public sealed class AntigravityUsageReaderTests : IDisposable
         Assert.False(malformed3);
     }
 
+    [Theory]
+    [InlineData("claude-opus-5-5-high", "claude-opus-5-5")]
+    [InlineData("claude-opus-5-5-xhigh", "claude-opus-5-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-5")]
+    [InlineData("gemini-4-neon", "gemini-4-neon")]
+    [InlineData("gemini-custom-high", "gemini-custom-high")]
+    public void HostedClaudeModelsDropTheEffortSuffixSoBuiltInRatesApply(string stored, string expected)
+    {
+        var blob = BuildGenMetadataBlob(stored, null, 1_000, 0, 100, 0, 100, "resp-1", includeDuplicate17: false);
+
+        Assert.True(AntigravityGenMetadataParser.TryParse(blob, out var parsed, out _));
+
+        Assert.Equal(expected, parsed.Model);
+        Assert.Equal(expected.StartsWith("claude-", StringComparison.Ordinal),
+            UsageCredits.FindRate(parsed.Model, new DateOnly(2026, 11, 1)) is not null);
+    }
+
     [Fact]
     public void DiscoversHostManagedAcpRootsBesideTheStandardOnes()
     {

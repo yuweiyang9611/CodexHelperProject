@@ -79,7 +79,7 @@ internal static class AntigravityGenMetadataParser
         if (total <= 0) return false;
 
         var model = !string.IsNullOrWhiteSpace(modelId)
-            ? modelId.Trim()
+            ? RateModelId(modelId.Trim())
             : !string.IsNullOrWhiteSpace(displayName)
                 ? displayName.Trim()
                 : "antigravity-unknown";
@@ -92,6 +92,25 @@ internal static class AntigravityGenMetadataParser
             total);
         call = new AntigravityModelCall(model, responseId, breakdown);
         return true;
+    }
+
+    private static readonly string[] EffortSuffixes = ["-low", "-medium", "-high", "-xhigh", "-max"];
+
+    /// <summary>
+    /// Antigravity appends the reasoning effort to the Claude models it hosts
+    /// (<c>claude-opus-5-5-high</c>). The effort does not change the price, and built-in
+    /// rates match exact ids, so the suffix would leave these calls unrated. Gemini ids
+    /// arrive without it and are left untouched.
+    /// </summary>
+    internal static string RateModelId(string modelId)
+    {
+        if (!modelId.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)) return modelId;
+        foreach (var suffix in EffortSuffixes)
+        {
+            if (modelId.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return modelId[..^suffix.Length];
+        }
+
+        return modelId;
     }
 
     private static bool TryParseOuterMessage(

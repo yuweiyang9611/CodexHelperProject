@@ -9,9 +9,12 @@ const vm = require('node:vm');
 const mainPath = require.resolve('../dist/main.js');
 const requireFromMain = createRequire(mainPath);
 const loadFailure = new Error("ERR_FAILED (-2) loading 'app://codexu/index.html'");
+const LOAD_TIMEOUT_MS = 30_000;
 
 function startupFixture(load) {
   const timers = [];
+  // Each navigation arms its own timeout; kept apart from the recovery backoff timers.
+  const loadTimers = [];
   const prompts = [];
   let navigations = 0;
   const display = { id: 1, scaleFactor: 1, workArea: { x: 0, y: 0, width: 1600, height: 900 } };
@@ -21,6 +24,7 @@ function startupFixture(load) {
   class Window extends EventEmitter {
     webContents = Object.assign(new EventEmitter(), {
       isDestroyed: () => this.isDestroyed(), setWindowOpenHandler() {},
+      stop: () => { this.stopped = (this.stopped ?? 0) + 1; },
     });
     isDestroyed() { return this.destroyed === true; }
     isVisible() { return this.visible === true; }
@@ -47,8 +51,15 @@ function startupFixture(load) {
       return requireFromMain(name);
     },
     setTimeout(callback, delay) {
-      timers.push({ callback, delay });
-      return { unref() {} };
+      const timer = { callback, delay, unref() {} };
+      (delay === LOAD_TIMEOUT_MS ? loadTimers : timers).push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      for (const list of [timers, loadTimers]) {
+        const index = list.indexOf(timer);
+        if (index >= 0) list.splice(index, 1);
+      }
     },
     console: { log() {}, warn() {}, error() {} },
   });
@@ -62,7 +73,12 @@ function startupFixture(load) {
     timer.callback();
     await new Promise(resolve => setImmediate(resolve));
   };
-  return { start, retry, timers, prompts };
+  const expireLoad = async () => {
+    assert.equal(loadTimers.length, 1);
+    loadTimers[0].callback();
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  return { start, retry, expireLoad, timers, loadTimers, prompts };
 }
 
 for (const crashEvent of [true, false]) {
@@ -119,4 +135,34 @@ test('propagates startup failure when its renderer window is gone', async () => 
   });
   await assert.rejects(fixture.start(), loadFailure);
   assert.equal(fixture.timers.length, 0);
+});
+
+test('a startup navigation that never settles times out and is retried', async () => {
+  const fixture = startupFixture((_window, navigation) => navigation === 1 ? new Promise(() => {}) : Promise.resolve());
+  const startup = fixture.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fixture.timers.length, 0);
+  await fixture.expireLoad();
+  const window = await startup;
+  assert.equal(window.stopped, 1);
+  await fixture.retry(500);
+  assert.equal(window.visible, true);
+  assert.equal(fixture.timers.length, 0);
+  assert.equal(fixture.loadTimers.length, 0);
+});
+
+test('a recovery navigation that never settles times out and moves to the next retry', async () => {
+  const fixture = startupFixture((_window, navigation) => {
+    if (navigation === 1) return Promise.reject(loadFailure);
+    return navigation === 2 ? new Promise(() => {}) : Promise.resolve();
+  });
+  const window = await fixture.start();
+  await fixture.retry(500);
+  assert.notEqual(window.visible, true);
+  await fixture.expireLoad();
+  assert.equal(window.stopped, 1);
+  await fixture.retry(1000);
+  assert.equal(window.visible, true);
+  assert.equal(fixture.timers.length, 0);
+  assert.equal(fixture.loadTimers.length, 0);
 });

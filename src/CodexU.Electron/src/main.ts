@@ -95,6 +95,8 @@ const APP_SCHEME = 'app';
 const SMOKE_SUCCESS = 'CODEXU_ELECTRON_SMOKE_OK';
 const SMOKE_FAILURE = 'CODEXU_ELECTRON_SMOKE_FAILED';
 const SMOKE_READY_TIMEOUT_MS = 60_000;
+// The page is served from local files and normally loads in well under a second.
+const RENDERER_LOAD_TIMEOUT_MS = 30_000;
 const WINDOW_STATE_FILE_NAME = 'window-state.json';
 const WINDOW_STATE_SAVE_DELAY_MS = 300;
 
@@ -768,7 +770,22 @@ async function navigateRenderer(window: BrowserWindow): Promise<void> {
   if (window.isDestroyed() || window.webContents.isDestroyed()) {
     throw new Error('Renderer navigation target is no longer available.');
   }
-  await window.loadURL(APP_URL);
+  // A load that neither finishes nor fails would otherwise hold the navigation flight
+  // forever: startup never reaches its retry, and a recovery queued behind it never runs.
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      // Stopping also settles the abandoned load, so it cannot finish under a later one.
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.stop();
+      reject(new Error(`Renderer navigation did not finish within ${RENDERER_LOAD_TIMEOUT_MS} ms.`));
+    }, RENDERER_LOAD_TIMEOUT_MS);
+    timer.unref();
+  });
+  try {
+    await Promise.race([window.loadURL(APP_URL), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function orderedDisplays(): Display[] {
