@@ -818,9 +818,12 @@ public static class SubscriptionPricing
         // one table to the other. An unknown plan returns null and the UI uses the
         // manual amount from settings — a wrong number is worse than an absent one,
         // because it silently corrupts the payback multiple.
-        return runtime == AgentRuntime.ClaudeCode
-            ? InferClaudeAmount(normalized)
-            : InferChatGptAmount(normalized);
+        return runtime switch
+        {
+            AgentRuntime.ClaudeCode => InferClaudeAmount(normalized),
+            AgentRuntime.Codex => InferChatGptAmount(normalized),
+            _ => null
+        };
     }
 
     private static double? InferChatGptAmount(string normalized) => normalized switch

@@ -27,10 +27,12 @@ public sealed record MonthlyValue(
     public static MonthlyValue Calculate(DashboardSnapshot snapshot, AppSettings settings)
     {
         var month = snapshot.Tokens.Month;
-        var automatic = settings.AutoDetectSubscriptionAmountFor(snapshot.Runtime);
-        var subscription = automatic
-            ? snapshot.Account?.SuggestedMonthlySubscriptionAmount
-            : settings.ManualSubscriptionAmountFor(snapshot.Runtime);
+        var hasSubscriptionConfig = snapshot.Runtime is AgentRuntime.Codex or AgentRuntime.ClaudeCode;
+        var automatic = hasSubscriptionConfig && settings.AutoDetectSubscriptionAmountFor(snapshot.Runtime);
+        var subscription = !hasSubscriptionConfig ? null
+            : automatic
+                ? snapshot.Account?.SuggestedMonthlySubscriptionAmount
+                : settings.ManualSubscriptionAmountFor(snapshot.Runtime);
         var source = subscription is null ? SubscriptionSource.Unknown
             : automatic ? SubscriptionSource.Auto : SubscriptionSource.Manual;
 

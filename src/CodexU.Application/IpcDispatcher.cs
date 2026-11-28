@@ -149,7 +149,8 @@ public sealed class IpcDispatcher : IDisposable
                 var runtimeName = request.Payload.TryGetProperty("runtime", out var runtimeValue)
                     ? runtimeValue.GetString()
                     : null;
-                if (!Enum.TryParse<AgentRuntime>(runtimeName, ignoreCase: true, out var runtime))
+                if (!Enum.TryParse<AgentRuntime>(runtimeName, ignoreCase: true, out var runtime)
+                    || runtime == AgentRuntime.Antigravity)
                 {
                     throw new ArgumentException("未知 Runtime");
                 }

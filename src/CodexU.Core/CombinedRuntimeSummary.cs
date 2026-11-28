@@ -25,16 +25,22 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
     IReadOnlyList<CombinedProject> Projects, IReadOnlyList<CombinedForecast> Forecasts,
     IReadOnlyList<string> Diagnostics, DateTimeOffset? RefreshedAt, IReadOnlyList<AgentRuntime> FailedRuntimes)
 {
-    public static CombinedSnapshots Project(RuntimeReadResult codex, RuntimeReadResult claude, AppSettings settings)
+    public static CombinedSnapshots Project(
+        RuntimeReadResult codex,
+        RuntimeReadResult claude,
+        AppSettings settings,
+        RuntimeReadResult? antigravity = null)
     {
-        // Settings may change between the two asynchronous reads. Use one price basis.
+        // Settings may change between asynchronous reads. Use one price basis.
         RuntimeReadResult Revalue(RuntimeReadResult read) => read.ReadFailed ? read : read with
         {
             Snapshot = read.Snapshot.WithValuation(settings)
         };
         codex = Revalue(codex);
         claude = Revalue(claude);
-        RuntimeReadResult[] reads = [codex, claude];
+        if (antigravity is not null) antigravity = Revalue(antigravity);
+        RuntimeReadResult[] reads = antigravity is null ? [codex, claude] : [codex, claude, antigravity];
+        RuntimeReadResult[] subscriptionReads = [codex, claude];
         var present = reads.Where(r => r.Contribution == RuntimeContribution.Present).Select(r => r.Snapshot).ToArray();
         var failed = reads.Where(r => r.ReadFailed).Select(r => r.Snapshot.Runtime).ToArray();
         CombinedPeriod Period(Func<TokenSummary, TokenPeriod> select)
@@ -43,17 +49,29 @@ public sealed record CombinedRuntimeSummary(CombinedPeriods Periods, CombinedCos
             var quality = rows.Select(p => p.Quality).DefaultIfEmpty(DataQuality.Unavailable).Max();
             if (failed.Length > 0 && quality == DataQuality.Detailed) quality = DataQuality.Partial;
             var known = rows.Where(p => p.Valuation?.KnownAmount is not null).ToArray();
-            var partial = failed.Length > 0 || known.Length != rows.Length || rows.Any(p => p.UnratedTokens > 0);
+            var totalTokens = rows.Sum(p => p.Tokens);
+            var totalUnrated = rows.Sum(p => p.UnratedTokens);
+            var partial = failed.Length > 0 || known.Length != rows.Length || totalUnrated > 0;
             var credits = known.Sum(p => p.CreditsUsed);
-            return new(rows.Sum(p => p.Tokens), rows.Sum(p => p.UnratedTokens), credits,
-                known.Length == 0 ? null : UsageCredits.ToAmount(credits, settings.AmountPerThousandCredits), quality, partial);
+            var amount = known.Length == 0 || (totalTokens > 0 && totalUnrated >= totalTokens)
+                ? (double?)null
+                : UsageCredits.ToAmount(credits, settings.AmountPerThousandCredits);
+            return new(totalTokens, totalUnrated, credits, amount, quality, partial);
         }
         var periods = new CombinedPeriods(Period(p => p.Today), Period(p => p.SevenDays), Period(p => p.Month));
-        return new(codex, claude, new(periods, ProjectCost(reads, periods.Month), MergeProjects(present, settings, failed.Length > 0),
+        return new(codex, claude, new(periods, ProjectCost(subscriptionReads, periods.Month), MergeProjects(present, settings, failed.Length > 0),
             ForecastsFor(present), reads.SelectMany(r => r.Snapshot.Diagnostics.Select(d =>
-                (r.Snapshot.Runtime == AgentRuntime.Codex ? "Codex：" : "Claude Code：") + d)).ToArray(),
-            present.Min(s => (DateTimeOffset?)s.RefreshedAt), failed));
+                RuntimeLabel(r.Snapshot.Runtime) + "：" + d)).ToArray(),
+            present.Min(s => (DateTimeOffset?)s.RefreshedAt), failed), antigravity);
     }
+
+    private static string RuntimeLabel(AgentRuntime runtime) => runtime switch
+    {
+        AgentRuntime.Codex => "Codex",
+        AgentRuntime.ClaudeCode => "Claude Code",
+        AgentRuntime.Antigravity => "Antigravity",
+        _ => runtime.ToString()
+    };
 
     private static CombinedCost ProjectCost(RuntimeReadResult[] reads, CombinedPeriod month)
     {

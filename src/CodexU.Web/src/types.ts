@@ -1,4 +1,5 @@
 export type AgentRuntime = 'codex' | 'claudeCode'
+export type CombinedRuntime = AgentRuntime | 'antigravity'
 export interface ClaudeCliAuthStatus {
   status: 'loggedIn' | 'loggedOut' | 'notInstalled' | 'unavailable'
   authMethod: 'none' | 'claudeAi' | 'oauthToken' | 'apiKey' | 'apiKeyHelper' | 'thirdParty' | 'unknown'
@@ -136,9 +137,9 @@ export interface QuotaForecast {
  * failed read and an uninstalled runtime are otherwise indistinguishable — both are
  * an empty snapshot — and only one of them means usage is missing from the totals.
  */
-export interface RuntimeReadResult {
+export interface RuntimeReadResult<R extends CombinedRuntime = AgentRuntime> {
   contribution: 'present' | 'absent' | 'failed'
-  snapshot: DashboardSnapshot
+  snapshot: Omit<DashboardSnapshot, 'runtime'> & { runtime: R }
   readFailed: boolean
   failureMessage?: string
 }
@@ -146,6 +147,7 @@ export interface RuntimeReadResult {
 export interface CombinedSnapshots {
   codex: RuntimeReadResult
   claudeCode: RuntimeReadResult
+  antigravity?: RuntimeReadResult<CombinedRuntime> | null
   summary: CombinedRuntimeSummary
 }
 
@@ -153,15 +155,15 @@ export interface CombinedRuntimeSummary {
   periods: Record<'today' | 'sevenDays' | 'month', { tokens: number; unratedTokens: number; creditsUsed: number; amount?: number | null; quality: DataQuality; creditsAreLowerBound: boolean }>
   cost: {
     knownAmount?: number | null; isLowerBound: boolean; subscriptionAmount?: number | null
-    unknownSubscriptions: AgentRuntime[]; hasManual: boolean; paybackMultiple?: number | null; netAmount?: number | null
+    unknownSubscriptions: CombinedRuntime[]; hasManual: boolean; paybackMultiple?: number | null; netAmount?: number | null
     paybackReason: 'none' | 'unknownSubscription' | 'zeroSubscription' | 'incompleteUsage'
   }
   projects: { id: string; name: string; branch?: string | null; tokens: number; amount?: number | null; costStatus: ProjectCostStatus; costIsEstimated: boolean; lastActiveAt?: string | null;
-    runtimes: AgentRuntime[]; threadCounts: Partial<Record<AgentRuntime, number>>; quality: DataQuality }[]
-  forecasts: { runtime: AgentRuntime; weekly: boolean; exhaustsAt: string; validUntil?: string | null; predictable: number; total: number }[]
+    runtimes: CombinedRuntime[]; threadCounts: Partial<Record<CombinedRuntime, number>>; quality: DataQuality }[]
+  forecasts: { runtime: CombinedRuntime; weekly: boolean; exhaustsAt: string; validUntil?: string | null; predictable: number; total: number }[]
   diagnostics: string[]
   refreshedAt?: string | null
-  failedRuntimes: AgentRuntime[]
+  failedRuntimes: CombinedRuntime[]
 }
 
 export interface AccountSnapshot {

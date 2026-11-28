@@ -3,7 +3,8 @@ namespace CodexU.Core;
 public enum AgentRuntime
 {
     Codex,
-    ClaudeCode
+    ClaudeCode,
+    Antigravity
 }
 
 public enum DataQuality
@@ -347,7 +348,8 @@ public sealed record RuntimeReadResult(
 public sealed record CombinedSnapshots(
     RuntimeReadResult Codex,
     RuntimeReadResult ClaudeCode,
-    CombinedRuntimeSummary Summary);
+    CombinedRuntimeSummary Summary,
+    RuntimeReadResult? Antigravity = null);
 
 public sealed record LocalUsageSnapshot(
     AccountSnapshot? Account,

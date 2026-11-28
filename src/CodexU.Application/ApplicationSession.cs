@@ -295,9 +295,10 @@ public sealed class ApplicationSession : IDisposable
                 var service = _dashboardService;
                 var codex = await ReadRuntimeForCombinedAsync(AgentRuntime.Codex);
                 var claude = await ReadRuntimeForCombinedAsync(AgentRuntime.ClaudeCode);
+                var antigravity = await ReadRuntimeForCombinedAsync(AgentRuntime.Antigravity);
                 var settings = _settings;
                 if (ReferenceEquals(service, _dashboardService))
-                    return CombinedRuntimeSummary.Project(codex, claude, settings);
+                    return CombinedRuntimeSummary.Project(codex, claude, settings, antigravity);
             }
         }
         finally

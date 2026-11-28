@@ -8,7 +8,8 @@ public sealed class DashboardService(
     ILocalUsageReader? claudeUsageReader = null,
     QuotaForecastCollector? quotaForecastCollector = null,
     ILocalUsageReader? localAnalysisReader = null,
-    ILocalUsageReader? claudeAnalysisReader = null) : IDashboardService
+    ILocalUsageReader? claudeAnalysisReader = null,
+    ILocalUsageReader? antigravityUsageReader = null) : IDashboardService
 {
     private readonly SemaphoreSlim _analysisGate = new(1, 1);
     private readonly Lock _analysisStateGate = new();
@@ -63,7 +64,9 @@ public sealed class DashboardService(
             new CodexLocalUsageReader(paths, incrementalIndexEnabled, null, showSubagents,
                 customRates, completeRateCatalog, applicationDataDirectory),
             new ClaudeCodeUsageReader(paths, null, showSubagents, customRates,
-                completeRateCatalog, applicationDataDirectory, incrementalIndexEnabled, claudeDesktopUsageTranscript));
+                completeRateCatalog, applicationDataDirectory, incrementalIndexEnabled, claudeDesktopUsageTranscript),
+            new AntigravityUsageReader(paths, defaultWorkspace, customRates, completeRateCatalog,
+                applicationDataDirectory, incrementalIndexEnabled));
     }
 
     public async Task<DashboardSnapshot> LoadAsync(
@@ -72,6 +75,15 @@ public sealed class DashboardService(
     {
         // A refresh starts a new read revision, including when the source fails.
         InvalidateUsageAnalysis();
+        if (runtime == AgentRuntime.Antigravity)
+        {
+            var (antigravity, failed) = await ReadLocalSafelyAsync(
+                antigravityUsageReader,
+                AgentRuntime.Antigravity,
+                cancellationToken);
+            return ToDashboard(runtime, antigravity) with { LocalReadFailed = failed };
+        }
+
         if (runtime == AgentRuntime.ClaudeCode)
         {
             var (claude, failed) = await ReadLocalSafelyAsync(

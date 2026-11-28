@@ -200,3 +200,33 @@ it('keeps the usage retry available while only a background Antigravity poll is 
   retry.click()
   expect(loadCombined).toHaveBeenLastCalledWith(true)
 })
+
+it('renders Antigravity in merged project runtimes and failed-runtime banners', () => {
+  const store = useDashboardStore(pinia)
+  const result = summary()
+  result.failedRuntimes = ['antigravity']
+  result.projects = [{
+    id: 'shared',
+    name: 'SampleRepo',
+    tokens: 500,
+    amount: 4,
+    costStatus: 'partial',
+    costIsEstimated: false,
+    runtimes: ['codex', 'claudeCode', 'antigravity'],
+    threadCounts: { codex: 1, claudeCode: 1, antigravity: 2 },
+    quality: 'detailed',
+  }]
+  store.combined = {
+    summary: result,
+    codex: runtimeRead(),
+    claudeCode: runtimeRead({ snapshot: snapshot({ runtime: 'claudeCode' }) }),
+  }
+  const container = document.createElement('div')
+  app = createApp(CombinedRuntimeView, noAntigravity)
+  app.use(pinia)
+  app.mount(container)
+
+  expect(container.querySelector('.combined-banner')?.textContent).toContain('Antigravity')
+  expect(container.querySelector('.combined-table tbody tr')?.children[1]?.textContent?.trim())
+    .toBe('Codex + Claude Code + Antigravity')
+})

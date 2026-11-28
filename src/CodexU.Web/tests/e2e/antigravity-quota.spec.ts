@@ -54,5 +54,6 @@ test('三运行时同时显示三个来源并标明费用统计范围', async ({
   await expect(cards.nth(1)).toContainText('Claude Code')
   await expect(cards.nth(2)).toContainText('Antigravity')
   await expect(cards.nth(2).getByRole('heading', { name: 'Gemini Pro', exact: true })).toBeVisible()
-  await expect(panel.getByText('用量、费用、项目和耗尽预测仅统计 Codex 与 Claude Code。')).toBeVisible()
+  await expect(panel.getByText('用量与项目排行统计 Codex、Claude Code 与 Antigravity；Gemini 暂无费率，费用估算下限、订阅月费与耗尽预测仅含 Codex 与 Claude Code。')).toBeVisible()
+  await expect(panel.locator('.combined-table tbody tr').first()).toContainText('Codex + Claude Code + Antigravity')
 })

@@ -164,6 +164,86 @@ public sealed class CombinedRuntimeSummaryTests
             });
     }
 
+    [Fact]
+    public void IncludesAntigravityTokensAsUnratedAndMergesThreeRuntimeProjects()
+    {
+        var epoch = DateTimeOffset.UnixEpoch;
+        var codex = Read(AgentRuntime.Codex, credits: 1000);
+        codex = codex with
+        {
+            Snapshot = codex.Snapshot with
+            {
+                Projects = [new("repo", "SampleRepo", @"D:\Workspace\SampleRepo", 100, 2, epoch, "main", 1000, DataQuality.Detailed)]
+            }
+        };
+        var claude = Read(AgentRuntime.ClaudeCode, credits: 1000);
+        claude = claude with
+        {
+            Snapshot = claude.Snapshot with
+            {
+                Projects = [new("repo-c", "SampleRepo", @"d:/Workspace/SampleRepo/", 100, 1, epoch.AddHours(1), "feat", 1000, DataQuality.Detailed)]
+            }
+        };
+        var agySnapshot = DashboardSnapshot.Empty(AgentRuntime.Antigravity);
+        var agyMonth = agySnapshot.Tokens.Month with { Tokens = 500, CreditsUsed = 0, UnratedTokens = 500, Quality = DataQuality.Detailed };
+        var agyToday = agySnapshot.Tokens.Today with { Tokens = 50, CreditsUsed = 0, UnratedTokens = 50, Quality = DataQuality.Detailed };
+        var antigravity = new RuntimeReadResult(
+            agySnapshot with
+            {
+                Tokens = agySnapshot.Tokens with { Today = agyToday, SevenDays = agyMonth, Month = agyMonth, Lifetime = agyMonth },
+                Projects =
+                [
+                    new("repo-a", "SampleRepo", @"D:\Workspace\SampleRepo", 300, 3, epoch.AddHours(2), null, null, DataQuality.Detailed, UnratedTokens: 300),
+                    new("agy-only", "OnlyAgy", @"D:\Workspace\OnlyAgy", 200, 1, epoch.AddHours(3), null, null, DataQuality.Detailed, UnratedTokens: 200)
+                ],
+                Diagnostics = ["read ok"]
+            },
+            ReadFailed: false);
+
+        var combined = CombinedRuntimeSummary.Project(codex, claude, Settings, antigravity);
+        Assert.Equal(700, combined.Summary.Periods.Month.Tokens);
+        Assert.Equal(500, combined.Summary.Periods.Month.UnratedTokens);
+        Assert.Equal(80d, combined.Summary.Periods.Month.Amount);
+        Assert.True(combined.Summary.Periods.Month.CreditsAreLowerBound);
+        Assert.Equal(60, combined.Summary.Periods.Today.Tokens);
+        Assert.Equal(50, combined.Summary.Periods.Today.UnratedTokens);
+
+        // Antigravity has no subscription settings and must not suppress Codex + Claude subscription sum.
+        Assert.Equal(100d, combined.Summary.Cost.SubscriptionAmount);
+        Assert.Empty(combined.Summary.Cost.UnknownSubscriptions);
+        Assert.True(combined.Summary.Cost.IsLowerBound);
+        Assert.Contains("Antigravity：read ok", combined.Summary.Diagnostics);
+
+        Assert.Equal(2, combined.Summary.Projects.Count);
+        var merged = combined.Summary.Projects[0];
+        Assert.Equal("SampleRepo", merged.Name);
+        Assert.Equal(500, merged.Tokens);
+        Assert.Equal(80d, merged.Amount);
+        Assert.Equal(ProjectCostStatus.Partial, merged.CostStatus);
+        Assert.Equal([AgentRuntime.Codex, AgentRuntime.ClaudeCode, AgentRuntime.Antigravity], merged.Runtimes);
+        Assert.Equal(3, merged.ThreadCounts[AgentRuntime.Antigravity]);
+
+        var onlyAgy = combined.Summary.Projects[1];
+        Assert.Equal("OnlyAgy", onlyAgy.Name);
+        Assert.Equal([AgentRuntime.Antigravity], onlyAgy.Runtimes);
+        Assert.Null(onlyAgy.Amount);
+        Assert.Equal(ProjectCostStatus.Unknown, onlyAgy.CostStatus);
+
+        // When only Antigravity has usage, combined amount is null (unknown) rather than 0.
+        var absentCodex = new RuntimeReadResult(DashboardSnapshot.Empty(AgentRuntime.Codex), false);
+        var absentClaude = new RuntimeReadResult(DashboardSnapshot.Empty(AgentRuntime.ClaudeCode), false);
+        var agyOnly = CombinedRuntimeSummary.Project(absentCodex, absentClaude, Settings, antigravity).Summary;
+        Assert.Equal(500, agyOnly.Periods.Month.Tokens);
+        Assert.Null(agyOnly.Periods.Month.Amount);
+        Assert.True(agyOnly.Periods.Month.CreditsAreLowerBound);
+
+        // Failed Antigravity read is reported in FailedRuntimes.
+        var failedAgy = CombinedRuntimeSummary.Project(codex, claude, Settings,
+            new RuntimeReadResult(DashboardSnapshot.Empty(AgentRuntime.Antigravity), ReadFailed: true)).Summary;
+        Assert.Equal([AgentRuntime.Antigravity], failedAgy.FailedRuntimes);
+        Assert.Equal(DataQuality.Partial, failedAgy.Periods.Month.Quality);
+    }
+
     private static RuntimeReadResult Read(AgentRuntime runtime, double credits = 1000, long unrated = 0)
     {
         var snapshot = DashboardSnapshot.Empty(runtime);

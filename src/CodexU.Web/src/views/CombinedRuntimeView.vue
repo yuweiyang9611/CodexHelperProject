@@ -6,7 +6,7 @@ import AntigravityQuotaView from './AntigravityQuotaView.vue'
 import { compactNumber, currencyAmount, exhaustionTime, qualityLabel, relativeTime } from '../format'
 import { useQuotaClock } from '../composables/useQuotaClock'
 import { useDashboardStore } from '../stores/dashboard'
-import type { AgentRuntime, AntigravityQuotaSnapshot, RuntimeReadResult } from '../types'
+import type { AntigravityQuotaSnapshot, CombinedRuntime, RuntimeReadResult } from '../types'
 
 defineProps<{ antigravityQuota: AntigravityQuotaSnapshot | null; antigravityLoading: boolean }>()
 const emit = defineEmits<{ refreshAntigravity: [] }>()
@@ -16,7 +16,7 @@ const entries = computed(() => store.combined ? [store.combined.codex, store.com
 const now = useQuotaClock(() => entries.value.flatMap(e => [e.snapshot.primaryQuota?.resetsAt, e.snapshot.secondaryQuota?.resetsAt]))
 const earliest = computed(() => summary.value?.forecasts.find(phase => !phase.validUntil || Date.parse(phase.validUntil) > now.value))
 const PERIODS = [{ key: 'today', label: '今日' }, { key: 'sevenDays', label: '近 7 日' }, { key: 'month', label: '本月' }] as const
-const runtimeLabel = (runtime: AgentRuntime) => runtime === 'codex' ? 'Codex' : 'Claude Code'
+const runtimeLabel = (runtime: CombinedRuntime) => runtime === 'codex' ? 'Codex' : runtime === 'claudeCode' ? 'Claude Code' : 'Antigravity'
 
 function reloadAll() {
   void store.loadCombined(true)
@@ -52,11 +52,11 @@ onMounted(() => void store.loadCombined())
 
     <div class="combined-columns">
       <div v-if="!summary && store.combinedError" class="combined-state combined-state-error glass-card" role="alert">
-        <strong>Codex 与 Claude Code 数据读取失败</strong>
+        <strong>本机用量数据读取失败</strong>
         <span>{{ store.combinedError }}</span>
       </div>
       <div v-else-if="!summary" class="combined-state glass-card" role="status">
-        正在读取 Codex 与 Claude Code 的本机数据…
+        正在读取各运行时的本机数据…
       </div>
       <article v-for="entry in entries" :key="entry.snapshot.runtime" class="combined-runtime-column glass-card">
         <header>
@@ -103,7 +103,7 @@ onMounted(() => void store.loadCombined())
     </div>
 
     <template v-if="summary">
-      <p class="combined-statistics-scope">用量、费用、项目和耗尽预测仅统计 Codex 与 Claude Code。</p>
+      <p class="combined-statistics-scope">用量与项目排行统计 Codex、Claude Code 与 Antigravity；Gemini 暂无费率，费用估算下限、订阅月费与耗尽预测仅含 Codex 与 Claude Code。</p>
       <article class="combined-card glass-card">
         <h2>合计本机原始用量</h2>
         <div class="combined-metrics">
@@ -118,7 +118,7 @@ onMounted(() => void store.loadCombined())
         </div>
         <p class="combined-note">
           合计仅包含本次成功读取的本机日志；这里不混入 Codex 官方账户活动。
-          累计 token 不做合并，因为两个运行时保存日志的范围可能不同，相加容易误导。
+          累计 token 不做合并，因为各运行时保存日志的范围可能不同，相加容易误导。
         </p>
       </article>
 
@@ -204,7 +204,7 @@ onMounted(() => void store.loadCombined())
       </details>
     </template>
     <p class="combined-footnote">
-      <span v-if="summary">Codex 与 Claude Code 刷新于 {{ relativeTime(summary.refreshedAt) }}（取两侧较早者）。</span>
+      <span v-if="summary">本机用量刷新于 {{ relativeTime(summary.refreshedAt) }}（取各来源较早者）。</span>
       <!-- Only the Codex/Claude read blocks a retry: a background Antigravity poll has its
            own loading state in its column and coalesces a second request. -->
       <button type="button" class="combined-refresh" @click="reloadAll" :disabled="store.isLoadingCombined">
